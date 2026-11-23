@@ -58,8 +58,8 @@ export const DEFAULT_EVALUATION_CONFIG = Object.freeze({
 
 export const TERMINAL = ['COMPLETED', 'ERROR', 'CANCELED', 'INDETERMINATE'];
 export const fail = (code, message, status = 422) => { throw new ServiceError(message, status, code); };
-export const enabled = () => process.env.AI_EVALUATION_ENABLED === 'true';
-export const requireEnabled = () => { if (!enabled()) fail('FEATURE_DISABLED', 'AI evaluation is disabled. Enable AI_EVALUATION_ENABLED on the server.', 503); };
+export const enabled = () => process.env.AI_EVALUATION_ENABLED !== 'false';
+export const requireEnabled = () => { if (!enabled()) fail('FEATURE_DISABLED', 'AI evaluation is disabled.', 503); };
 
 export function safeJson(value, depth = 0) {
     if (depth > 24) fail('INVALID_JSON', 'JSON nesting is too deep');

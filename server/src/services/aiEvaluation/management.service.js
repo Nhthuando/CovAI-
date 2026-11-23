@@ -85,11 +85,69 @@ export async function getRemainingAiQuota(db, userId, now = new Date()) {
     };
 }
 
+async function getProjectEvaluationEnabled(db, projectId) {
+    const envDefault = process.env.AI_EVALUATION_ENABLED === 'true';
+    if (!db?.aiEvaluationProjectSettings?.findUnique) return envDefault;
+    try {
+        const record = await db.aiEvaluationProjectSettings.findUnique({
+            where: { projectId },
+            select: { settings: true },
+        });
+        if (typeof record?.settings?.enabled === 'boolean') {
+            return record.settings.enabled;
+        }
+        return envDefault;
+    } catch (error) {
+        console.warn('[aiEvaluation] Could not read project toggle settings:', error?.message || error);
+        return envDefault;
+    }
+}
+
+export async function assertProjectEvaluationEnabled(db, projectId) {
+    const isEnabled = await getProjectEvaluationEnabled(db, projectId);
+    if (!isEnabled) {
+        fail('FEATURE_DISABLED', 'Chatbot evaluation is turned off for this project. Turn it ON in the Chatbot Evaluation tab.', 503);
+    }
+}
+
+export async function setProjectEvaluationEnabled(db, projectId, nextEnabled) {
+    if (typeof nextEnabled !== 'boolean') {
+        fail('INVALID_INPUT', 'Provide boolean "enabled" value to toggle Chatbot Evaluation.', 400);
+    }
+    if (!db?.aiEvaluationProjectSettings?.upsert) {
+        return { projectEnabled: nextEnabled };
+    }
+    const existing = await db.aiEvaluationProjectSettings.findUnique({
+        where: { projectId },
+        select: { settings: true },
+    });
+    const baseSettings = existing?.settings && typeof existing.settings === 'object' && !Array.isArray(existing.settings)
+        ? existing.settings
+        : {};
+    await db.aiEvaluationProjectSettings.upsert({
+        where: { projectId },
+        create: {
+            projectId,
+            settings: { ...baseSettings, enabled: nextEnabled },
+        },
+        update: {
+            revision: { increment: 1 },
+            settings: { ...baseSettings, enabled: nextEnabled },
+        },
+        select: { projectId: true },
+    });
+    return { projectEnabled: nextEnabled };
+}
+
 export async function getCapabilities(db, projectId, userId) {
     const access = await readAccess(db, projectId, userId);
-    const quota = await getRemainingAiQuota(db, userId);
+    const [quota, projectEnabled] = await Promise.all([
+        getRemainingAiQuota(db, userId),
+        getProjectEvaluationEnabled(db, projectId),
+    ]);
     return {
-        enabled: enabled(),
+        enabled: true,
+        projectEnabled,
         actionEnabled: process.env.AI_EVALUATION_ACTION_ENABLED === 'true',
         role: access.role,
         canRun: ['OWNER', 'EDITOR'].includes(access.role),

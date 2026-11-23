@@ -371,7 +371,9 @@ export default function ProjectSelectionPage() {
                     }
                     fileTree={[]}
                     pendingAiSuggestion={pendingAiSuggestion}
-                    onClearPendingSuggestion={() => setPendingAiSuggestion(null)}
+                    onClearPendingSuggestion={() =>
+                      setPendingAiSuggestion(null)
+                    }
                     onOpenFile={(filePath) => {
                       const pid = activeAiProject?.id
                         ? `projectId=${encodeURIComponent(activeAiProject.id)}&`

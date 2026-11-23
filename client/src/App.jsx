@@ -25,6 +25,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { RunningProcessProvider } from "./contexts/RunningProcessContext";
 import { ToastProvider } from "./components/dashboard/ToastContext";
 import GlobalProcessIndicator from "./components/GlobalProcessIndicator";
+import FloatingJobQueue from "./components/FloatingJobQueue";
 import { useAuth } from "./hooks/useAuth";
 import GlobalErrorBoundary from "./components/common/GlobalErrorBoundary";
 
@@ -176,6 +177,7 @@ function AppContent() {
         />
       </Routes>
       <GlobalProcessIndicator />
+      <FloatingJobQueue />
     </>
   );
 }

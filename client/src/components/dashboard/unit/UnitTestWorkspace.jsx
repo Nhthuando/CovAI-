@@ -56,7 +56,6 @@ import {
 import { needsUnitTestSuggestion } from "../../../services/unitTestSuggestionQueue.js";
 import { getAccessToken } from "../../../lib/authSession.js";
 import { useToast } from "../ToastContext";
-import CoverageJobQueueButton from "../CoverageJobQueueButton.jsx";
 import UnitTestPackageInstaller from "../UnitTestPackageInstaller.jsx";
 import UnitTestVersionHistoryView from "../UnitTestVersionHistoryView.jsx";
 import DiffReviewModal, { extractTestCasesFromCode } from "../DiffReviewModal.jsx";
@@ -202,7 +201,6 @@ export default function UnitTestWorkspace({
   projectId,
   onOpenFile,
   onSuggestTestcase,
-  onOpenJobQueue,
   onChatContextChange,
   focusFile = null,
 }) {
@@ -708,45 +706,19 @@ export default function UnitTestWorkspace({
           );
         }
 
-        // Deduplicate & enforce 1 AI test case per required case of this business logic file
+        // Deduplicate generated AI test blocks by normalized title while preserving all function test cases
         const seenTitles = new Set();
-        const uniqueMeta = [];
+        const assignedMeta = [];
         for (const tc of testCasesMeta) {
           const t = String(tc.title || tc.testName || "").trim();
-          const key = stripCasePrefix(t) || t.toLowerCase();
+          const key = t.toLowerCase();
           if (!key || seenTitles.has(key)) continue;
           seenTitles.add(key);
-          uniqueMeta.push(tc);
-        }
-
-        const assignedMeta = [];
-        const usedReqKeys = new Set();
-        const remainingMeta = [];
-        for (const tc of uniqueMeta) {
           const def = classifyUnitTestCase(tc);
-          const matchReq = requiredCases.find(
-            (rc) => rc.key === def.key && !usedReqKeys.has(rc.key),
-          );
-          if (matchReq) {
-            usedReqKeys.add(matchReq.key);
-            assignedMeta.push({
-              ...tc,
-              caseKey: matchReq.key,
-              category: matchReq.category,
-            });
-          } else {
-            remainingMeta.push(tc);
-          }
-        }
-        for (const rc of requiredCases) {
-          if (usedReqKeys.has(rc.key)) continue;
-          const nextTc = remainingMeta.shift();
-          if (!nextTc) break;
-          usedReqKeys.add(rc.key);
           assignedMeta.push({
-            ...nextTc,
-            caseKey: rc.key,
-            category: rc.category,
+            ...tc,
+            caseKey: tc.caseKey || def.key,
+            category: tc.category || def.category,
           });
         }
 
@@ -1315,7 +1287,7 @@ export default function UnitTestWorkspace({
     });
   }, [usePeakUnitReport, peakUnitReport, fileEntries]);
   const reportTestStats =
-    usePeakUnitReport && peakUnitReport.testStats?.total > 0 && testTotals.total === 0
+    usePeakUnitReport && peakUnitReport.testStats?.total > testTotals.total
       ? peakUnitReport.testStats
       : testTotals;
 
@@ -1334,35 +1306,66 @@ export default function UnitTestWorkspace({
   const coveredFilesCount = hasExecuted ? fileEntries.filter((f) => Number(f.linesPct ?? 0) > 0).length : 0;
   const totalFilesCount = fileEntries.length;
 
-  // When user runs selected business logic files, the top telemetry strip immediately reflects
-  // the newly measured metrics of those selected business logic files (while Executive Report keeps peak).
-  const isScopedDisplay = Boolean(lastScopedAnalysis?.files?.length);
-  const displayHasExecuted = isScopedDisplay || hasExecuted;
+  // In Files & Tests Matrix after running a selected subset of business logic files,
+  // the top telemetry strip strictly shows ONLY metrics of those selected business logic files.
+  // In Executive Report tab, both the strip and report show the cumulative peak snapshot.
+  const isScopedDisplay = Boolean(lastScopedAnalysis?.files?.length) && activeTab !== "report";
+  const isCumulativeReportStrip =
+    activeTab === "report" && (usePeakUnitReport || Boolean(lastScopedAnalysis?.files?.length));
+  const reportCoveredFilesCount = reportFileEntries.filter((f) => Number(f.linesPct ?? 0) > 0).length;
+
+  const displayHasExecuted =
+    isScopedDisplay || (isCumulativeReportStrip ? hasExecuted || usePeakUnitReport : hasExecuted);
   const displayLinesPct = isScopedDisplay
     ? Number(lastScopedAnalysis.total?.lines?.pct ?? 0)
-    : linesPct;
+    : isCumulativeReportStrip
+      ? reportCoverageSummary.lines
+      : linesPct;
   const displayBranchesPct = isScopedDisplay
     ? Number(lastScopedAnalysis.total?.branches?.pct ?? 0)
-    : branchesPct;
+    : isCumulativeReportStrip
+      ? reportCoverageSummary.branches
+      : branchesPct;
   const displayFuncsPct = isScopedDisplay
     ? Number(lastScopedAnalysis.total?.functions?.pct ?? 0)
-    : funcsPct;
+    : isCumulativeReportStrip
+      ? reportCoverageSummary.functions
+      : funcsPct;
   const displayStmtsPct = isScopedDisplay
     ? Number(lastScopedAnalysis.total?.statements?.pct ?? 0)
-    : stmtsPct;
+    : isCumulativeReportStrip
+      ? reportCoverageSummary.statements
+      : stmtsPct;
   const displayCoveredFilesCount = isScopedDisplay
     ? Number(
         lastScopedAnalysis.coveredFilesCount ??
           lastScopedAnalysis.files.filter((f) => Number(f.linesPct ?? 0) > 0).length,
       )
-    : coveredFilesCount;
+    : isCumulativeReportStrip
+      ? reportCoveredFilesCount
+      : coveredFilesCount;
   const displayTotalFilesCount = isScopedDisplay
     ? lastScopedAnalysis.files.length
     : totalFilesCount;
+  const displayFunctionsCount = isScopedDisplay
+    ? Number(lastScopedAnalysis.total?.functions?.total ?? 0)
+    : functionsList.length;
+  const displaySuitesCount = isScopedDisplay
+    ? Number(
+        lastScopedAnalysis.suitesCount ??
+          lastScopedAnalysis.files.filter((sf) => {
+            const p = cleanDisplayPath(sf.filePath);
+            const match = fileEntries.find((fe) => fe.filePath === p);
+            return Boolean(match?.associatedTestFile);
+          }).length,
+      )
+    : testSuites.length;
   const displayTestTotals =
     isScopedDisplay && lastScopedAnalysis.testStats
       ? lastScopedAnalysis.testStats
-      : testTotals;
+      : isCumulativeReportStrip
+        ? reportTestStats
+        : testTotals;
   const passRate =
     displayTestTotals.total > 0
       ? Math.round((displayTestTotals.passed / displayTestTotals.total) * 100)
@@ -1392,9 +1395,6 @@ export default function UnitTestWorkspace({
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            {onOpenJobQueue && (
-              <CoverageJobQueueButton onClick={onOpenJobQueue} running={isJobActive} />
-            )}
 
             <button
               type="button"
@@ -1522,7 +1522,7 @@ export default function UnitTestWorkspace({
               <div className="flex items-center justify-between text-xs font-medium text-[var(--color-text-secondary)]">
                 <span>{isScopedDisplay ? "Selected files" : "Source files"}</span>
                 <span className="font-mono tabular-nums text-[11px] text-[var(--color-text-muted)]">
-                  {functionsList.length} fns · {testSuites.length} suites
+                  {displayFunctionsCount} fns · {displaySuitesCount} suites
                 </span>
               </div>
               <div className="flex items-baseline gap-1.5 font-mono tabular-nums">
@@ -1608,7 +1608,7 @@ export default function UnitTestWorkspace({
                 id: "report",
                 label: "Executive Report",
                 icon: BarChart3,
-                badge: testTotals.failed > 0 ? `${testTotals.failed} failed` : null,
+                badge: reportTestStats.failed > 0 ? `${reportTestStats.failed} failed` : null,
               },
             ].map((tab) => {
               const Icon = tab.icon;
@@ -1634,7 +1634,7 @@ export default function UnitTestWorkspace({
                   {tab.badge != null && (
                     <span
                       className={`px-1.5 py-0.2 rounded text-[10px] font-mono tabular-nums ${
-                        tab.id === "report" && testTotals.failed > 0
+                        tab.id === "report" && reportTestStats.failed > 0
                           ? "bg-rose-500/15 text-rose-400"
                           : isActive
                             ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
@@ -1809,6 +1809,8 @@ export default function UnitTestWorkspace({
             )}
 
             <UnitFileMatrixTable
+            key={snapshotId || "unit"}
+            snapshotId={snapshotId}
             fileEntries={fileEntries}
             hasExecuted={hasExecuted}
             onSuggestSelected={(paths) => handleSuggestFiles(paths)}

@@ -2,7 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import prisma from '../config/prisma.js';
 import { authMiddleware } from '../middlewares/auth.middleware.js';
-import { requireEnabled, safeError } from '../services/aiEvaluation/common.js';
+import { safeError } from '../services/aiEvaluation/common.js';
 import * as service from '../services/aiEvaluation/management.service.js';
 import { createEvaluationController } from '../controllers/aiEvaluation.controller.js';
 
@@ -40,10 +40,11 @@ export function createEvaluationRouter({ db = prisma, auth = authMiddleware, enq
 
     router.use(auth);
     router.get('/capabilities', requireRead, controller.getCapabilities);
+    router.patch('/settings/toggle', requireRun, controller.updateProjectToggle);
 
-    router.use((_req, _res, next) => {
+    router.use(async (req, _res, next) => {
         try {
-            requireEnabled();
+            await service.assertProjectEvaluationEnabled(db, req.params.projectId);
             next();
         } catch (error) {
             next(error);

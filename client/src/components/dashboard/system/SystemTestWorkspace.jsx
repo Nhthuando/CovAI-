@@ -46,7 +46,7 @@ import {
   extractBlockTitle,
 } from "../../../lib/stagedScenarioOps.js";
 import { getJobDetailApi } from "../../../services/job.service.js";
-import CoverageJobQueueButton from "../CoverageJobQueueButton.jsx";
+import { openFloatingJobQueue } from "../../../lib/floatingJobQueuePrefs.js";
 import SystemSpecMatrixTable from "./SystemSpecMatrixTable.jsx";
 import SystemTestLiveRun from "./SystemTestLiveRun.jsx";
 import SystemReportEmbed from "./SystemReportEmbed.jsx";
@@ -84,7 +84,6 @@ export default function SystemTestWorkspace({
   onChatContextChange,
   snapshotId,
   projectId,
-  onOpenJobQueue,
   focusScenario,
   onOpenFile,
 }) {
@@ -1060,10 +1059,6 @@ export default function SystemTestWorkspace({
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            {onOpenJobQueue && (
-              <CoverageJobQueueButton onClick={onOpenJobQueue} running={runningTests} />
-            )}
-
             <button
               type="button"
               onClick={() => setSetupOpen(true)}
@@ -1291,7 +1286,7 @@ export default function SystemTestWorkspace({
             setError(null);
             setDiscoveryError(null);
           }}
-          onOpenLogs={onOpenJobQueue}
+          onOpenLogs={() => openFloatingJobQueue({ domain: "system" })}
           onOpenSetup={() => setSetupOpen(true)}
         />
 
@@ -1310,6 +1305,8 @@ export default function SystemTestWorkspace({
 
         {activeTab === "matrix" && (
           <SystemSpecMatrixTable
+            key={snapshotId || "system"}
+            snapshotId={snapshotId}
             specGroups={specGroups}
             framework={activeFramework}
             latestDraft={latestDraft}

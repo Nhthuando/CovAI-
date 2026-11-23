@@ -7689,4 +7689,12 @@ export const aiFixSystemTestCaseController = async (req, res) => {
     });
     return res.status(200).json({ success: true, data });
   } catch (error) {
-    console.error("[aiFi
+    console.error("[aiFixSystemTestCaseController] Error:", error);
+    return res
+      .status(error.statusCode || 500)
+      .json({
+        success: false,
+        message: error.message || "Failed to AI fix system test scenario.",
+      });
+  }
+};

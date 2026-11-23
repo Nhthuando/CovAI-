@@ -137,7 +137,7 @@ app.get('/api/health', async (_req, res) => {
 });
 app.use('/api/projects/:projectId/ai-evaluations', aiEvaluationRoutes);
 app.use("/api/projects", projectRoutes);
-if (process.env.AI_EVALUATION_ENABLED === 'true') {
+if (process.env.AI_EVALUATION_ENABLED !== 'false') {
   let recoveringEvaluation = false;
   let startupReconciled = false;
   const recover = async () => {

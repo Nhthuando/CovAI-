@@ -24,6 +24,7 @@ import { extractUnitTestBlocks } from "../utils/testBlockExtractor.js";
 import {
   classifyUnitTestCase,
   getRequiredUnitCasesForFile,
+  isTrivialCallbackFunctionName,
 } from "../../../shared/unitTestCaseCoverage.js";
 import {
   assembleUnitTestContext,
@@ -374,6 +375,18 @@ Schema evidence: ${JSON.stringify(analyzeMongooseSchemas(sourceCode))}`;
       `     * For middleware like 'verifyToken', always supply 'req.cookies = { jwt: "mock_token" }' for authorized cases, and delete/omit cookies.jwt for missing token (401) branches.\n` +
       `     * Use this mock at the top of your test file:\n\`\`\`javascript\n${fallbackJwtMock}\n\`\`\``;
   }
+  const hasBrowserOrExtensionGlobals = Boolean(
+    /\b(?:chrome\s*\.\s*(?:runtime|tabs|storage|action|alarms|scripting|windows)|document\s*\.\s*(?:addEventListener|getElementById|querySelector|querySelectorAll|createElement|body)|window\s*\.\s*(?:addEventListener|location|scrollY)|MutationObserver)\b/.test(
+      sourceCode || "",
+    ),
+  );
+  const browserExtensionMockDirective = hasBrowserOrExtensionGlobals
+    ? `\n   - CRITICAL BROWSER & CHROME EXTENSION ENVIRONMENT CONTRACT:\n` +
+      `     * This source file executes in a browser / Chrome Extension environment and accesses globals such as 'chrome', 'document', 'window', 'navigator', 'localStorage', 'MutationObserver', or 'fetch'.\n` +
+      `     * Before importing or requiring the source module, stub 'globalThis.chrome', 'globalThis.window', 'globalThis.document', 'globalThis.navigator', 'globalThis.localStorage', 'globalThis.MutationObserver', and 'globalThis.fetch' in memory with jest.fn()/vi.fn() spies.\n` +
+      `     * Capture callbacks passed to 'chrome.runtime.onMessage.addListener', 'chrome.tabs.onUpdated.addListener', 'chrome.tabs.onActivated.addListener', 'chrome.alarms.onAlarm.addListener', 'document.addEventListener', and 'window.addEventListener', and invoke those captured listener callbacks directly in your tests with realistic event/message payloads so every internal handler function is executed.`
+    : "";
+
   const decisionTableMarkdown =
     unitTestContext?.decisionTable?.decisionTableMarkdown || "";
   const deltaDecisionTableMarkdown =
@@ -385,11 +398,86 @@ Schema evidence: ${JSON.stringify(analyzeMongooseSchemas(sourceCode))}`;
     unitTestContext?.astMetadata?.exportedSymbols ||
     coverageDetails?.functionFlow ||
     [];
+  const internalAstFunctions =
+    unitTestContext?.astMetadata?.internalFunctions ||
+    unitTestContext?.astMetadata?.details?.internalFunctions ||
+    [];
+  const coverageFunctions =
+    coverageDetails?.functions || coverageDetails?.functionFlow || [];
+
+  const businessFunctionTargets = [];
+  const seenBusinessFnNames = new Set();
+  const addBusinessFnTarget = (name, line = 1, kind = "exported", callers = []) => {
+    const cleanName = String(name || "")
+      .trim()
+      .replace(/\(\)$/, "")
+      .trim();
+    if (
+      !cleanName ||
+      cleanName === "default" ||
+      isTrivialCallbackFunctionName(cleanName) ||
+      seenBusinessFnNames.has(cleanName.toLowerCase())
+    ) {
+      return;
+    }
+    seenBusinessFnNames.add(cleanName.toLowerCase());
+    businessFunctionTargets.push({
+      name: cleanName,
+      line: Number(line) || 1,
+      kind,
+      callers: Array.isArray(callers) ? callers.filter(Boolean) : [],
+    });
+  };
+
+  for (const sym of runtimeSymbols) {
+    const resolvedName =
+      sym.name === "default" ? sym.localName || "defaultExport" : sym.name;
+    addBusinessFnTarget(resolvedName, sym.line || sym.startLine || 1, "exported");
+  }
+  for (const fn of coverageFunctions) {
+    const fnName = fn?.realName || fn?.functionName || fn?.name;
+    const isExp = exportedSymbols.some(
+      (s) => String(s).toLowerCase() === String(fnName || "").toLowerCase(),
+    );
+    addBusinessFnTarget(
+      fnName,
+      fn?.line || fn?.startLine || 1,
+      isExp ? "exported" : "internal",
+    );
+  }
+  for (const intFn of internalAstFunctions) {
+    const fnName = typeof intFn === "string" ? intFn : intFn?.name;
+    addBusinessFnTarget(
+      fnName,
+      intFn?.line || intFn?.startLine || 1,
+      "internal",
+      intFn?.callers || intFn?.exportedCallers || [],
+    );
+  }
+  if (sourceCode) {
+    const declMatches = [
+      ...sourceCode.matchAll(
+        /(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
+      ),
+      ...sourceCode.matchAll(
+        /(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][A-Za-z0-9_$]*)\s*=>/g,
+      ),
+    ];
+    for (const m of declMatches) {
+      if (m[1]) {
+        const isExp = exportedSymbols.some(
+          (s) => String(s).toLowerCase() === m[1].toLowerCase(),
+        );
+        addBusinessFnTarget(m[1], 1, isExp ? "exported" : "internal");
+      }
+    }
+  }
+
   const requiredUnitCases = getRequiredUnitCasesForFile(
     {
       funcsTotal:
         coverageDetails?.summary?.funcsTotal ??
-        Math.max(1, astFunctions.length),
+        Math.max(1, businessFunctionTargets.length || astFunctions.length),
       branchesTotal:
         coverageDetails?.summary?.branchesTotal ??
         (unitTestContext?.astMetadata?.decisionPoints || []).length,
@@ -399,12 +487,21 @@ Schema evidence: ${JSON.stringify(analyzeMongooseSchemas(sourceCode))}`;
     },
     astFunctions,
   );
-  const requiredCaseSummary = requiredUnitCases
-    .map(
-      (c, idx) =>
-        `   ${idx + 1}. "[${c.label}] <concise scenario title>" (caseKey: ${c.key}) — ${c.description}`,
-    )
-    .join("\n");
+  const requiredCaseSummary =
+    businessFunctionTargets.length > 0
+      ? businessFunctionTargets
+          .map((fn, idx) =>
+            fn.kind === "exported"
+              ? `   ${idx + 1}. Function \`${fn.name}\` (line ${fn.line}, exported) -> Write dedicated \`it("[${fn.name}] should ...", ...)\` test(s) covering its normal execution, branch conditions, and edge/error guards.`
+              : `   ${idx + 1}. Function \`${fn.name}\` (line ${fn.line}, internal/script function${fn.callers.length ? `, called by ${fn.callers.join(", ")}` : ""}) -> Exercise via its exported caller(s) or registered event/message listener callbacks and prefix test title with \`"[${fn.name}] ..."\`.`,
+          )
+          .join("\n")
+      : requiredUnitCases
+          .map(
+            (c, idx) =>
+              `   ${idx + 1}. "[${c.label}] <concise scenario title>" (caseKey: ${c.key}) — ${c.description}`,
+          )
+          .join("\n");
   const decisionGuidanceStr =
     unitTestContext?.coverageGaps?.guidanceSummary ||
     "No complex branching detected";
@@ -517,12 +614,16 @@ ${unexportedWarning}
 3. REUSE EXISTING TEST MOCKS AND CONVENTIONS:
    - Carefully inspect the EXISTING TEST CODE in ${testFileInfo.relativePath}.
    - Re-use the exact same mocks, fixtures, and beforeEach configurations already established.
-4. MANDATORY COMPLETE CASE SUITE — MANDATORY TEST MATRIX (DECISION TABLE) | EXACT CASE BUDGET = ${requiredUnitCases.length} TEST(S) | CC = ${cyclomaticComplexity}:
+4. MANDATORY COMPLETE BUSINESS FUNCTION & BRANCH COVERAGE SUITE (${businessFunctionTargets.length || requiredUnitCases.length} TARGET FUNCTION(S) | CC = ${cyclomaticComplexity}):
    - Always preserve existing user tests without deleting or modifying them; generated tests will be merged cleanly alongside any existing test blocks.
-   - Regardless of how many existing tests the project currently has, you MUST generate a complete set of EXACTLY ${requiredUnitCases.length} dedicated \`it(...)\` / \`test(...)\` block(s) — 1 test block for each required case below (NEVER generate more than ${requiredUnitCases.length} new test blocks and NEVER generate 2 blocks for the same required case!):
+   - Unit testing verifies business logic functions and their internal branches (NOT just 4 generic HTTP/integration cases!). You MUST generate dedicated \`it(...)\` / \`test(...)\` block(s) covering EVERY business logic function listed below, plus all conditional branches (\`if/else\`, \`switch\`, ternary, logical \`||\`/\`&&\`/\`??\`, \`try/catch\`) so the file reaches 100% Statements, Branches, Functions, and Lines coverage:
 ${requiredCaseSummary}
-   - MANDATORY TITLE PREFIX CONTRACT: Every generated \`it(...)\` / \`test(...)\` title MUST start with the exact bracketed case label from the list above (e.g. \`"[Happy Path] ..."\`, \`"[Boundary / Edge] ..."\`, \`"[Branch Paths] ..."\`, \`"[Error Handling] ..."\`). Never use multi-code titles like \`TC-BRANCH-04/05/06\`.
-   - Branch/Logic Reference Matrix (combine related branch/assertion checks inside the ${requiredUnitCases.length} focused case tests above):
+   - MANDATORY TITLE PREFIX CONTRACT: Start each generated \`it(...)\` / \`test(...)\` title with the target function name in brackets, e.g. \`"[functionName] should ..."\` (or \`"[functionName] [Happy Path] should ..."\`, \`"[functionName] [Branch Paths] should ..."\`).
+   - 100% PASSING ASSERTION GUARANTEE (ZERO FAILING AI TESTS):
+     * NEVER write speculative \`expect(() => fn(...)).toThrow()\` or \`expect(fn(...)).rejects.toThrow()\` unless the function body literally contains an unguarded \`throw\` statement reachable in that exact test state! If a function catches errors internally (e.g. \`try/catch\` logging or returning \`null\`/\`undefined\`/\`false\` or \`res.status(500)\`), assert the returned fallback or \`res.status\` instead of \`.toThrow()\`!
+     * MODULE SINGLETON STATE AWARENESS: If a module caches singleton state (such as \`let io = null\` in \`socket.js\` set by \`initSocket()\`), calling \`getSocketInstance()\` AFTER \`initSocket()\` has already run in an earlier test will return the initialized instance and WILL NOT throw! Test uninitialized state before initializing singletons, or reset modules, or assert the actual returned value.
+     * DETERMINISTIC ASSERTIONS: Trace exact return expressions and mock return values from the source code before writing \`.toBe(...)\` or \`.toEqual(...)\`. When code uses dynamic timestamps (\`Date.now()\`, \`new Date()\`), assert deterministic fields or use \`expect.any(Number)\` / \`.toMatchObject(...)\` so tests never fail on runtime drift.
+   - Branch/Logic Reference Matrix:
 ${fullCasePlanMarkdown}
    - You MUST include test cases addressing all applicable testing categories:
    - Category A (Happy Path - CORE LOGIC PATH TRAVERSAL):
@@ -554,7 +655,7 @@ ${fullCasePlanMarkdown}
 7. ISOLATION MOCK CONTRACTS (PURE RAM EXECUTION):
    - ${isEsmJest ? "In Native ESM Jest (`--experimental-vm-modules`), mock application/external dependencies ONLY with `await jest.unstable_mockModule('module', () => ({ ... }))` BEFORE dynamically loading the target with `const { ... } = await import('${cleanImportPath}')`. NEVER use `jest.mock(...)` or `{ virtual: true }`." : "Mock application dependencies only. For Jest auto-mocks use jest.mock('module'); virtual mocks require jest.mock('module', () => ({ /* exports */ }), { virtual: true })."}
    - ZERO EXTERNAL .ENV REQUIREMENT: Every unit test must be 100% self-contained and run in memory without requiring real .env files on disk. If the tested module references process.env, stub the variables directly in test setup (${isVitest ? "vi.stubEnv('VAR', 'mock_value')" : "process.env.VAR = 'mock_value'"}) with safe, valid mock fixtures.
-${mockInstructionsStr}${prismaMockDirective}${mongooseMockDirective}${jwtMockDirective}
+${mockInstructionsStr}${prismaMockDirective}${mongooseMockDirective}${jwtMockDirective}${browserExtensionMockDirective}
    - ONLY call functions listed under EXPORTED PUBLIC SYMBOLS (${exportedSymbolsStr}).
 8. STRICT BRACKET BALANCE & SYNTACTIC INTEGRITY:
    - Every describe(...), test(...), it(...), and object literal MUST have fully-closed, matching parentheses ')' and braces '}'.
@@ -633,10 +734,14 @@ ${escapePromptCode(sourceCode, 15000)}
 ${unexportedWarning}
 3. REUSE EXISTING TEST MOCKS AND CONVENTIONS:
    - If test code exists, re-use existing mock patterns and assertions.
-4. MANDATORY COMPLETE CASE SUITE — MANDATORY TEST MATRIX (DECISION TABLE) | EXACT CASE BUDGET = ${requiredUnitCases.length} TEST(S) | CC = ${cyclomaticComplexity}:
-   - Generate EXACTLY ${requiredUnitCases.length} dedicated \`it(...)\` / \`test(...)\` block(s) — 1 focused test for each required Unit case below (combine multi-item/branch assertions cleanly into these ${requiredUnitCases.length} tests to save tokens; NEVER emit more than ${requiredUnitCases.length} tests and NEVER generate 2 tests for the same case!):
+4. MANDATORY COMPLETE BUSINESS FUNCTION & BRANCH COVERAGE SUITE (${businessFunctionTargets.length || requiredUnitCases.length} TARGET FUNCTION(S) | CC = ${cyclomaticComplexity}):
+   - Unit testing verifies business logic functions and their internal branches (NOT just 4 generic HTTP/integration cases!). Generate dedicated \`it(...)\` / \`test(...)\` block(s) covering EVERY business logic function listed below, plus all conditional branches (\`if/else\`, \`switch\`, ternary, logical \`||\`/\`&&\`/\`??\`, \`try/catch\`) so the file achieves 100% Statements, Branches, Functions, and Lines coverage:
 ${requiredCaseSummary}
-   - MANDATORY TITLE PREFIX CONTRACT: Every generated \`it(...)\` / \`test(...)\` title MUST start with the exact bracketed case label from the list above (e.g. \`"[Happy Path] ..."\`, \`"[Boundary / Edge] ..."\`, \`"[Branch Paths] ..."\`, \`"[Error Handling] ..."\`). Never use multi-code titles like \`TC-BRANCH-04/05/06\`.
+   - MANDATORY TITLE PREFIX CONTRACT: Start each generated \`it(...)\` / \`test(...)\` title with the target function name in brackets, e.g. \`"[functionName] should ..."\` (or \`"[functionName] [Happy Path] should ..."\`, \`"[functionName] [Branch Paths] should ..."\`).
+   - 100% PASSING ASSERTION GUARANTEE (ZERO FAILING AI TESTS):
+     * NEVER write speculative \`expect(() => fn(...)).toThrow()\` or \`expect(fn(...)).rejects.toThrow()\` unless the function body literally contains an unguarded \`throw\` statement reachable in that exact test state! If a function catches errors internally (e.g. \`try/catch\` logging or returning \`null\`/\`undefined\`/\`false\` or \`res.status(500)\`), assert the returned fallback or \`res.status\` instead of \`.toThrow()\`!
+     * MODULE SINGLETON STATE AWARENESS: If a module caches singleton state (such as \`let io = null\` in \`socket.js\` set by \`initSocket()\`), calling \`getSocketInstance()\` AFTER \`initSocket()\` has already run in an earlier test will return the initialized instance and WILL NOT throw! Test uninitialized state before initializing singletons, or reset modules, or assert the actual returned value.
+     * DETERMINISTIC ASSERTIONS: Trace exact return expressions and mock return values from the source code before writing \`.toBe(...)\` or \`.toEqual(...)\`. When code uses dynamic timestamps (\`Date.now()\`, \`new Date()\`), assert deterministic fields or use \`expect.any(Number)\` / \`.toMatchObject(...)\` so tests never fail on runtime drift.
    - Branch/Logic Reference Decision Table:
 ${fullCasePlanMarkdown || deltaDecisionTableMarkdown || decisionTableMarkdown}
    - You MUST include test cases addressing all 4 essential business logic testing categories:
@@ -654,8 +759,8 @@ ${fullCasePlanMarkdown || deltaDecisionTableMarkdown || decisionTableMarkdown}
    - Category D (Error & Exception Handling):
      * Test error handling and schema violations while respecting the non-null body guarantee.
      * For pure collection normalizers without throw statements, test tolerance for malformed elements within a populated collection.
-   - REQUIRED CATEGORY COVERAGE MANDATE:
-     * Keep total generated test count strictly matched to the ${requiredUnitCases.length} required Unit case(s) above (\`1\` dedicated \`it(...)\` / \`test(...)\` per required case — never inflate into 10+ tiny tests!).
+   - REQUIRED FUNCTION & BRANCH COVERAGE MANDATE:
+     * Generate dedicated \`it(...)\` / \`test(...)\` blocks covering every business logic function in the file (${businessFunctionTargets.length || 1} function(s)) and all its branches so 100% of Functions, Statements, Branches, and Lines are covered and 100% of generated tests pass.
    - Never generate fake or placeholder assertions like expect(true).toBe(true) for unreachable or environment-dependent code.
 5. REAL ASSERTIONS, NO TRIVIAL PLACEHOLDERS:
    - DO NOT write placeholder assertions like expect(true).toBe(true) or expect(1).toBe(1).
@@ -666,7 +771,7 @@ ${fullCasePlanMarkdown || deltaDecisionTableMarkdown || decisionTableMarkdown}
    - "fullUpdatedContent" MUST contain the complete, standalone test file ready to execute.
 7. ISOLATION MOCK CONTRACTS (PURE RAM EXECUTION):
    - ${isEsmJest ? "In Native ESM Jest (`--experimental-vm-modules`), mock application/external dependencies ONLY with `await jest.unstable_mockModule('module', () => ({ ... }))` BEFORE dynamically loading the target with `const { ... } = await import('${cleanImportPath}')`. NEVER use `jest.mock(...)` or `{ virtual: true }`." : "Mock application dependencies only. For Jest auto-mocks use jest.mock('module'); virtual mocks require jest.mock('module', () => ({ /* exports */ }), { virtual: true })."}
-${mockInstructionsStr}${prismaMockDirective}${mongooseMockDirective}${jwtMockDirective}
+${mockInstructionsStr}${prismaMockDirective}${mongooseMockDirective}${jwtMockDirective}${browserExtensionMockDirective}
    - ONLY call functions listed under EXPORTED PUBLIC SYMBOLS (${exportedSymbolsStr}).
 8. STRICT BRACKET BALANCE & SYNTACTIC INTEGRITY:
    - Every describe(...), test(...), it(...), and object literal MUST have fully-closed, matching parentheses ')' and braces '}'.
@@ -1552,11 +1657,11 @@ export const generateAiUnitTestSuite = async ({
 
   const capGeneratedUnitTestsToRequiredCases = (
     code,
-    reqCases = [],
+    _reqCases = [],
     originalCode = "",
     filePath = "unit.test.js",
   ) => {
-    if (!code || !Array.isArray(reqCases) || reqCases.length === 0) return code;
+    if (!code) return code;
     try {
       const blocks = extractUnitTestBlocks(code);
       if (!blocks || blocks.length === 0) return code;
@@ -1578,53 +1683,22 @@ export const generateAiUnitTestSuite = async ({
       );
       if (rawNewBlocks.length === 0) return code;
 
-      // Deduplicate identical new AI test blocks by normalized title
+      // Deduplicate identical new AI test blocks by normalized full title while preserving all distinct function test blocks
       const seenNewTitles = new Set();
-      const newBlocks = [];
       const duplicateBlocks = [];
       for (const b of rawNewBlocks) {
-        const normT = stripLeadingCaseNoise(b.title).toLowerCase() || String(b.title || "").trim().toLowerCase();
+        const normT = String(b.title || "").trim().toLowerCase();
         if (seenNewTitles.has(normT)) {
           duplicateBlocks.push(b);
         } else {
           seenNewTitles.add(normT);
-          newBlocks.push(b);
         }
       }
 
-      // Pass 1: Match each required case to the first unused block that classifies into that case key
-      const assignedByBlock = new Map();
-      const matchedCaseKeys = new Set();
-      const unusedBlocks = [];
+      if (duplicateBlocks.length === 0) return code;
 
-      for (const b of newBlocks) {
-        const caseKey = classifyUnitTestCase({ title: b.title }).key;
-        const matchingReq = reqCases.find(
-          (rc) => rc.key === caseKey && !matchedCaseKeys.has(rc.key),
-        );
-        if (matchingReq) {
-          matchedCaseKeys.add(matchingReq.key);
-          assignedByBlock.set(b, matchingReq);
-        } else {
-          unusedBlocks.push(b);
-        }
-      }
-
-      // Pass 2: Assign remaining unmatched required cases to unused blocks (so 4 TC-BRANCH tests become 1 per required case)
-      for (const rc of reqCases) {
-        if (matchedCaseKeys.has(rc.key)) continue;
-        const nextUnused = unusedBlocks.shift();
-        if (!nextUnused) break;
-        matchedCaseKeys.add(rc.key);
-        assignedByBlock.set(nextUnused, rc);
-      }
-
-      // Any remaining unused blocks + exact duplicates exceed the required case budget and must be removed
-      const toRemove = [...unusedBlocks, ...duplicateBlocks];
-
-      // Build descending byte-offset edits (both block removals and title normalizations)
       const edits = [];
-      for (const rem of toRemove) {
+      for (const rem of duplicateBlocks) {
         let start = rem.start;
         let end = rem.end;
         while (
@@ -1643,28 +1717,7 @@ export const generateAiUnitTestSuite = async ({
         edits.push({ start, end, replacement: "" });
       }
 
-      for (const [blk, reqCase] of assignedByBlock.entries()) {
-        if (
-          Number.isInteger(blk.titleStart) &&
-          Number.isInteger(blk.titleEnd) &&
-          blk.titleEnd > blk.titleStart
-        ) {
-          const coreTitle =
-            stripLeadingCaseNoise(blk.title) || reqCase.description;
-          const normalizedTitle = `[${reqCase.label}] ${coreTitle}`;
-          if (blk.title !== normalizedTitle) {
-            edits.push({
-              start: blk.titleStart,
-              end: blk.titleEnd,
-              replacement: JSON.stringify(normalizedTitle),
-            });
-          }
-        }
-      }
-
-      if (edits.length === 0) return code;
       edits.sort((a, b) => b.start - a.start);
-
       let updated = code;
       for (const edit of edits) {
         updated =
