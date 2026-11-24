@@ -89,13 +89,25 @@ export const capturePeakIntegrationReportIfHigher = async (
         .filter((s) => s.status === 'failed' || s.executionVerdict === 'FAIL')
         .map((s) => {
             const rawMsg = stripAnsi((s.failureMessages && s.failureMessages[0]) || s.failureDetails?.raw || s.executionReason || '');
-            const summaryMsg = s.failureSummary || summarizeFailureMessage(s.failureMessages || s.executionReason, s.failureDetails, s);
+            const diag = s.failureDiagnostics || null;
+            const serverErrorMessage = s.serverErrorMessage || diag?.diagnosticsDetails?.serverErrorMessage || null;
+            const summaryMsg =
+                diag?.explanation ||
+                s.failureSummary ||
+                summarizeFailureMessage(s.failureMessages || s.executionReason, s.failureDetails, s, serverErrorMessage);
             return {
                 id: s.id || s.scenarioId || s.title,
                 targetEndpoint: s.targetEndpoint,
                 title: s.title || s.name,
-                failureLayer: s.failureLayer || 'ASSERTION_FAILED',
-                responseStatus: s.actualStatus ?? null,
+                failureLayer: diag?.failureLayer || s.failureLayer || 'ASSERTION_FAILED',
+                failingComponent: diag?.failingComponent || null,
+                sourceFile: diag?.lastExecutedLine?.filePath || null,
+                line: diag?.lastExecutedLine?.line || null,
+                codeSnippet: diag?.lastExecutedLine?.codeSnippet || null,
+                suggestedFix: diag?.suggestedFix || null,
+                serverErrorMessage,
+                responseBodyPreview: s.responseBodyPreview || diag?.diagnosticsDetails?.responseBodyPreview || null,
+                responseStatus: s.actualStatus ?? s.actualStatusFromRuntime ?? null,
                 expectedStatus: s.expectedStatus ?? null,
                 errorMessage: summaryMsg,
                 rawErrorMessage: rawMsg && rawMsg !== summaryMsg ? rawMsg : null,

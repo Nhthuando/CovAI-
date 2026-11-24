@@ -2507,6 +2507,16 @@ export default function IntegrationWorkspace({
     );
   }
 
+  const suiteLoadErrors = Array.isArray(workspace?.suiteLoadErrors)
+    ? workspace.suiteLoadErrors
+    : [];
+  const effectiveFailedCount = Math.max(
+    failedScenariosList.length,
+    overallStats.failedScenariosCount || 0,
+    workspace?.qualityClassification?.testScriptErrors || 0,
+    suiteLoadErrors.length,
+  );
+
   const WORKSPACE_TABS = [
     {
       id: "endpoints",
@@ -2519,13 +2529,13 @@ export default function IntegrationWorkspace({
       label: "Executive Report",
       icon: FileText,
       badge:
-        failedScenariosList.length > 0
-          ? `${failedScenariosList.length} failed`
+        effectiveFailedCount > 0
+          ? `${effectiveFailedCount} failed`
           : overallStats.passedScenariosCount > 0
             ? `${overallStats.apiCoverageRate}%`
             : null,
       badgeColor:
-        failedScenariosList.length > 0
+        effectiveFailedCount > 0
           ? "bg-rose-500/[0.06] text-rose-300/85 border border-rose-500/20 font-medium"
           : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] font-medium",
     },
@@ -2752,10 +2762,10 @@ export default function IntegrationWorkspace({
                     <span
                       className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                         overallStats.passedScenariosCount +
-                          overallStats.failedScenariosCount ===
+                          effectiveFailedCount ===
                         0
                           ? "bg-[var(--color-text-muted)]"
-                          : failedScenariosList.length === 0
+                          : effectiveFailedCount === 0
                             ? "bg-emerald-500/65"
                             : "bg-rose-400/75"
                       }`}
@@ -2763,21 +2773,21 @@ export default function IntegrationWorkspace({
                     <span
                       className={`text-sm font-medium truncate ${
                         overallStats.passedScenariosCount +
-                          overallStats.failedScenariosCount ===
+                          effectiveFailedCount ===
                         0
                           ? "text-[var(--color-text-secondary)]"
-                          : failedScenariosList.length === 0
+                          : effectiveFailedCount === 0
                             ? "text-[var(--color-text-secondary)]"
                             : "text-rose-300/85"
                       }`}
                     >
                       {overallStats.passedScenariosCount +
-                        overallStats.failedScenariosCount ===
+                        effectiveFailedCount ===
                       0
                         ? "Not run yet"
-                        : failedScenariosList.length === 0
+                        : effectiveFailedCount === 0
                           ? "All healthy"
-                          : `${failedScenariosList.length} failed`}
+                          : `${effectiveFailedCount} failed`}
                     </span>
                   </div>
                 </button>
@@ -2870,6 +2880,26 @@ export default function IntegrationWorkspace({
           >
             ✕
           </button>
+        </div>
+      )}
+
+      {/* Suite-Level Load Failure Banner (Jest failed before scenarios ran) */}
+      {suiteLoadErrors.length > 0 && (
+        <div className="px-5 py-2.5 bg-rose-500/10 border-b border-rose-500/20 text-xs text-rose-200 space-y-1 no-print">
+          <div className="flex items-center gap-2 font-semibold text-rose-300">
+            <AlertTriangle size={14} className="shrink-0" />
+            <span>
+              {suiteLoadErrors.length} test {suiteLoadErrors.length === 1 ? "file" : "files"} failed to load before executing scenarios:
+            </span>
+          </div>
+          <div className="space-y-1 pl-5">
+            {suiteLoadErrors.slice(0, 4).map((errItem, idx) => (
+              <div key={errItem.testFile || idx} className="font-mono text-[11px] text-[var(--color-text-secondary)]">
+                <span className="text-[var(--color-text)] font-semibold">{errItem.testFile}:</span>{" "}
+                <span className="text-rose-300/90">{errItem.summary}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

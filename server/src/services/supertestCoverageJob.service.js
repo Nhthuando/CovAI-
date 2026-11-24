@@ -1405,6 +1405,53 @@ export const processSupertestCoverageJob = async (jobId) => {
       coverageDir,
     );
 
+    const allSuitesFailedAtLoad =
+      runResult.exitCode !== 0 &&
+      Boolean(
+        supertestResults &&
+          (supertestResults.allSuitesFailedToLoad ||
+            (supertestResults.scenarios?.length > 0 &&
+              supertestResults.scenarios.every((s) => s.isSuiteLevelFailure))),
+      );
+
+    if (allSuitesFailedAtLoad) {
+      const firstFailText =
+        supertestResults.scenarios?.[0]?.failureSummary ||
+        String(supertestResults.scenarios?.[0]?.failureMessages?.[0] || "")
+          .split(/\r?\n/)
+          .find((l) => /Error:|ReferenceError:|SyntaxError:|TypeError:|Cannot find module/i.test(l)) ||
+        "All integration test suites crashed during Jest module loading (0 assertions executed).";
+      const conciseReason = firstFailText.trim().slice(0, 300);
+
+      try {
+        const { invalidateCoverageCache } =
+          await import("../controllers/coverage.controller.js");
+        invalidateCoverageCache(snapshotId);
+        const { invalidateEndpointCache } =
+          await import("./integrationWorkspace.service.js");
+        invalidateEndpointCache(snapshotId, rootDir);
+      } catch (_) {}
+
+      try {
+        import("./dashboardEvents.service.js")
+          .then(({ emitDashboardRunStatus }) => {
+            emitDashboardRunStatus(projectId, {
+              snapshotId,
+              jobId,
+              pillar: "integration",
+              status: "FAILED",
+              message: conciseReason,
+            }).catch(() => {});
+          })
+          .catch(() => {});
+      } catch (_) {}
+
+      throw new ServiceError(
+        `Integration test suites failed to load (${supertestResults.scenarios.length} suite failure(s)): ${conciseReason}`,
+        422,
+      );
+    }
+
     await markJobSuccess(jobId, {
       coverage: {
         lines: summaryResult.total.lines.pct,

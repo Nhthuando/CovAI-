@@ -254,6 +254,7 @@ export function summarizeFailureMessage(
   failureMessages,
   parsedFailure = null,
   req = null,
+  serverErrorMessage = null,
 ) {
   const parsed = parsedFailure || parseFailureMessages(failureMessages, req);
   const rawText = stripAnsi(
@@ -262,9 +263,15 @@ export function summarizeFailureMessage(
         ? failureMessages.join("\n")
         : String(failureMessages || "")),
   ).trim();
+  const cleanServerError =
+    typeof serverErrorMessage === "string" && serverErrorMessage.trim()
+      ? serverErrorMessage.trim().slice(0, 220)
+      : "";
 
   if (!rawText) {
-    return "Assertion or runtime failure during API test execution.";
+    return cleanServerError
+      ? `Server returned error: ${cleanServerError}`
+      : "Assertion or runtime failure during API test execution.";
   }
 
   // 1. CommonJS / ESM syntax mismatch
@@ -295,7 +302,7 @@ export function summarizeFailureMessage(
     /^\d{3}$/.test(parsed.expected.trim()) &&
     /^\d{3}$/.test(parsed.received.trim())
   ) {
-    return `HTTP status mismatch: Expected ${parsed.expected.trim()}, but server returned ${parsed.received.trim()}.`;
+    return `HTTP status mismatch: Expected ${parsed.expected.trim()}, but server returned ${parsed.received.trim()}${cleanServerError ? ` — "${cleanServerError}"` : ""}.`;
   }
 
   // 5. General Jest Expect (Expected vs Received)
@@ -314,7 +321,7 @@ export function summarizeFailureMessage(
     /expected\s+(\d{3})\b[^,\n]*,\s*got\s+(\d{3})\b/i,
   );
   if (supertestStatus) {
-    return `HTTP status mismatch: Expected ${supertestStatus[1]}, but received ${supertestStatus[2]}.`;
+    return `HTTP status mismatch: Expected ${supertestStatus[1]}, but received ${supertestStatus[2]}${cleanServerError ? ` — "${cleanServerError}"` : ""}.`;
   }
 
   // 7. Timeout
@@ -614,8 +621,8 @@ export function evaluateEndpointMetrics({
       status = "Script Error";
     } else if (failedCount > 0) {
       status = "Partial";
-    } else if (passedCount === executedCount) {
-      status = caseCoverageComplete ? "Covered" : "Partial";
+    } else if (passedCount > 0 && caseCoverageComplete) {
+      status = "Covered";
     } else {
       status = "Partial";
     }
@@ -2192,30 +2199,7 @@ const executeBuildIntegrationWorkspace = async (
             ? req.expectedStatus
             : expectedFromFailure || expectedFromTitle;
 
-        const failureDiagnostics =
-          rest.status === "failed"
-            ? diagnoseApiFailureLayer({
-                endpoint: ep,
-                scenario: {
-                  ...rest,
-                  actualStatus:
-                    rest.actualStatus !== undefined ? rest.actualStatus : null,
-                  expectedStatus: expectedStatus,
-                },
-                failureMessages: rest.failureMessages || [],
-                fileCoverageMap: getOrLoadFileCoverage(),
-                sourceCode: sourceCodeList || loadedSourceCode || [],
-              })
-            : null;
-        const classification = classifyScenarioFailure(rest, req);
-        const classificationReason = getClassificationReason(
-          classification,
-          rest,
-          req,
-          parsedFailure,
-        );
-
-        // Match runtime evidence items for this scenario title
+        // Match runtime evidence items for this scenario title BEFORE failure diagnosis
         const scenarioTitleLower = (rest.title || "").trim().toLowerCase();
         const matchingEvidences = runtimeEvidences.filter((ev) => {
           const evTitle = (ev.testTitle || "").trim().toLowerCase();
@@ -2329,6 +2313,44 @@ const executeBuildIntegrationWorkspace = async (
           actualStatusFromRuntime = Number(rest.responseStatus);
           evidenceSource = "TEST_SERVER_HTTP_RESPONSE";
         }
+
+        const serverErrorMessage =
+          mainEv?.serverErrorMessage ||
+          rest.serverErrorMessage ||
+          null;
+        const responseBodyPreview =
+          mainEv?.responseBodyPreview ||
+          rest.responseBodyPreview ||
+          null;
+
+        const failureDiagnostics =
+          rest.status === "failed"
+            ? diagnoseApiFailureLayer({
+                endpoint: ep,
+                scenario: {
+                  ...rest,
+                  actualStatus:
+                    actualStatus !== null && actualStatus !== undefined
+                      ? actualStatus
+                      : rest.actualStatus !== undefined
+                        ? rest.actualStatus
+                        : null,
+                  expectedStatus: expectedStatus,
+                  serverErrorMessage,
+                  responseBodyPreview,
+                },
+                failureMessages: rest.failureMessages || [],
+                fileCoverageMap: getOrLoadFileCoverage(),
+                sourceCode: sourceCodeList || loadedSourceCode || [],
+              })
+            : null;
+        const classification = classifyScenarioFailure(rest, req);
+        const classificationReason = getClassificationReason(
+          classification,
+          rest,
+          req,
+          parsedFailure,
+        );
 
         // DO NOT assign VERIFIED_CONTRACT when there is no traceable contract source.
         let contractSource = req?.contractSource || null;
@@ -2553,11 +2575,18 @@ const executeBuildIntegrationWorkspace = async (
           evidenceSource,
           capturedAt: evidenceCapturedAt,
           runtimeEvidence: structuredEvidence,
+          serverErrorMessage,
+          responseBodyPreview,
           setupRequests,
           teardownRequests,
           failureSummary:
             rest.status === "failed" || parsedFailure
-              ? summarizeFailureMessage(rest.failureMessages, parsedFailure, req)
+              ? summarizeFailureMessage(
+                  rest.failureMessages,
+                  parsedFailure,
+                  req,
+                  serverErrorMessage,
+                )
               : null,
           failureDetails: parsedFailure,
           failureMessages: Array.isArray(rest.failureMessages)
@@ -2854,6 +2883,8 @@ const executeBuildIntegrationWorkspace = async (
   };
 
   // 1. Process all executed scenarios from enrichedScenarios
+  const suiteLoadErrors = [];
+  const seenSuiteErrorFiles = new Set();
   const classifiedExecutedTitles = new Set();
   enrichedScenarios.forEach((sc) => {
     if (classifiedExecutedTitles.has(sc.title)) return;
@@ -2868,7 +2899,28 @@ const executeBuildIntegrationWorkspace = async (
       !allParsedRequests.some((r) => r.testName === sc.title);
     if (isUnmatchedSuiteFailure && sc.status === "failed") {
       qualityClassification.testScriptErrors++;
+      const errKey = sc.testFile || sc.title;
+      if (!seenSuiteErrorFiles.has(errKey)) {
+        seenSuiteErrorFiles.add(errKey);
+        suiteLoadErrors.push({
+          testFile: sc.testFile || sc.title,
+          title: sc.title,
+          summary: summarizeFailureMessage(sc.failureMessages, null, req),
+        });
+      }
       return;
+    }
+
+    if (sc.isSuiteLevelFailure && sc.status === "failed") {
+      const errKey = sc.testFile || sc.title;
+      if (!seenSuiteErrorFiles.has(errKey)) {
+        seenSuiteErrorFiles.add(errKey);
+        suiteLoadErrors.push({
+          testFile: sc.testFile || sc.title,
+          title: sc.title,
+          summary: summarizeFailureMessage(sc.failureMessages, null, req),
+        });
+      }
     }
 
     qualityClassification.total++;
@@ -3304,6 +3356,7 @@ const executeBuildIntegrationWorkspace = async (
           timestamp: latestRun.finishedAt || latestRun.createdAt || null,
         }
       : null,
+    suiteLoadErrors,
     semanticState,
   };
 

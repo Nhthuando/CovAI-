@@ -170,10 +170,15 @@ export const parseJestResults = (coverageDir, options = {}) => {
                     }
 
                     // 2. Fallback: Parse test file directly from disk if not yet recovered
-                    if (registeredScenarios.length === 0 && cleanedSuiteFile && fs.existsSync(cleanedSuiteFile)) {
+                    const diskSuitePath = cleanedSuiteFile
+                        ? (fs.existsSync(cleanedSuiteFile)
+                            ? cleanedSuiteFile
+                            : (options.rootDir ? path.resolve(options.rootDir, cleanedSuiteFile) : cleanedSuiteFile))
+                        : null;
+                    if (registeredScenarios.length === 0 && diskSuitePath && fs.existsSync(diskSuitePath)) {
                         try {
-                            const fileContent = fs.readFileSync(cleanedSuiteFile, 'utf8');
-                            const reqs = extractTestRequests(fileContent, cleanedSuiteFile);
+                            const fileContent = fs.readFileSync(diskSuitePath, 'utf8');
+                            const reqs = extractTestRequests(fileContent, cleanedSuiteFile || diskSuitePath);
                             if (Array.isArray(reqs) && reqs.length > 0) {
                                 registeredScenarios = reqs.map(r => ({
                                     title: r.testName,
@@ -218,6 +223,12 @@ export const parseJestResults = (coverageDir, options = {}) => {
 
         const totalTests = Math.max(raw.numTotalTests || 0, scenarios.length);
         const failedTests = Math.max(raw.numFailedTests || 0, scenarios.filter(s => s.status === 'failed').length);
+        const allSuitesFailedToLoad =
+            (raw.numTotalTests || 0) === 0 &&
+            (
+                (raw.numRuntimeErrorTestSuites || 0) > 0 ||
+                (scenarios.length > 0 && scenarios.every(s => s.isSuiteLevelFailure))
+            );
 
         const results = {
             totalTests,
@@ -226,6 +237,7 @@ export const parseJestResults = (coverageDir, options = {}) => {
             skippedTests: Math.max(raw.numPendingTests || 0, scenarios.filter(s => ['pending', 'skipped', 'todo'].includes(s.status)).length),
             durationMs: duration,
             status: failedTests > 0 || raw.numRuntimeErrorTestSuites > 0 || raw.success === false ? "FAILED" : "PASSED",
+            allSuitesFailedToLoad,
             scenarios
         };
 
@@ -418,10 +430,15 @@ export const parseVitestResults = (coverageDir, options = {}) => {
                     }
 
                     // 2. Fallback: Parse test file directly from disk if not yet recovered
-                    if (registeredScenarios.length === 0 && cleanedSuiteFile && fs.existsSync(cleanedSuiteFile)) {
+                    const diskSuitePath = cleanedSuiteFile
+                        ? (fs.existsSync(cleanedSuiteFile)
+                            ? cleanedSuiteFile
+                            : (options.rootDir ? path.resolve(options.rootDir, cleanedSuiteFile) : cleanedSuiteFile))
+                        : null;
+                    if (registeredScenarios.length === 0 && diskSuitePath && fs.existsSync(diskSuitePath)) {
                         try {
-                            const fileContent = fs.readFileSync(cleanedSuiteFile, 'utf8');
-                            const reqs = extractTestRequests(fileContent, cleanedSuiteFile);
+                            const fileContent = fs.readFileSync(diskSuitePath, 'utf8');
+                            const reqs = extractTestRequests(fileContent, cleanedSuiteFile || diskSuitePath);
                             if (Array.isArray(reqs) && reqs.length > 0) {
                                 registeredScenarios = reqs.map(r => ({
                                     title: r.testName,

@@ -518,7 +518,7 @@ export const buildIntegrationTestPrompt = ({
   } else {
     prompt += `#### Supertest + Jest Guidelines:\n`;
     prompt += `- Follow the repository's module system and existing integration test mocking pattern shown below (if ESM \`"type": "module"\`, use \`import { jest, describe, it, expect, beforeEach } from '@jest/globals';\` and \`await jest.unstable_mockModule(...)\` BEFORE dynamically importing routes/app; if CommonJS, use \`require\` and \`jest.mock(...)\`).\n`;
-    prompt += `- Mock external AI/network/payment/email services (e.g. \`ai.service.js\`, \`@google/generative-ai\`) and Prisma/DB modules when existing tests do so, so tests pass deterministically offline without live API keys.\n`;
+    prompt += `- Mock external AI/network/payment/email/SMS services (e.g. \`ai.service.js\`, \`@google/generative-ai\`, \`stripe\`, \`nodemailer\`, \`@sendgrid/mail\`, \`twilio\`, \`axios\`) and Prisma/DB modules via \`await jest.unstable_mockModule(...)\` (ESM) or \`jest.mock(...)\` (CJS) BEFORE importing the app/routes so tests pass deterministically offline without live API keys.\n`;
     prompt += `- Use inline chain calls: \`const res = await request(app).post(path).send(payload);\`.\n`;
     prompt += `- Status assertions: \`expect(res.status).toBe(200);\`.\n`;
     prompt += `- Body assertions: assert ONLY fields actually returned by the controller/service below.\n`;
@@ -766,7 +766,7 @@ export const buildIntegrationRepairPrompt = ({
 
   prompt += `### 4. STRICT REPAIR RULES\n`;
   prompt += `1. Keep ONE single top-level import block (no duplicate imports/declarations).\n`;
-  prompt += `2. Fix wrong payloads, missing DB/external service mocks (check every \`prisma.<model>.<method>\` and imported service method in Section 3!), wrong route mount prefixes (check Section 2.8!), or hallucinated response body keys.\n`;
+  prompt += `2. Fix wrong payloads, missing DB/external service mocks (check every \`prisma.<model>.<method>\`, \`stripe\`, \`nodemailer\`, \`twilio\`, \`@google/generative-ai\`, and imported service method in Section 3 — in ESM use \`await jest.unstable_mockModule(...)\` BEFORE \`await import(...)\`), wrong route mount prefixes (check Section 2.8!), or hallucinated response body keys.\n`;
   prompt += `3. Assert ONE exact HTTP status code per test (matching what the controller actually returns for that case).\n`;
   prompt += `4. Do NOT delete failing endpoints or scenarios — fix them so ALL ${endpoints.length} endpoints and ALL required cases are covered AND PASSING. Never replace a real imported route/app handler with a stubbed inline \`app.get(...)\` in the test file.\n`;
   prompt += `5. Return ONLY a JSON object inside \`\`\`json\`\`\`:\n\`\`\`json\n{\n  "content": "// Complete repaired, runnable test file..."\n}\n\`\`\``;

@@ -220,11 +220,17 @@ export function getEndpointRequiredCases(ep) {
   ) {
     requiredCases.push({ ...CASE_DEFINITIONS.NOT_FOUND });
   }
+  const hasExplicitNon5xxCatch =
+    statusCodes.length > 0 &&
+    !statusCodes.some((s) => s >= 500) &&
+    !/500|5\d\d|next\s*\(|limit|length|boundary/.test(snippet);
+
   if (
-    hasTryCatch ||
-    /catch|500|5\d\d|throw|next\s*\(|limit|length|boundary|error|exception|async\s+|await\s+|prisma|mongoose|sequelize|knex|typeorm/.test(
-      snippet,
-    )
+    !hasExplicitNon5xxCatch &&
+    (hasTryCatch ||
+      /catch|500|5\d\d|throw|next\s*\(|limit|length|boundary|error|exception|async\s+|await\s+|prisma|mongoose|sequelize|knex|typeorm/.test(
+        snippet,
+      ))
   ) {
     requiredCases.push({ ...CASE_DEFINITIONS.EDGE });
   }

@@ -1,7 +1,9 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { transformSync } from '@babel/core';
 import { runPlaywrightApiTests, parsePlaywrightApiJsonResults } from '../services/playwrightApiRunner.service.js';
 import { traceApiEndpointCoverage, diagnoseApiFailureLayer, buildApiCoverageReport } from '../services/apiCoverageTracer.service.js';
-import { classifyScenarioFailure, extractValidatedTestRequests } from '../services/integrationWorkspace.service.js';
+import { classifyScenarioFailure, extractValidatedTestRequests, summarizeFailureMessage } from '../services/integrationWorkspace.service.js';
+import { generateSupertestSetupScript } from '../services/databaseMockTemplate.service.js';
 
 describe('Phase 3: Execution & Tracing Engine Test Suite', () => {
     describe('Task 3.1 & 3.2: Playwright API Runner & Test Results Parser', () => {
@@ -357,6 +359,94 @@ describe('Phase 3: Execution & Tracing Engine Test Suite', () => {
             expect(reqs).toHaveLength(2);
             expect(reqs.find((r) => r.path === '/summarize')?.scenarioId).toBe('sc-summarize-400');
             expect(reqs.find((r) => r.path === '/classify')?.scenarioId).toBe('sc-classify-400');
+        });
+
+        it('diagnoses controller crash with sourceFile fallback, lastExecutedLine, and serverErrorMessage', () => {
+            const diagnosis = diagnoseApiFailureLayer({
+                endpoint: {
+                    method: 'POST',
+                    path: '/api/payments/checkout',
+                    controllerFile: null,
+                    sourceFile: 'server/src/routes/payment.routes.js',
+                    sourceLineStart: 12,
+                    sourceLineEnd: 20,
+                },
+                scenario: {
+                    title: 'POST /api/payments/checkout creates session',
+                    actualStatus: 500,
+                    expectedStatus: 200,
+                    status: 'failed',
+                    serverErrorMessage: 'Stripe authentication failed: Invalid API Key',
+                    responseBodyPreview: '{"error":"Stripe authentication failed: Invalid API Key"}',
+                },
+                failureMessages: ['Expected: 200\nReceived: 500'],
+                fileCoverageMap: {
+                    'server/src/routes/payment.routes.js': {
+                        filePath: 'server/src/routes/payment.routes.js',
+                        lineHits: { 12: 1, 13: 1, 14: 1, 15: 0 },
+                    },
+                },
+                sourceCode: [
+                    {
+                        path: 'server/src/routes/payment.routes.js',
+                        content: Array.from({ length: 20 }, (_, idx) => `const line${idx + 1} = ${idx === 13 ? 'await stripe.checkout.sessions.create()' : idx + 1};`).join('\n'),
+                    },
+                ],
+            });
+
+            expect(diagnosis.failureLayer).toBe('CONTROLLER_CRASH');
+            expect(diagnosis.failingComponent).toBe('server/src/routes/payment.routes.js');
+            expect(diagnosis.lastExecutedLine).toBeTruthy();
+            expect(diagnosis.lastExecutedLine.line).toBe(14);
+            expect(diagnosis.lastExecutedLine.filePath).toBe('server/src/routes/payment.routes.js');
+            expect(diagnosis.explanation).toContain('Stripe authentication failed');
+            expect(diagnosis.diagnosticsDetails.serverErrorMessage).toBe('Stripe authentication failed: Invalid API Key');
+        });
+
+        it('detects DATABASE_FAILURE from captured serverErrorMessage even when Jest only logs status 500', () => {
+            const diagnosis = diagnoseApiFailureLayer({
+                endpoint: mockEndpoint,
+                scenario: {
+                    title: 'POST /api/orders fails on duplicate order',
+                    actualStatus: 500,
+                    expectedStatus: 201,
+                    status: 'failed',
+                    serverErrorMessage: 'PrismaClientKnownRequestError P2002 Unique constraint failed',
+                },
+                failureMessages: ['Expected: 201\nReceived: 500'],
+            });
+
+            expect(diagnosis.failureLayer).toBe('DATABASE_FAILURE');
+            expect(diagnosis.explanation).toContain('PrismaClientKnownRequestError');
+        });
+
+        it('appends captured serverErrorMessage to summarizeFailureMessage output', () => {
+            const msg = summarizeFailureMessage(
+                ['Expected: 201\nReceived: 500'],
+                null,
+                null,
+                'Payment gateway timeout from Stripe API',
+            );
+
+            expect(msg).toContain('Expected 201, but server returned 500');
+            expect(msg).toContain('Payment gateway timeout from Stripe API');
+        });
+
+        it('generates setup script with serverErrorMessage capture and both CJS + ESM Stripe mocks', () => {
+            const script = generateSupertestSetupScript({});
+            expect(script).toContain('serverErrorMessage');
+            expect(script).toContain('responseBodyPreview');
+            expect(script).toContain("jest.mock('stripe'");
+            expect(script).toContain("jest.unstable_mockModule('stripe'");
+
+            // Must transform cleanly with babel-plugin-jest-hoist (no jest.mock out-of-scope hoisting errors)
+            const transformed = transformSync(script, {
+                filename: 'covai.supertest.setup.js',
+                configFile: false,
+                babelrc: false,
+                plugins: ['babel-plugin-jest-hoist'],
+            });
+            expect(transformed.code).toContain('__covai_stripe_mock__');
         });
     });
 });

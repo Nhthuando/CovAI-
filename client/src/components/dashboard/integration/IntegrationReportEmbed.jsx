@@ -157,22 +157,6 @@ export default function IntegrationReportEmbed({
             r.caseCoverage || getEndpointCaseCoverage(r, r.scenarios || []),
         }));
 
-  const failureLogs =
-    report?.failureLogs && report.failureLogs.length > 0
-      ? report.failureLogs
-      : routeMatrix
-          .filter((r) => r.status === "FAILED")
-          .map((r, i) => ({
-            id: `fail_${i}`,
-            targetEndpoint: `${r.method} ${r.path}`,
-            title: `Endpoint regression on ${r.path}`,
-            failureLayer: "ASSERTION_FAILED",
-            sourceFile: r.sourceFile || "controllers/handler.js",
-            line: 42,
-            errorMessage:
-              "Endpoint has failing test scenarios or HTTP contract mismatch.",
-          }));
-
   const allScenarios = usePeakReport
     ? routeMatrix.flatMap((r) =>
         (r.scenarios || []).map((s) => ({ ...s, endpoint: r })),
@@ -180,6 +164,81 @@ export default function IntegrationReportEmbed({
     : rawEndpoints.flatMap((e) =>
         (e.scenarios || []).map((s) => ({ ...s, endpoint: e })),
       );
+
+  const failedScenarioLogs = allScenarios
+    .filter((s) => s.status === "failed" || s.executionVerdict === "FAIL")
+    .map((s, i) => {
+      const diag = s.failureDiagnostics || null;
+      const lastLine = diag?.lastExecutedLine || null;
+      const epLabel = s.targetEndpoint || (s.endpoint ? `${s.endpoint.method} ${s.endpoint.path}` : "API Endpoint");
+      return {
+        id: s.id || s.scenarioId || `sc_fail_${i}`,
+        targetEndpoint: epLabel,
+        title: s.name || s.title || epLabel,
+        failureLayer: diag?.failureLayer || s.failureLayer || "ASSERTION_FAILED",
+        failingComponent: diag?.failingComponent || s.endpoint?.controllerFile || s.endpoint?.sourceFile || null,
+        sourceFile: lastLine?.filePath || s.endpoint?.controllerFile || s.endpoint?.sourceFile || null,
+        line: lastLine?.line || s.endpoint?.controllerLineStart || null,
+        codeSnippet: lastLine?.codeSnippet || null,
+        suggestedFix: diag?.suggestedFix || null,
+        serverErrorMessage:
+          s.serverErrorMessage ||
+          diag?.diagnosticsDetails?.serverErrorMessage ||
+          null,
+        responseBodyPreview:
+          s.responseBodyPreview ||
+          diag?.diagnosticsDetails?.responseBodyPreview ||
+          null,
+        expectedStatus: s.expectedStatus ?? null,
+        responseStatus: s.actualStatus ?? s.actualStatusFromRuntime ?? null,
+        errorMessage:
+          diag?.explanation ||
+          s.failureSummary ||
+          s.executionReason ||
+          "Scenario failed during HTTP assertion or runtime execution.",
+        rawErrorMessage:
+          Array.isArray(s.failureMessages) && s.failureMessages.length > 0
+            ? s.failureMessages.join("\n")
+            : s.failureSummary || s.executionReason || "",
+      };
+    });
+
+  const failureLogs =
+    report?.failureLogs && report.failureLogs.length > 0
+      ? report.failureLogs.map((f) => {
+          const match = failedScenarioLogs.find(
+            (sf) =>
+              sf.targetEndpoint === f.targetEndpoint &&
+              (!f.title || sf.title === f.title),
+          );
+          if (!match) return f;
+          return {
+            ...match,
+            ...f,
+            failureLayer: f.failureLayer || match.failureLayer,
+            failingComponent: f.failingComponent || match.failingComponent,
+            sourceFile: f.sourceFile || match.sourceFile,
+            line: f.line ?? match.line,
+            codeSnippet: f.codeSnippet || match.codeSnippet,
+            suggestedFix: f.suggestedFix || match.suggestedFix,
+            serverErrorMessage: f.serverErrorMessage || match.serverErrorMessage,
+            responseBodyPreview: f.responseBodyPreview || match.responseBodyPreview,
+          };
+        })
+      : failedScenarioLogs.length > 0
+        ? failedScenarioLogs
+        : routeMatrix
+            .filter((r) => r.status === "FAILED")
+            .map((r, i) => ({
+              id: `fail_${i}`,
+              targetEndpoint: `${r.method} ${r.path}`,
+              title: `Endpoint regression on ${r.path}`,
+              failureLayer: "ASSERTION_FAILED",
+              sourceFile: r.sourceFile || "controllers/handler.js",
+              line: 42,
+              errorMessage:
+                "Endpoint has failing test scenarios or HTTP contract mismatch.",
+            }));
 
   const totalScenarios = Math.max(
     allScenarios.length,
@@ -1040,22 +1099,67 @@ export default function IntegrationReportEmbed({
                         </span>
                       )}
                     </div>
-                    <span className="font-mono text-[11px] text-rose-300/85 tabular-nums shrink-0">
-                      Expected {f.expectedStatus || 200} · Received{" "}
-                      {f.responseStatus || "Error"}
-                    </span>
+                    <div className="flex items-center gap-2.5 shrink-0">
+                      {f.failingComponent && (
+                        <span className="font-mono text-[10px] text-[var(--color-text-muted)] truncate max-w-[200px]">
+                          {f.failingComponent}
+                        </span>
+                      )}
+                      <span className="font-mono text-[11px] text-rose-300/85 tabular-nums">
+                        Expected {f.expectedStatus || 200} · Received{" "}
+                        {f.responseStatus || "Error"}
+                      </span>
+                    </div>
                   </div>
-                  <div className="font-sans text-[12px] text-[var(--color-text-secondary)] pl-3 border-l-2 border-rose-400/35">
-                    {conciseSummary}
+                  <div className="font-sans text-[12px] text-[var(--color-text-secondary)] pl-3 border-l-2 border-rose-400/35 space-y-1.5">
+                    <p className="m-0">{conciseSummary}</p>
+                    {f.serverErrorMessage && (
+                      <div className="px-2 py-1 rounded bg-[var(--color-bg)] border border-rose-500/20 font-mono text-[10px] text-rose-300 break-words">
+                        <span className="text-[var(--color-text-muted)] mr-1.5">
+                          Server Error:
+                        </span>
+                        {f.serverErrorMessage}
+                      </div>
+                    )}
+                    {f.line && (f.sourceFile || f.codeSnippet) && (
+                      <div className="rounded bg-[var(--color-bg)] border border-[var(--color-border)] p-2 space-y-1">
+                        <div className="font-mono text-[10px] text-[var(--color-text-muted)]">
+                          Stopped near{" "}
+                          <span className="text-[var(--color-text)] tabular-nums">
+                            {f.sourceFile ? `${f.sourceFile}:${f.line}` : `Line ${f.line}`}
+                          </span>
+                        </div>
+                        {f.codeSnippet && (
+                          <pre className="m-0 font-mono text-[10px] text-[var(--color-text-secondary)] whitespace-pre-wrap break-words">
+                            {f.codeSnippet}
+                          </pre>
+                        )}
+                      </div>
+                    )}
+                    {f.suggestedFix && (
+                      <p className="m-0 text-[11px] text-[var(--color-text-muted)]">
+                        <span className="font-semibold text-[var(--color-text-secondary)]">
+                          Suggested fix:{" "}
+                        </span>
+                        {f.suggestedFix}
+                      </p>
+                    )}
                   </div>
-                  {showRawToggle && (
+                  {(showRawToggle || f.responseBodyPreview) && (
                     <details className="pl-3 pt-0.5">
                       <summary className="text-[11px] font-mono text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] cursor-pointer select-none">
                         Technical details
                       </summary>
-                      <pre className="mt-1.5 p-2.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-[10px] text-[var(--color-text-muted)] whitespace-pre-wrap break-words max-h-40 overflow-y-auto custom-scrollbar">
-                        {rawText}
-                      </pre>
+                      {f.responseBodyPreview && (
+                        <pre className="mt-1.5 p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-[10px] text-rose-300/90 whitespace-pre-wrap break-words max-h-28 overflow-y-auto custom-scrollbar">
+                          {`Response body: ${f.responseBodyPreview}`}
+                        </pre>
+                      )}
+                      {showRawToggle && (
+                        <pre className="mt-1.5 p-2.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-[10px] text-[var(--color-text-muted)] whitespace-pre-wrap break-words max-h-40 overflow-y-auto custom-scrollbar">
+                          {rawText}
+                        </pre>
+                      )}
                     </details>
                   )}
                 </div>

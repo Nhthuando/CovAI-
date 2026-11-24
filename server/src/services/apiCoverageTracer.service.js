@@ -258,21 +258,46 @@ export const diagnoseApiFailureLayer = ({
     fileCoverageMap = {},
     sourceCode = [],
 } = {}) => {
+    const serverErrMsg = String(
+        scenario.serverErrorMessage ||
+        scenario.runtimeEvidence?.serverErrorMessage ||
+        ""
+    ).trim();
+    const respPreview = String(
+        scenario.responseBodyPreview ||
+        scenario.runtimeEvidence?.responseBodyPreview ||
+        ""
+    ).trim();
+
     const rawErrors = [
         scenario.errorMessage || "",
         scenario.errorStack || "",
         ...(failureMessages || []),
     ].join("\n");
+    const diagnosticCorpus = [rawErrors, serverErrMsg].filter(Boolean).join("\n");
 
-    const actualStatus = Number(scenario.actualStatus || scenario.status || 0);
+    const actualStatus =
+        Number(
+            scenario.actualStatus ??
+            scenario.actualStatusFromRuntime ??
+            (typeof scenario.status === "number" ? scenario.status : 0)
+        ) || 0;
     const expectedStatus = Number(scenario.expectedStatus || 200);
 
-    const controllerFile = endpoint.controllerFile || "";
-    const lineStart = endpoint.controllerLineStart || endpoint.controllerLine || 1;
-    const lineEnd = endpoint.controllerLineEnd || (lineStart + 25);
+    const controllerFile = endpoint.controllerFile || endpoint.sourceFile || "";
+    const lineStart =
+        endpoint.controllerLineStart || endpoint.controllerLine || endpoint.sourceLineStart || 1;
+    const lineEnd =
+        endpoint.controllerLineEnd || endpoint.sourceLineEnd || (lineStart + 25);
     const fileCov = findFileCoverage(controllerFile, fileCoverageMap);
 
-    const lastExecuted = fileCov ? findLastExecutedLine(fileCov, lineStart, lineEnd, sourceCode) : null;
+    const rawLastExecuted = fileCov ? findLastExecutedLine(fileCov, lineStart, lineEnd, sourceCode) : null;
+    const lastExecuted = rawLastExecuted
+        ? {
+            ...rawLastExecuted,
+            filePath: rawLastExecuted.filePath || fileCov?.filePath || controllerFile || null,
+        }
+        : null;
 
     // Check statements hit inside controller
     let controllerStatementsHit = 0;
@@ -286,22 +311,24 @@ export const diagnoseApiFailureLayer = ({
 
     // 1. ROUTER_NOT_FOUND
     const isRouterNotFound =
-        actualStatus === 404 && expectedStatus !== 404 ||
-        /cannot (get|post|put|delete|patch)|route not found|no route matched|404 not found/i.test(rawErrors) ||
+        (actualStatus === 404 && expectedStatus !== 404) ||
+        /cannot (get|post|put|delete|patch)|route not found|no route matched|404 not found/i.test(diagnosticCorpus) ||
         (controllerStatementsHit === 0 && actualStatus === 404);
 
     if (isRouterNotFound) {
         return {
             failureLayer: "ROUTER_NOT_FOUND",
-            explanation: `API request to '${endpoint.method || "GET"} ${endpoint.path || "/"}' returned 404 or route handler was not found. No controller lines were triggered.`,
-            failingComponent: endpoint.routeFile || "Express Router",
+            explanation: `API request to '${endpoint.method || "GET"} ${endpoint.path || "/"}' returned 404 or route handler was not found. No controller lines were triggered.${serverErrMsg ? ` Server response: "${serverErrMsg}".` : ""}`,
+            failingComponent: endpoint.routeFile || endpoint.sourceFile || "Express Router",
             lastExecutedLine: null,
             suggestedFix: "Check `app.use()` prefix configuration and HTTP method / URL path in router file.",
             diagnosticsDetails: {
                 actualStatus,
                 expectedStatus,
                 controllerEntered: false,
-                routeFile: endpoint.routeFile || null,
+                routeFile: endpoint.routeFile || endpoint.sourceFile || null,
+                serverErrorMessage: serverErrMsg || null,
+                responseBodyPreview: respPreview || null,
             },
         };
     }
@@ -311,15 +338,15 @@ export const diagnoseApiFailureLayer = ({
     const isAuthOrForbidden = (actualStatus === 401 && expectedStatus !== 401) ||
                               (actualStatus === 403 && expectedStatus !== 403);
     const isValidationError = (actualStatus === 422 || (actualStatus === 400 && expectedStatus !== 400)) &&
-                              /validation|schema|invalid parameter|required field|joi|zod/i.test(rawErrors);
-    const isMiddlewareKeyword = /unauthorized|forbidden|jwt expired|invalid token|cors|csrf|rate limit/i.test(rawErrors);
+                              /validation|schema|invalid parameter|required field|joi|zod/i.test(diagnosticCorpus);
+    const isMiddlewareKeyword = /unauthorized|forbidden|jwt expired|invalid token|cors|csrf|rate limit/i.test(diagnosticCorpus);
 
     // If controller was never entered, but status is rejected or auth error
     if (isAuthOrForbidden || isValidationError || isMiddlewareKeyword || (controllerStatementsHit === 0 && (actualStatus >= 400 && actualStatus < 500))) {
         const mwName = (endpoint.middlewares && endpoint.middlewares[0]?.name) || "Auth/Validation Middleware";
         return {
             failureLayer: "MIDDLEWARE_REJECTED",
-            explanation: `Request blocked at middleware layer (${mwName}) before reaching controller. Status code: ${actualStatus || 401}.`,
+            explanation: `Request blocked at middleware layer (${mwName}) before reaching controller. Status code: ${actualStatus || 401}.${serverErrMsg ? ` Server response: "${serverErrMsg}".` : ""}`,
             failingComponent: mwName,
             lastExecutedLine: null,
             suggestedFix: "Add Bearer Token, API Key, or verify request body schema/headers match middleware requirements.",
@@ -328,27 +355,31 @@ export const diagnoseApiFailureLayer = ({
                 expectedStatus,
                 controllerEntered: false,
                 middlewares: endpoint.middlewares || [],
+                serverErrorMessage: serverErrMsg || null,
+                responseBodyPreview: respPreview || null,
             },
         };
     }
 
     // 3. DATABASE_FAILURE
     const isDbError =
-        /prisma.*error|prismaclient|p2002|p2025|mongo(ose)?error|econnrefused|connect econnrefused|unique constraint|foreign key constraint|sequelize|knex|sqlite|database connection/i.test(rawErrors) ||
+        /prisma.*error|prismaclient|p2002|p2025|mongo(ose)?error|econnrefused|connect econnrefused|unique constraint|foreign key constraint|sequelize|knex|sqlite|database connection/i.test(diagnosticCorpus) ||
         (lastExecuted && /(prisma|db\.|mongoose|query\(|await\s+db|knex)/i.test(lastExecuted.codeSnippet || ""));
 
     if (isDbError) {
         return {
             failureLayer: "DATABASE_FAILURE",
-            explanation: `Database query or connection error occurred. Execution paused near line ${lastExecuted ? lastExecuted.line : lineStart}.`,
+            explanation: `Database query or connection error occurred. Execution paused near line ${lastExecuted ? lastExecuted.line : lineStart}.${serverErrMsg ? ` Server error: "${serverErrMsg}".` : ""}`,
             failingComponent: controllerFile || "Database Layer",
             lastExecutedLine: lastExecuted,
-            suggestedFix: "Ensure test database is running, DATABASE_URL is valid, and foreign keys/seed data exist before testing.",
+            suggestedFix: "Ensure test database/mock store is seeded, DATABASE_URL is valid, and foreign keys/constraints match the request payload.",
             diagnosticsDetails: {
                 actualStatus,
                 expectedStatus,
                 controllerEntered: true,
                 rawErrorMessage: rawErrors.split("\n")[0] || null,
+                serverErrorMessage: serverErrMsg || null,
+                responseBodyPreview: respPreview || null,
             },
         };
     }
@@ -356,22 +387,24 @@ export const diagnoseApiFailureLayer = ({
     // 4. CONTROLLER_CRASH
     const isControllerCrash =
         actualStatus === 500 ||
-        /typeerror|referenceerror|rangeerror|syntaxerror|unhandledpromiserejection/i.test(rawErrors) ||
+        /typeerror|referenceerror|rangeerror|syntaxerror|unhandledpromiserejection/i.test(diagnosticCorpus) ||
         (controllerStatementsHit > 0 && actualStatus >= 500);
 
     if (isControllerCrash) {
         return {
             failureLayer: "CONTROLLER_CRASH",
-            explanation: `Controller crashed due to unhandled exception. Execution stopped near line ${lastExecuted ? lastExecuted.line : lineStart}.`,
+            explanation: `Controller crashed due to unhandled exception. Execution stopped near line ${lastExecuted ? lastExecuted.line : lineStart}.${serverErrMsg ? ` Server error: "${serverErrMsg}".` : ""}`,
             failingComponent: controllerFile || "Controller Handler",
             lastExecutedLine: lastExecuted,
-            suggestedFix: "Add try-catch or guard against undefined/null values before property access in controller.",
+            suggestedFix: "Check service/DB mock return values or add null guards around property access in the controller.",
             diagnosticsDetails: {
                 actualStatus,
                 expectedStatus,
                 controllerEntered: true,
                 lastExecutedLine: lastExecuted ? lastExecuted.line : null,
                 crashSnippet: lastExecuted ? lastExecuted.codeSnippet : null,
+                serverErrorMessage: serverErrMsg || null,
+                responseBodyPreview: respPreview || null,
             },
         };
     }
@@ -385,7 +418,7 @@ export const diagnoseApiFailureLayer = ({
     if (isAssertion) {
         return {
             failureLayer: "ASSERTION_FAILED",
-            explanation: `Request completed backend flow, but response differed from test case expectation. (Expected: ${expectedStatus}, Actual: ${actualStatus}).`,
+            explanation: `Request completed backend flow, but response differed from test case expectation. (Expected: ${expectedStatus}, Actual: ${actualStatus || "N/A"}).${serverErrMsg && actualStatus >= 400 ? ` Server response: "${serverErrMsg}".` : ""}`,
             failingComponent: "Test Assertion / Contract",
             lastExecutedLine: lastExecuted,
             suggestedFix: "Update test scenario assertions or adjust controller response payload schema accordingly.",
@@ -393,6 +426,8 @@ export const diagnoseApiFailureLayer = ({
                 actualStatus,
                 expectedStatus,
                 controllerEntered: true,
+                serverErrorMessage: serverErrMsg || null,
+                responseBodyPreview: respPreview || null,
             },
         };
     }
@@ -400,7 +435,7 @@ export const diagnoseApiFailureLayer = ({
     // Default Fallback
     return {
         failureLayer: "UNKNOWN_ERROR",
-        explanation: `Test case failed due to undetermined error. (Status: ${actualStatus || "N/A"}).`,
+        explanation: `Test case failed due to undetermined error. (Status: ${actualStatus || "N/A"}).${serverErrMsg ? ` Server response: "${serverErrMsg}".` : ""}`,
         failingComponent: controllerFile || "System Pipeline",
         lastExecutedLine: lastExecuted,
         suggestedFix: "Check detailed test runner logs for further information.",
@@ -408,6 +443,8 @@ export const diagnoseApiFailureLayer = ({
             actualStatus,
             expectedStatus,
             rawErrors: rawErrors.substring(0, 300),
+            serverErrorMessage: serverErrMsg || null,
+            responseBodyPreview: respPreview || null,
         },
     };
 };

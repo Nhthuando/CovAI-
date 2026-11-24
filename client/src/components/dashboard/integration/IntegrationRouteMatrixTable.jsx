@@ -384,7 +384,7 @@ export default function IntegrationRouteMatrixTable({
       });
     if (hasPassed) {
       const cov = getEndpointCaseCoverage(ep, scenarios);
-      if (raw === "PARTIAL" || !cov.isFullyVerified) {
+      if (!cov.isFullyVerified) {
         return "PARTIAL";
       }
       return "PASS";
@@ -1789,6 +1789,8 @@ export default function IntegrationRouteMatrixTable({
                                       {isCodeOpen && (
                                         <div className="px-3.5 pb-3 pt-2 border-t border-[var(--color-border)] bg-[var(--color-bg)] space-y-2">
                                           {(sc.failureSummary ||
+                                            sc.failureDiagnostics ||
+                                            sc.serverErrorMessage ||
                                             sc.executionReason ||
                                             (sc.failureMessages &&
                                               sc.failureMessages.length > 0)) &&
@@ -1805,31 +1807,107 @@ export default function IntegrationRouteMatrixTable({
                                                   "",
                                                 )
                                                 .replace(/\u001b/g, "");
+                                              const diag = sc.failureDiagnostics || null;
+                                              const serverErr =
+                                                sc.serverErrorMessage ||
+                                                diag?.diagnosticsDetails?.serverErrorMessage ||
+                                                null;
+                                              const respPreview =
+                                                sc.responseBodyPreview ||
+                                                diag?.diagnosticsDetails?.responseBodyPreview ||
+                                                null;
+                                              const lastLine = diag?.lastExecutedLine || null;
                                               const summaryDiag =
                                                 sc.failureSummary ||
                                                 summarizeIntegrationFailure(
                                                   sc.executionReason ||
                                                     sc.failureMessages,
                                                 );
+                                              const explanation = diag?.explanation || null;
+                                              const primaryText = explanation || summaryDiag;
+                                              const showSecondarySummary = Boolean(
+                                                explanation &&
+                                                  summaryDiag &&
+                                                  explanation.trim() !== summaryDiag.trim() &&
+                                                  !explanation.includes(summaryDiag),
+                                              );
+
                                               return (
-                                                <div className="p-2.5 rounded bg-rose-500/10 border border-rose-500/25 text-[11px] text-rose-200 space-y-1.5">
-                                                  <div className="flex items-center gap-1.5 font-semibold text-rose-400">
-                                                    <AlertTriangle className="w-3.5 h-3.5" />
-                                                    <span>Failure Summary</span>
+                                                <div className="p-2.5 rounded-md bg-rose-500/10 border border-rose-500/25 text-[11px] text-rose-200 space-y-1.5">
+                                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                                    <div className="flex flex-wrap items-center gap-1.5 font-semibold text-rose-400">
+                                                      <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                                                      <span>Failure Diagnosis</span>
+                                                      {diag?.failureLayer && (
+                                                        <span className="px-1.5 py-0.5 rounded bg-rose-500/15 border border-rose-500/30 font-mono text-[10px] font-medium text-rose-300">
+                                                          {diag.failureLayer}
+                                                        </span>
+                                                      )}
+                                                    </div>
+                                                    {diag?.failingComponent && (
+                                                      <span className="font-mono text-[10px] text-[var(--color-text-muted)] truncate max-w-[260px]">
+                                                        {diag.failingComponent}
+                                                      </span>
+                                                    )}
                                                   </div>
                                                   <p className="text-xs leading-relaxed text-[var(--color-text)] m-0">
-                                                    {summaryDiag}
+                                                    {primaryText}
                                                   </p>
-                                                  {rawDiag &&
-                                                    rawDiag.trim() !==
-                                                      summaryDiag.trim() && (
+                                                  {showSecondarySummary && (
+                                                    <p className="text-[11px] leading-relaxed text-[var(--color-text-secondary)] m-0">
+                                                      {summaryDiag}
+                                                    </p>
+                                                  )}
+                                                  {serverErr && (
+                                                    <div className="px-2 py-1 rounded bg-[var(--color-bg)] border border-rose-500/20 font-mono text-[10px] text-rose-300 break-words">
+                                                      <span className="text-[var(--color-text-muted)] mr-1.5">
+                                                        Server Error:
+                                                      </span>
+                                                      {serverErr}
+                                                    </div>
+                                                  )}
+                                                  {lastLine?.line && (
+                                                    <div className="rounded bg-[var(--color-bg)] border border-[var(--color-border)] p-2 space-y-1">
+                                                      <div className="font-mono text-[10px] text-[var(--color-text-muted)]">
+                                                        Last executed line:{" "}
+                                                        <span className="text-[var(--color-text)] tabular-nums">
+                                                          {lastLine.filePath
+                                                            ? `${lastLine.filePath}:${lastLine.line}`
+                                                            : `Line ${lastLine.line}`}
+                                                        </span>
+                                                      </div>
+                                                      {lastLine.codeSnippet && (
+                                                        <pre className="m-0 font-mono text-[10px] text-[var(--color-text-secondary)] whitespace-pre-wrap break-words">
+                                                          {lastLine.codeSnippet}
+                                                        </pre>
+                                                      )}
+                                                    </div>
+                                                  )}
+                                                  {diag?.suggestedFix && (
+                                                    <p className="text-[11px] text-[var(--color-text-secondary)] m-0">
+                                                      <span className="font-semibold text-[var(--color-text)]">
+                                                        Suggested fix:{" "}
+                                                      </span>
+                                                      {diag.suggestedFix}
+                                                    </p>
+                                                  )}
+                                                  {((rawDiag &&
+                                                    rawDiag.trim() !== primaryText.trim()) ||
+                                                    respPreview) && (
                                                       <details className="pt-0.5">
                                                         <summary className="text-[10px] font-mono text-rose-300/80 hover:text-rose-200 cursor-pointer select-none">
                                                           Technical details
                                                         </summary>
-                                                        <pre className="mt-1 p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap break-words font-mono text-[10px] text-[var(--color-text-muted)] max-h-40 overflow-y-auto custom-scrollbar">
-                                                          {rawDiag}
-                                                        </pre>
+                                                        {respPreview && (
+                                                          <pre className="mt-1 p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap break-words font-mono text-[10px] text-rose-300/90 max-h-28 overflow-y-auto custom-scrollbar">
+                                                            {`Response body: ${respPreview}`}
+                                                          </pre>
+                                                        )}
+                                                        {rawDiag && (
+                                                          <pre className="mt-1 p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap break-words font-mono text-[10px] text-[var(--color-text-muted)] max-h-40 overflow-y-auto custom-scrollbar">
+                                                            {rawDiag}
+                                                          </pre>
+                                                        )}
                                                       </details>
                                                     )}
                                                 </div>
