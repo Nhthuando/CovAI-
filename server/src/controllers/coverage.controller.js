@@ -126,6 +126,7 @@ import {
   addScenarioService,
   deleteScenarioService,
   deleteProjectScenarioService,
+  bulkDeleteScenariosService,
   toggleScenarioService,
   regenerateScenarioService,
 } from "../services/scenarioManager.service.js";
@@ -5091,6 +5092,31 @@ export const deleteScenario = async (req, res) => {
   }
 };
 
+export const bulkDeleteIntegrationScenarios = async (req, res) => {
+  try {
+    const { snapshotId } = req.params;
+    const { scenarios } = req.body || {};
+    if (!Array.isArray(scenarios)) {
+      return res.status(400).json({
+        success: false,
+        message: "scenarios array is required",
+      });
+    }
+
+    const result = await bulkDeleteScenariosService({
+      snapshotId,
+      userId: req.user.id,
+      scenarios,
+    });
+    return res.status(200).json({ success: true, data: result });
+  } catch (error) {
+    console.error("[bulkDeleteIntegrationScenarios] Error:", error);
+    return res
+      .status(error.statusCode || 500)
+      .json({ success: false, message: error.message, code: error.code });
+  }
+};
+
 export const toggleScenario = async (req, res) => {
   try {
     const { snapshotId, aiTestId, scenarioId } = req.params;
@@ -7704,6 +7730,49 @@ export const aiFixSystemTestCaseController = async (req, res) => {
       .json({
         success: false,
         message: error.message || "Failed to AI fix system test scenario.",
+      });
+  }
+};
+
+/**
+ * POST /api/coverage/:snapshotId/integration/simulation/trace
+ * Generates shared API flow graph + scenario execution trace (0 AI tokens).
+ */
+export const getIntegrationSimulationTraceController = async (req, res) => {
+  try {
+    const { snapshotId } = req.params;
+    if (!snapshotId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "snapshotId is required." });
+    }
+    if (!req.user?.id) {
+      return res.status(401).json({ success: false, message: "Unauthorized." });
+    }
+
+    const snapshot = await findOwnedSnapshot(snapshotId, req.user.id);
+    if (!snapshot) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Snapshot not found." });
+    }
+
+    const { simulateIntegrationScenarioTrace } = await import(
+      "../services/integrationSimulationEngine.service.js"
+    );
+    const data = await simulateIntegrationScenarioTrace(snapshotId, {
+      ...(req.body || {}),
+      snapshot,
+    });
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    console.error("[getIntegrationSimulationTraceController] Error:", error);
+    return res
+      .status(error.statusCode || 500)
+      .json({
+        success: false,
+        message:
+          error.message || "Failed to generate integration simulation trace.",
       });
   }
 };

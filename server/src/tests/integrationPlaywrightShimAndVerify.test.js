@@ -9,9 +9,14 @@ import {
 } from '../services/supertestCoverageJob.service.js';
 import {
   harvestApiDeepContext,
+  buildIntegrationTestPrompt,
   buildIntegrationRepairPrompt,
 } from '../services/integrationAiTestGenerator.service.js';
 import { detectIntegrationFrameworks } from '../services/integrationDetection.service.js';
+import {
+  resolveAppImportPath,
+  resolveRelativeProjectImports,
+} from '../services/aiTestStorage.service.js';
 
 describe('Integration ESM Express entry prep & Playwright API shim', () => {
   let tempRoot;
@@ -152,5 +157,112 @@ describe('Integration ESM Express entry prep & Playwright API shim', () => {
     expect(det.primaryFramework).toBe('supertest');
     expect(det.targetFramework).toBe('supertest');
     expect(det.permutationDetails.targetFramework).toBe('supertest');
+  });
+
+  it('rewrites broken relative ESM imports and jest.unstable_mockModule paths in monorepos to server/src/...', () => {
+    fs.mkdirSync(path.join(tempRoot, 'server', 'src', 'config'), { recursive: true });
+    fs.mkdirSync(path.join(tempRoot, 'server', 'src', 'services'), { recursive: true });
+    fs.writeFileSync(path.join(tempRoot, 'server', 'src', 'index.js'), 'export default {};\n', 'utf8');
+    fs.writeFileSync(path.join(tempRoot, 'server', 'src', 'config', 'prisma.js'), 'export default {};\n', 'utf8');
+    fs.writeFileSync(path.join(tempRoot, 'server', 'src', 'services', 'ai.service.js'), 'export default {};\n', 'utf8');
+
+    const testCode = [
+      'import { jest } from "@jest/globals";',
+      'await jest.unstable_mockModule("../../src/config/prisma.js", () => ({ default: {} }));',
+      'await jest.unstable_mockModule("../../src/services/ai.service.js", () => ({ default: {} }));',
+      'const { default: app } = await import("../../src/index.js");',
+    ].join('\n');
+
+    const rootTestPath = path.join(tempRoot, 'tests', 'integration', 'api-integration.test.js');
+    const resolvedFromRoot = resolveAppImportPath(testCode, tempRoot, rootTestPath);
+    expect(resolvedFromRoot).toContain('../../server/src/config/prisma.js');
+    expect(resolvedFromRoot).toContain('../../server/src/services/ai.service.js');
+    expect(resolvedFromRoot).toContain('../../server/src/index.js');
+
+    const serverTestPath = path.join(tempRoot, 'server', 'tests', 'integration', 'api-integration.test.js');
+    const resolvedFromServer = resolveRelativeProjectImports(testCode, tempRoot, serverTestPath);
+    expect(resolvedFromServer).toContain('../../src/config/prisma.js');
+    expect(resolvedFromServer).toContain('../../src/services/ai.service.js');
+  });
+
+  it('embeds monorepo targetFilePath in both generation and repair prompts', () => {
+    const endpoints = [{ method: 'GET', path: '/', controllerFile: 'server/src/index.js' }];
+    const genPrompt = buildIntegrationTestPrompt({
+      endpoints,
+      framework: 'supertest',
+      targetFilePath: 'server/tests/integration/api-integration.test.js',
+    });
+    expect(genPrompt).toContain('server/tests/integration/api-integration.test.js');
+
+    const repairPrompt = buildIntegrationRepairPrompt({
+      code: 'it("works", () => {});',
+      failureSummary: 'Module not found',
+      framework: 'supertest',
+      endpoints,
+      targetFilePath: 'server/tests/integration/api-integration.test.js',
+    });
+    expect(repairPrompt).toContain('server/tests/integration/api-integration.test.js');
+  });
+
+  it('includes Express entry file, route definitions, and 2-hop imported services in generation and repair prompts', () => {
+    const sourceCode = [
+      {
+        path: 'server/src/index.js',
+        content: 'import express from "express";\nimport aiRoutes from "./routes/ai.routes.js";\nconst app = express();\napp.use(aiRoutes);\n',
+      },
+      {
+        path: 'server/src/routes/ai.routes.js',
+        content: 'import express from "express";\nimport AIController from "../controllers/ai.controller.js";\nconst r = express.Router();\nr.post("/summarize", AIController.summarize);\nexport default r;\n',
+      },
+      {
+        path: 'server/src/controllers/ai.controller.js',
+        content: 'import AIService from "../services/ai.service.js";\nexport default { async summarize(req, res) { const x = await AIService.run(); return res.status(200).json(x); } };',
+      },
+      {
+        path: 'server/src/services/ai.service.js',
+        content: 'import helper from "../utils/text.util.js";\nexport default { async run() { return helper.clean(); } };',
+      },
+      {
+        path: 'server/src/utils/text.util.js',
+        content: 'export default { clean() { return { summary: "ok" }; } };',
+      },
+    ];
+    const endpoints = [
+      {
+        method: 'POST',
+        path: '/summarize',
+        fullPath: '/summarize',
+        sourceFile: 'server/src/routes/ai.routes.js',
+        controllerFile: 'server/src/controllers/ai.controller.js',
+      },
+    ];
+
+    const deepCtx = harvestApiDeepContext({ endpoint: endpoints[0], sourceCode });
+    expect(deepCtx.importedModules.map((m) => m.filePath)).toContain('server/src/services/ai.service.js');
+    expect(deepCtx.importedModules.map((m) => m.filePath)).toContain('server/src/utils/text.util.js');
+
+    const genPrompt = buildIntegrationTestPrompt({
+      endpoints,
+      sourceCode,
+      framework: 'supertest',
+      targetFilePath: 'server/tests/integration/api-integration.test.js',
+    });
+    expect(genPrompt).toContain('server/src/index.js');
+    expect(genPrompt).toContain('app.use(aiRoutes)');
+    expect(genPrompt).toContain('POST /summarize');
+
+    const repairPrompt = buildIntegrationRepairPrompt({
+      code: 'it("POST /api/summarize", () => {});',
+      failureSummary: 'Expected 200, got 404',
+      framework: 'supertest',
+      endpoints,
+      sourceCode,
+      targetFilePath: 'server/tests/integration/api-integration.test.js',
+      missingCases: [{ method: 'POST', path: '/summarize', missingLabels: ['Happy Path (200/201)'] }],
+      unexpectedPaths: [{ method: 'POST', path: '/api/summarize', testName: 'POST /api/summarize' }],
+    });
+    expect(repairPrompt).toContain('server/src/index.js');
+    expect(repairPrompt).toContain('MISSING REQUIRED ENDPOINTS/CASES');
+    expect(repairPrompt).toContain('POST /api/summarize');
   });
 });

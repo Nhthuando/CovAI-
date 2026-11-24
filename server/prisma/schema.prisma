@@ -8,395 +8,414 @@ datasource db {
 }
 
 model AiEvaluationProjectSettings {
-  projectId String @id
-  revision Int @default(1)
-  settings Json
+  projectId            String   @id
+  revision             Int      @default(1)
+  settings             Json
   encryptedEnvironment String?
-  updatedAt DateTime @updatedAt
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  updatedAt            DateTime @updatedAt
+  project              Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
 
 model AiEvaluationProjectRun {
-  id String @id @default(cuid())
-  projectId String
-  snapshotId String
-  jobId String @unique
-  evaluationRunId String?
-  idempotencyKey String
-  status String @default("QUEUED")
-  phase String @default("CHECKING")
-  configuration Json
+  id                   String    @id @default(cuid())
+  projectId            String
+  snapshotId           String
+  jobId                String    @unique
+  evaluationRunId      String?
+  idempotencyKey       String
+  status               String    @default("QUEUED")
+  phase                String    @default("CHECKING")
+  configuration        Json
   encryptedEnvironment String?
-  discovery Json?
-  result Json?
-  errorCode String?
-  errorMessage String?
-  leaseToken String?
-  leaseUntil DateTime?
-  createdAt DateTime @default(now())
-  finishedAt DateTime?
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  discovery            Json?
+  result               Json?
+  errorCode            String?
+  errorMessage         String?
+  leaseToken           String?
+  leaseUntil           DateTime?
+  createdAt            DateTime  @default(now())
+  finishedAt           DateTime?
+  project              Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
   @@unique([projectId, idempotencyKey])
   @@index([status, leaseUntil])
   @@index([projectId, createdAt])
 }
 
 model AiEvaluationTarget {
-  id String @id @default(cuid())
-  projectId String
-  name String
-  archivedAt DateTime?
-  createdAt DateTime @default(now())
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  versions AiEvaluationTargetVersion[]
+  id          String                      @id @default(cuid())
+  projectId   String
+  name        String
+  archivedAt  DateTime?
+  createdAt   DateTime                    @default(now())
   credentials AiEvaluationCredential[]
+  project     Project                     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  versions    AiEvaluationTargetVersion[]
+
   @@index([projectId])
 }
 
 model AiEvaluationCredential {
-  id String @id @default(cuid())
-  targetId String
-  revision Int
-  ciphertext String @db.Text
-  revokedAt DateTime?
-  target AiEvaluationTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
-  versions AiEvaluationTargetVersion[]
+  id         String                      @id @default(cuid())
+  targetId   String
+  revision   Int
+  ciphertext String
+  revokedAt  DateTime?
+  target     AiEvaluationTarget          @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  versions   AiEvaluationTargetVersion[]
+
   @@unique([targetId, revision])
 }
 
 model AiEvaluationTargetVersion {
-  id String @id @default(cuid())
-  targetId String
-  version Int
-  config Json
-  configHash String
+  id           String                  @id @default(cuid())
+  targetId     String
+  version      Int
+  config       Json
+  configHash   String
   credentialId String?
-  createdAt DateTime @default(now())
-  target AiEvaluationTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
-  credential AiEvaluationCredential? @relation(fields: [credentialId], references: [id], onDelete: SetNull)
-  runs AiEvaluationRun[]
+  createdAt    DateTime                @default(now())
+  runs         AiEvaluationRun[]
+  credential   AiEvaluationCredential? @relation(fields: [credentialId], references: [id])
+  target       AiEvaluationTarget      @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
   @@unique([targetId, version])
 }
 
 model AiEvaluationKnowledgeSource {
-  id String @id @default(cuid())
-  projectId String
-  name String
-  sourceKey String
-  version Int
-  format String
-  status String @default("READY")
-  content String @db.Text
+  id          String   @id @default(cuid())
+  projectId   String
+  name        String
+  sourceKey   String
+  version     Int
+  format      String
+  status      String   @default("READY")
+  content     String
   contentHash String
-  provenance Json
-  createdAt DateTime @default(now())
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  provenance  Json
+  createdAt   DateTime @default(now())
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
   @@unique([projectId, sourceKey, version])
 }
 
 model AiEvaluationProfile {
-  id String @id @default(cuid())
-  projectId String
-  name String
+  id         String                       @id @default(cuid())
+  projectId  String
+  name       String
   archivedAt DateTime?
-  createdAt DateTime @default(now())
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  versions AiEvaluationProfileVersion[]
+  createdAt  DateTime                     @default(now())
+  project    Project                      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  versions   AiEvaluationProfileVersion[]
+
   @@index([projectId])
 }
 
 model AiEvaluationProfileVersion {
-  id String @id @default(cuid())
-  profileId String
-  version Int
-  revision Int @default(0)
-  status String @default("DRAFT")
-  definition Json
+  id             String                 @id @default(cuid())
+  profileId      String
+  version        Int
+  revision       Int                    @default(0)
+  status         String                 @default("DRAFT")
+  definition     Json
   definitionHash String?
-  sourceManifest Json @default("[]")
-  approvedBy String?
-  approvedAt DateTime?
-  createdAt DateTime @default(now())
-  profile AiEvaluationProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  cases AiEvaluationTestCase[]
-  runs AiEvaluationRun[]
+  sourceManifest Json                   @default("[]")
+  approvedBy     String?
+  approvedAt     DateTime?
+  createdAt      DateTime               @default(now())
+  profile        AiEvaluationProfile    @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  runs           AiEvaluationRun[]
+  cases          AiEvaluationTestCase[]
+
   @@unique([profileId, version])
 }
 
 model AiEvaluationTestCase {
-  id String @id @default(cuid())
+  id               String                     @id @default(cuid())
   profileVersionId String
-  caseKey String
-  taskType String
-  definition Json
-  definitionHash String
-  profileVersion AiEvaluationProfileVersion @relation(fields: [profileVersionId], references: [id], onDelete: Cascade)
-  results AiEvaluationCaseResult[]
+  caseKey          String
+  taskType         String
+  definition       Json
+  definitionHash   String
+  results          AiEvaluationCaseResult[]
+  profileVersion   AiEvaluationProfileVersion @relation(fields: [profileVersionId], references: [id], onDelete: Cascade)
+
   @@unique([profileVersionId, caseKey])
 }
 
 model AiEvaluationRun {
-  id String @id @default(cuid())
-  projectId String
-  targetVersionId String
+  id               String                     @id @default(cuid())
+  projectId        String
+  targetVersionId  String
   profileVersionId String
-  snapshotId String?
-  jobId String @unique
-  parentRunId String?
-  idempotencyKey String
-  executionStatus String @default("QUEUED")
-  verdict String @default("INCOMPLETE")
-  manifest Json
-  summary Json?
-  evidenceBytes Int @default(0)
-  errorCode String?
-  leaseToken String?
-  leaseUntil DateTime?
-  createdAt DateTime @default(now())
-  startedAt DateTime?
-  finishedAt DateTime?
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  targetVersion AiEvaluationTargetVersion @relation(fields: [targetVersionId], references: [id], onDelete: Cascade)
-  profileVersion AiEvaluationProfileVersion @relation(fields: [profileVersionId], references: [id], onDelete: Cascade)
-  cases AiEvaluationCaseResult[]
-  evidence AiEvaluationEvidence[]
+  snapshotId       String?
+  jobId            String                     @unique
+  parentRunId      String?
+  idempotencyKey   String
+  executionStatus  String                     @default("QUEUED")
+  verdict          String                     @default("INCOMPLETE")
+  manifest         Json
+  summary          Json?
+  evidenceBytes    Int                        @default(0)
+  errorCode        String?
+  leaseToken       String?
+  leaseUntil       DateTime?
+  createdAt        DateTime                   @default(now())
+  startedAt        DateTime?
+  finishedAt       DateTime?
+  cases            AiEvaluationCaseResult[]
+  evidence         AiEvaluationEvidence[]
+  profileVersion   AiEvaluationProfileVersion @relation(fields: [profileVersionId], references: [id], onDelete: Cascade)
+  project          Project                    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  targetVersion    AiEvaluationTargetVersion  @relation(fields: [targetVersionId], references: [id], onDelete: Cascade)
+
   @@unique([projectId, idempotencyKey])
   @@index([executionStatus, leaseUntil])
 }
 
 model AiEvaluationCaseResult {
-  id String @id @default(cuid())
-  runId String
-  testCaseId String
-  executionStatus String @default("PENDING")
-  verdict String @default("INCOMPLETE")
-  errorCode String?
-  run AiEvaluationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
-  testCase AiEvaluationTestCase @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
-  attempts AiEvaluationAttempt[]
-  criteria AiEvaluationCriterionResult[]
+  id              String                        @id @default(cuid())
+  runId           String
+  testCaseId      String
+  executionStatus String                        @default("PENDING")
+  verdict         String                        @default("INCOMPLETE")
+  errorCode       String?
+  attempts        AiEvaluationAttempt[]
+  run             AiEvaluationRun               @relation(fields: [runId], references: [id], onDelete: Cascade)
+  testCase        AiEvaluationTestCase          @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+  criteria        AiEvaluationCriterionResult[]
+
   @@unique([runId, testCaseId])
 }
 
 model AiEvaluationAttempt {
-  id String @id @default(cuid())
-  caseResultId String
-  repetition Int
-  requestId String @unique
-  status String @default("PENDING")
-  gatewayState String @default("CLOSED")
-  tokenHash String? @unique
-  expiresAt DateTime?
-  state Json
-  initialState Json
-  sequence Int @default(0)
-  callbackCount Int @default(0)
-  dispatchedAt DateTime?
-  finishedAt DateTime?
-  caseResult AiEvaluationCaseResult @relation(fields: [caseResultId], references: [id], onDelete: Cascade)
-  calls AiEvaluationToolCall[]
-  grants AiEvaluationConfirmationGrant[]
+  id            String                          @id @default(cuid())
+  caseResultId  String
+  repetition    Int
+  requestId     String                          @unique
+  status        String                          @default("PENDING")
+  gatewayState  String                          @default("CLOSED")
+  tokenHash     String?                         @unique
+  expiresAt     DateTime?
+  state         Json
+  initialState  Json
+  sequence      Int                             @default(0)
+  callbackCount Int                             @default(0)
+  dispatchedAt  DateTime?
+  finishedAt    DateTime?
+  caseResult    AiEvaluationCaseResult          @relation(fields: [caseResultId], references: [id], onDelete: Cascade)
+  grants        AiEvaluationConfirmationGrant[]
+  calls         AiEvaluationToolCall[]
+
   @@unique([caseResultId, repetition])
 }
 
 model AiEvaluationToolCall {
-  id String @id @default(cuid())
-  attemptId String
-  callId String
+  id          String              @id @default(cuid())
+  attemptId   String
+  callId      String
   payloadHash String
   businessKey String?
-  sequence Int
-  toolName String
-  arguments Json
-  status String
-  result Json
-  createdAt DateTime @default(now())
-  attempt AiEvaluationAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  sequence    Int
+  toolName    String
+  arguments   Json
+  status      String
+  result      Json
+  createdAt   DateTime            @default(now())
+  attempt     AiEvaluationAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
   @@unique([attemptId, callId])
   @@index([attemptId, businessKey])
 }
 
 model AiEvaluationConfirmationGrant {
-  id String @id @default(cuid())
-  attemptId String
-  requestId String
+  id          String              @id @default(cuid())
+  attemptId   String
+  requestId   String
   fingerprint String
-  decision String
-  prompt String
-  sequence Int
-  expiresAt DateTime
-  consumedAt DateTime?
-  attempt AiEvaluationAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  decision    String
+  prompt      String
+  sequence    Int
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  attempt     AiEvaluationAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
   @@unique([attemptId, requestId])
 }
 
 model AiEvaluationCriterionResult {
-  id String @id @default(cuid())
+  id           String                    @id @default(cuid())
   caseResultId String
   criterionKey String
-  method String
-  status String
-  score Float?
-  reason String @db.Text
-  details Json
+  method       String
+  status       String
+  score        Float?
+  reason       String
+  details      Json
   evidenceRefs Json
-  evaluator Json
-  caseResult AiEvaluationCaseResult @relation(fields: [caseResultId], references: [id], onDelete: Cascade)
-  reviews AiEvaluationHumanReview[]
+  evaluator    Json
+  caseResult   AiEvaluationCaseResult    @relation(fields: [caseResultId], references: [id], onDelete: Cascade)
+  reviews      AiEvaluationHumanReview[]
+
   @@unique([caseResultId, criterionKey])
 }
 
 model AiEvaluationEvidence {
-  id String @id @default(cuid())
-  runId String
+  id           String          @id @default(cuid())
+  runId        String
   caseResultId String?
-  attemptId String?
-  kind String
-  provenance String
+  attemptId    String?
+  kind         String
+  provenance   String
   availability String
   completeness String
-  payload Json
-  contentHash String
-  createdAt DateTime @default(now())
-  run AiEvaluationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  payload      Json
+  contentHash  String
+  createdAt    DateTime        @default(now())
+  run          AiEvaluationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
   @@index([runId, caseResultId])
 }
 
 model AiEvaluationHumanReview {
-  id String @id @default(cuid())
+  id                String                      @id @default(cuid())
   criterionResultId String
-  reviewerId String
-  verdict String
-  score Float?
-  rationale String @db.Text
-  createdAt DateTime @default(now())
-  criterionResult AiEvaluationCriterionResult @relation(fields: [criterionResultId], references: [id], onDelete: Cascade)
+  reviewerId        String
+  verdict           String
+  score             Float?
+  rationale         String
+  createdAt         DateTime                    @default(now())
+  criterionResult   AiEvaluationCriterionResult @relation(fields: [criterionResultId], references: [id], onDelete: Cascade)
+
   @@index([criterionResultId, createdAt])
 }
 
 model AiEvaluationDesignAudit {
-  id String @id @default(cuid())
-  projectId String
-  snapshotId String
-  detected Boolean @default(false)
-  designScore Float?
-  summaryJson Json
-  findingsJson Json
+  id                 String          @id @default(cuid())
+  projectId          String
+  snapshotId         String
+  detected           Boolean         @default(false)
+  designScore        Float?
+  summaryJson        Json
+  findingsJson       Json
   autoFillConfigJson Json
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  project            Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot           ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
   @@unique([projectId, snapshotId])
   @@index([projectId, createdAt])
 }
 
 model User {
-  id                   String         @id @default(cuid())
-  email                String         @unique
-  passwordHash         String?
-  githubUserId         String?        @unique
-  githubAccessTokenEnc String?
-  failedLoginAttempts  Int            @default(0)
-  lockedUntil          DateTime?
-  name                 String?
-  avatarUrl            String?
-  createdAt            DateTime       @default(now())
-  updatedAt            DateTime       @updatedAt
-  passwordResetExpires DateTime?
-  passwordResetToken   String?
-  aiUsageCount         Int            @default(0)
-  aiUsageDate          String?
-  bio                  String?
-  jobTitle             String?
-  aiTokenUsage         Int            @default(0)
-  refreshToken         String?
-  githubPendingLinks   GithubPendingLink[]
-  jobs                 Job[]          @relation("UserJobs")
-  notifications        Notification[]
-  projects             Project[]
-  chatSessions         ChatSession[]
-  aiContextSettings    AiContextSettings[]
-  projectMemories      ProjectMemory[]
-  requirementApprovals SystemRequirementRevision[] @relation("RequirementApprover")
-  bindingApprovals SystemAssertionBinding[] @relation("BindingApprover")
-  proposalApplications SystemTestProposal[] @relation("ProposalApplier")
-  editorUpdates ProjectEditorUpdate[]
-  codeChanges ProjectCodeChange[]
-  projectMemberships ProjectMember[] @relation("MemberUser")
-  membershipsAdded ProjectMember[] @relation("MemberAddedBy")
-  sentProjectInvitations ProjectInvitation[] @relation("InvitationSender")
-  acceptedProjectInvitations ProjectInvitation[] @relation("InvitationAccepter")
-  projectEvents ProjectEvent[]
-  projectFileVersions ProjectFileVersion[]
-  projectMutations ProjectMutation[]
-  projectOperations ProjectOperation[]
-  projectOperationRequests ProjectOperationRequest[]
-  sentChatMessages ChatMessage[] @relation("ChatSender")
-  chatRequests ChatRequest[]
-  aiQuotaReservations AiQuotaReservation[]
+  id                         String                      @id @default(cuid())
+  email                      String                      @unique
+  passwordHash               String?
+  githubUserId               String?                     @unique
+  githubAccessTokenEnc       String?
+  name                       String?
+  avatarUrl                  String?
+  createdAt                  DateTime                    @default(now())
+  updatedAt                  DateTime                    @updatedAt
+  passwordResetExpires       DateTime?
+  passwordResetToken         String?
+  aiUsageCount               Int                         @default(0)
+  aiUsageDate                String?
+  bio                        String?
+  jobTitle                   String?
+  aiTokenUsage               Int                         @default(0)
+  refreshToken               String?
+  isSuspended                Boolean                     @default(false)
+  systemRole                 SystemRole                  @default(USER)
+  failedLoginAttempts        Int                         @default(0)
+  lockedUntil                DateTime?
+  AdminAuditLog              AdminAuditLog[]
+  aiContextSettings          AiContextSettings[]
+  aiQuotaReservations        AiQuotaReservation[]
+  sentChatMessages           ChatMessage[]               @relation("ChatSender")
+  chatRequests               ChatRequest[]
+  chatSessions               ChatSession[]
+  githubPendingLinks         GithubPendingLink[]
+  jobs                       Job[]                       @relation("UserJobs")
+  notifications              Notification[]
+  projects                   Project[]
+  codeChanges                ProjectCodeChange[]
+  editorUpdates              ProjectEditorUpdate[]
+  projectEvents              ProjectEvent[]
+  projectFileVersions        ProjectFileVersion[]
+  acceptedProjectInvitations ProjectInvitation[]         @relation("InvitationAccepter")
+  sentProjectInvitations     ProjectInvitation[]         @relation("InvitationSender")
+  membershipsAdded           ProjectMember[]             @relation("MemberAddedBy")
+  projectMemberships         ProjectMember[]             @relation("MemberUser")
+  projectMemories            ProjectMemory[]
+  projectMutations           ProjectMutation[]
+  projectOperations          ProjectOperation[]
+  projectOperationRequests   ProjectOperationRequest[]
+  bindingApprovals           SystemAssertionBinding[]    @relation("BindingApprover")
+  requirementApprovals       SystemRequirementRevision[] @relation("RequirementApprover")
+  proposalApplications       SystemTestProposal[]        @relation("ProposalApplier")
 }
 
 model Project {
-  chatbotEvaluations AiEvaluationProjectRun[]
+  id                        String                        @id @default(cuid())
+  ownerId                   String
+  name                      String
+  description               String?
+  repoUrl                   String?
+  defaultBranch             String?
+  rootDir                   String?
+  jestConfigPath            String?
+  storageBasePath           String?
+  createdAt                 DateTime                      @default(now())
+  updatedAt                 DateTime                      @updatedAt
+  hasJest                   Boolean                       @default(false)
+  jestCommand               String?
+  hasVitest                 Boolean                       @default(false)
+  vitestCommand             String?
+  vitestConfigPath          String?
+  hasPlaywright             Boolean                       @default(false)
+  playwrightBrowsers        String?
+  playwrightCommand         String?
+  playwrightConfigPath      String?
+  playwrightTestDir         String?
+  hasCypress                Boolean                       @default(false)
+  cypressCommand            String?
+  cypressConfigPath         String?
+  cypressTestDir            String?
+  cypressVersion            String?
+  accessRevision            Int                           @default(0)
+  eventSequence             Int                           @default(0)
+  workspaceRevision         Int                           @default(0)
+  activeSnapshotId          String?
+  isPinned                  Boolean                       @default(false)
+  lifecycleStatus           ProjectLifecycleStatus        @default(NOT_STARTED)
+  lifecycleUpdatedAt        DateTime                      @default(now())
+  aiContextSettings         AiContextSettings?
+  evaluationDesignAudits    AiEvaluationDesignAudit[]
+  evaluationSources         AiEvaluationKnowledgeSource[]
+  evaluationProfiles        AiEvaluationProfile[]
+  chatbotEvaluations        AiEvaluationProjectRun[]
   chatbotEvaluationSettings AiEvaluationProjectSettings?
-  evaluationTargets AiEvaluationTarget[]
-  evaluationSources AiEvaluationKnowledgeSource[]
-  evaluationProfiles AiEvaluationProfile[]
-  evaluationRuns AiEvaluationRun[]
-  evaluationDesignAudits AiEvaluationDesignAudit[]
-  id                   String            @id @default(cuid())
-  editorDocuments ProjectEditorDocument[]
-  codeChanges ProjectCodeChange[]
-  accessRevision       Int               @default(0)
-  workspaceRevision    Int               @default(0)
-  eventSequence        Int               @default(0)
-  activeSnapshotId     String?
-  ownerId              String
-  name                 String
-  description          String?
-  repoUrl              String?
-  defaultBranch        String?
-  rootDir              String?
-  jestConfigPath       String?
-  storageBasePath      String?
-  createdAt            DateTime          @default(now())
-  updatedAt            DateTime          @updatedAt
-  hasJest              Boolean           @default(false)
-  jestCommand          String?
-  hasVitest            Boolean           @default(false)
-  vitestCommand        String?
-  vitestConfigPath     String?
-  hasPlaywright        Boolean           @default(false)
-  playwrightBrowsers   String?
-  playwrightCommand    String?
-  playwrightConfigPath String?
-  playwrightTestDir    String?
-  hasCypress           Boolean           @default(false)
-  cypressCommand       String?
-  cypressConfigPath    String?
-  cypressTestDir       String?
-  cypressVersion       String?
-  aiSuggestions        AiSuggestion[]
-  aiTests              AiTest[]
-  jobs                 Job[]
-  notifications        Notification[]
-  owner                User              @relation(fields: [ownerId], references: [id])
-  snapshots            ProjectSnapshot[]
-  qualityReports       QualityReport[]
-  chatSessions         ChatSession[]
-  aiContextSettings    AiContextSettings?
-  projectMemories      ProjectMemory[]
-  members              ProjectMember[]
-  invitations          ProjectInvitation[]
-  events               ProjectEvent[]
-  mutations            ProjectMutation[]
-  operations           ProjectOperation[]
-  operationRequests    ProjectOperationRequest[]
-
-  lifecycleStatus      ProjectLifecycleStatus @default(NOT_STARTED)
-  lifecycleUpdatedAt   DateTime               @default(now())
-  isPinned             Boolean                @default(false)
+  evaluationRuns            AiEvaluationRun[]
+  evaluationTargets         AiEvaluationTarget[]
+  aiSuggestions             AiSuggestion[]
+  aiTests                   AiTest[]
+  chatSessions              ChatSession[]
+  jobs                      Job[]
+  notifications             Notification[]
+  owner                     User                          @relation(fields: [ownerId], references: [id])
+  codeChanges               ProjectCodeChange[]
+  editorDocuments           ProjectEditorDocument[]
+  events                    ProjectEvent[]
+  invitations               ProjectInvitation[]
+  members                   ProjectMember[]
+  projectMemories           ProjectMemory[]
+  mutations                 ProjectMutation[]
+  operations                ProjectOperation[]
+  operationRequests         ProjectOperationRequest[]
+  snapshots                 ProjectSnapshot[]
+  qualityReports            QualityReport[]
 
   @@index([ownerId])
   @@index([ownerId, lifecycleStatus])
@@ -404,45 +423,38 @@ model Project {
 }
 
 model ProjectSnapshot {
-  evaluationDesignAudits AiEvaluationDesignAudit[]
-  systemSuiteState SystemSuiteState?
-  systemSuiteVersions SystemSuiteVersion[]
-  editorDocuments ProjectEditorDocument[]
-  codeChanges ProjectCodeChange[]
-  id                          String                    @id @default(cuid())
-  fileVersions                ProjectFileVersion[]
-  mutations                   ProjectMutation[]
-  operations                  ProjectOperation[]
+  id                          String                      @id @default(cuid())
   projectId                   String
   source                      SnapshotSource
   checksum                    String?
-  contentHash                 String?
-  versionNumber               Int?
-  label                       String?
   commitSha                   String?
   storagePath                 String
   rootDir                     String?
   jestConfigPath              String?
-  createdAt                   DateTime                  @default(now())
-  hasJest                     Boolean                   @default(false)
+  createdAt                   DateTime                    @default(now())
+  hasJest                     Boolean                     @default(false)
   jestCommand                 String?
   testingFrameworksJson       String?
-  hasVitest                   Boolean                   @default(false)
+  hasVitest                   Boolean                     @default(false)
   vitestCommand               String?
   vitestConfigPath            String?
-  hasPlaywright               Boolean                   @default(false)
+  hasPlaywright               Boolean                     @default(false)
   playwrightBrowsers          String?
   playwrightCommand           String?
   playwrightConfigPath        String?
   playwrightTestDir           String?
-  hasCypress                  Boolean                   @default(false)
+  hasCypress                  Boolean                     @default(false)
   cypressCommand              String?
   cypressConfigPath           String?
   cypressTestDir              String?
   cypressVersion              String?
   frameworkRecommendationJson String?
   selectedTestingFramework    String?
+  contentHash                 String?
+  label                       String?
+  versionNumber               Int?
   aiContextCache              AiContextCache?
+  evaluationDesignAudits      AiEvaluationDesignAudit[]
   aiSuggestions               AiSuggestion[]
   aiTests                     AiTest[]
   cfgs                        Cfg[]
@@ -452,9 +464,20 @@ model ProjectSnapshot {
   cyclomatics                 Cyclomatic[]
   jobs                        Job[]
   performanceMetric           PerformanceMetric?
-  project                     Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  codeChanges                 ProjectCodeChange[]
+  editorDocuments             ProjectEditorDocument[]
+  fileVersions                ProjectFileVersion[]
+  mutations                   ProjectMutation[]
+  operations                  ProjectOperation[]
+  project                     Project                     @relation(fields: [projectId], references: [id], onDelete: Cascade)
   ProjectStructureAnalysis    ProjectStructureAnalysis?
   QualityReport               QualityReport?
+  systemRequirements          SystemRequirementRevision[]
+  systemScenarios             SystemScenario[]
+  systemSuiteState            SystemSuiteState?
+  systemSuiteVersions         SystemSuiteVersion[]
+  systemAssessments           SystemTestAssessment[]
+  systemProposals             SystemTestProposal[]
   testRuns                    TestRun[]
   vulnerabilities             Vulnerability[]
 
@@ -463,11 +486,6 @@ model ProjectSnapshot {
   @@index([projectId])
   @@index([projectId, contentHash])
   @@index([projectId, createdAt])
-  systemRequirements SystemRequirementRevision[]
-  systemAssessments SystemTestAssessment[]
-  systemProposals SystemTestProposal[]
-  systemScenarios SystemScenario[]
-
 }
 
 model ProjectStructureAnalysis {
@@ -504,28 +522,28 @@ model QualityReport {
 }
 
 model Job {
-  id            String           @id @default(cuid())
-  projectId     String
-  snapshotId    String?
-  userId        String?
-  type          JobType
-  status        JobStatus        @default(QUEUED)
-  progress      Int              @default(0)
-  payloadJson   String?
-  resultJson    String?
-  errorMessage  String?
-  startedAt     DateTime?
-  finishedAt    DateTime?
-  createdAt     DateTime         @default(now())
-  computeTimeMs Int?
-  project       Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  snapshot      ProjectSnapshot? @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-  user          User?            @relation("UserJobs", fields: [userId], references: [id])
-  logs          JobLog[]
-  output        JobOutput?
+  id               String            @id @default(cuid())
+  projectId        String
+  snapshotId       String?
+  userId           String?
+  type             JobType
+  status           JobStatus         @default(QUEUED)
+  progress         Int               @default(0)
+  payloadJson      String?
+  resultJson       String?
+  errorMessage     String?
+  startedAt        DateTime?
+  finishedAt       DateTime?
+  createdAt        DateTime          @default(now())
+  computeTimeMs    Int?
+  project          Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot         ProjectSnapshot?  @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  user             User?             @relation("UserJobs", fields: [userId], references: [id])
+  logs             JobLog[]
+  output           JobOutput?
   projectOperation ProjectOperation?
 
-  @@unique([projectId, snapshotId, type], map: "Job_active_singleton_per_snapshot_key", where: raw("((type IN ('ANALYSIS'::\"JobType\", 'SUPERTEST_COVERAGE'::\"JobType\")) AND (\"snapshotId\" IS NOT NULL) AND (status = ANY (ARRAY['QUEUED'::\"JobStatus\", 'RUNNING'::\"JobStatus\"])))"))
+  @@unique([projectId, snapshotId, type], map: "Job_active_singleton_per_snapshot_key", where: raw("((type = ANY (ARRAY['ANALYSIS'::\"JobType\", 'SUPERTEST_COVERAGE'::\"JobType\"])) AND (\"snapshotId\" IS NOT NULL) AND (status = ANY (ARRAY['QUEUED'::\"JobStatus\", 'RUNNING'::\"JobStatus\"])))"))
   @@index([projectId])
   @@index([snapshotId])
   @@index([status, type])
@@ -677,14 +695,14 @@ model AiTestResult {
 }
 
 model TestRun {
-  id                    String           @id @default(cuid())
+  id                    String                 @id @default(cuid())
   snapshotId            String
   type                  TestType
-  executionMode         String           @default("frontend")
+  executionMode         String                 @default("frontend")
   totalTests            Int
   passedTests           Int
   failedTests           Int
-  flakyTests            Int              @default(0)
+  flakyTests            Int                    @default(0)
   skippedTests          Int
   durationMs            Float
   status                String
@@ -694,46 +712,42 @@ model TestRun {
   coverageBranchesPct   Float?
   coverageStatementsPct Float?
   coverageFunctionsPct  Float?
-  createdAt             DateTime         @default(now())
-  snapshot              ProjectSnapshot  @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-  scenarios             TestScenario[]
+  createdAt             DateTime               @default(now())
+  systemMeasurement     Json?
+  systemAssessments     SystemTestAssessment[]
   testFiles             SystemTestFile[]
+  snapshot              ProjectSnapshot        @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  scenarios             TestScenario[]
 
   @@index([snapshotId])
   @@index([snapshotId, type, createdAt])
   @@index([createdAt])
-  systemMeasurement Json?
-  systemAssessments SystemTestAssessment[]
-
 }
 
 model TestScenario {
-  id                  String   @id @default(cuid())
-  testRunId           String
-  title               String
-  suiteName           String?
-  status              String
-  durationMs          Float?
-  failureMessages     String[] @default([])
-  testFile            String?
-  screenshotPath      String?
-  failureStep         String?
-  failureCodeSnippet  String?
-  failureCategory     String?
-  domSnapshot         String?
-  executionDetails    Json?
-  coverageLinesPct    Float?
-  coverageBranchesPct Float?
-  createdAt           DateTime @default(now())
-
-  // Integration Testing Reverse Traceability Fields (Phase 1)
-  targetEndpoint      String?
-  failureLayer        String?
-  responseStatus      Int?
-  responseData        Json?
+  id                   String   @id @default(cuid())
+  testRunId            String
+  title                String
+  suiteName            String?
+  status               String
+  durationMs           Float?
+  failureMessages      String[] @default([])
+  testFile             String?
+  screenshotPath       String?
+  failureStep          String?
+  failureCodeSnippet   String?
+  failureCategory      String?
+  domSnapshot          String?
+  executionDetails     Json?
+  coverageLinesPct     Float?
+  coverageBranchesPct  Float?
+  createdAt            DateTime @default(now())
+  failureLayer         String?
   isFaultyExistingTest Boolean  @default(false)
-
-  testRun             TestRun  @relation(fields: [testRunId], references: [id], onDelete: Cascade)
+  responseData         Json?
+  responseStatus       Int?
+  targetEndpoint       String?
+  testRun              TestRun  @relation(fields: [testRunId], references: [id], onDelete: Cascade)
 
   @@index([testRunId])
   @@index([targetEndpoint])
@@ -793,79 +807,557 @@ model PerformanceMetric {
 }
 
 model ChatSession {
-  id        String        @id @default(cuid())
-  projectId String
-  userId    String?
-  title     String        @default("New Chat")
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
-  useMemory Boolean       @default(true)
-  sourceSessionId String?
+  id               String        @id @default(cuid())
+  projectId        String
+  userId           String?
+  title            String        @default("New Chat")
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  useMemory        Boolean       @default(true)
+  sourceSessionId  String?
   sourceSnapshotId String?
-  sourceMessageId String?
-  snapshotId String?
-  summary String?         @db.Text
+  sourceMessageId  String?
+  snapshotId       String?
+  summary          String?
   summaryThroughId String?
-  contextStatus String    @default("READY")
-  processingToken String?
-  processingUntil DateTime?
-  messages  ChatMessage[]
-  project   Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user      User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
-  requests ChatRequest[]
+  contextStatus    String        @default("READY")
+  processingToken  String?
+  processingUntil  DateTime?
+  messages         ChatMessage[]
+  requests         ChatRequest[]
+  project          Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user             User?         @relation(fields: [userId], references: [id])
 
   @@index([projectId, userId])
   @@index([projectId, updatedAt])
 }
 
 model ChatMessage {
-  id          String      @id @default(cuid())
-  sessionId   String
-  senderUserId String?
-  senderUser User? @relation("ChatSender", fields: [senderUserId], references: [id], onDelete: SetNull)
-  requestId String?
+  id               String          @id @default(cuid())
+  sessionId        String
+  role             String
+  content          String
+  model            String?
+  attachments      Json?
+  createdAt        DateTime        @default(now())
   replyToMessageId String?
-  role        String      // "user" | "assistant" | "system"
-  content     String      @db.Text
-  model       String?     // e.g. "gemini-1.5-pro"
-  attachments Json?       // [{ id, type, name, path, previewUrl, ... }]
-  createdAt   DateTime    @default(now())
-  session     ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  memories    ProjectMemory[]
+  requestId        String?
+  senderUserId     String?
+  senderUser       User?           @relation("ChatSender", fields: [senderUserId], references: [id])
+  session          ChatSession     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  memories         ProjectMemory[]
 
   @@index([sessionId, createdAt])
 }
 
 model AiContextSettings {
-  projectId String @id
-  userId String?
-  automaticMemory Boolean @default(false)
-  guidance String @default("") @db.Text
-  revision Int @default(0)
-  memoryGeneration Int @default(0)
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  projectId        String  @id
+  userId           String?
+  automaticMemory  Boolean @default(false)
+  guidance         String  @default("")
+  revision         Int     @default(0)
+  memoryGeneration Int     @default(0)
+  project          Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user             User?   @relation(fields: [userId], references: [id])
 }
 
 model ProjectMemory {
-  id String @id @default(cuid())
-  projectId String
-  userId String?
-  updatedByUserId String?
-  content String @db.Text
-  fingerprint String
-  pinned Boolean @default(false)
-  status String @default("ACTIVE")
-  revision Int @default(0)
+  id              String       @id @default(cuid())
+  projectId       String
+  userId          String?
+  content         String
+  fingerprint     String
+  pinned          Boolean      @default(false)
+  status          String       @default("ACTIVE")
+  revision        Int          @default(0)
   sourceMessageId String?
   conflictsWithId String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
-  sourceMessage ChatMessage? @relation(fields: [sourceMessageId], references: [id], onDelete: SetNull)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  updatedByUserId String?
+  project         Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sourceMessage   ChatMessage? @relation(fields: [sourceMessageId], references: [id])
+  user            User?        @relation(fields: [userId], references: [id])
+
   @@unique([projectId, fingerprint])
   @@index([projectId, userId, status])
+}
+
+model SystemRequirementRevision {
+  id               String                   @id @default(cuid())
+  snapshotId       String
+  revisionNumber   Int
+  status           String                   @default("DRAFT")
+  contentHash      String
+  contentJson      Json
+  approvedByUserId String?
+  approvedAt       DateTime?
+  createdAt        DateTime                 @default(now())
+  bindings         SystemAssertionBinding[]
+  approver         User?                    @relation("RequirementApprover", fields: [approvedByUserId], references: [id])
+  snapshot         ProjectSnapshot          @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  assessments      SystemTestAssessment[]
+
+  @@unique([snapshotId, revisionNumber])
+}
+
+model SystemAssertionBinding {
+  id               String                    @id @default(cuid())
+  revisionId       String
+  criterionId      String
+  testFile         String
+  scenarioId       String
+  assertionId      String
+  testHash         String
+  bindingJson      Json
+  status           String                    @default("DRAFT")
+  reviewedByUserId String?
+  reviewedAt       DateTime?
+  reviewer         User?                     @relation("BindingApprover", fields: [reviewedByUserId], references: [id])
+  revision         SystemRequirementRevision @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+
+  @@unique([revisionId, assertionId, testHash])
+}
+
+model SystemTestAssessment {
+  id                    String                     @id @default(cuid())
+  snapshotId            String
+  jobId                 String                     @unique
+  testRunId             String?
+  requirementRevisionId String?
+  sourceHash            String
+  testHash              String
+  scopeHash             String
+  runner                String
+  executionMode         String
+  status                String                     @default("QUEUED")
+  reportJson            Json
+  createdAt             DateTime                   @default(now())
+  suiteVersionId        String?
+  mutations             SystemMutationRun[]
+  artifacts             SystemRunArtifact[]
+  events                SystemRunEvent[]
+  requirements          SystemRequirementRevision? @relation(fields: [requirementRevisionId], references: [id])
+  snapshot              ProjectSnapshot            @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  testRun               TestRun?                   @relation(fields: [testRunId], references: [id])
+  proposals             SystemTestProposal[]
+
+  @@index([snapshotId, createdAt])
+}
+
+model SystemScenario {
+  id                    String          @id @default(cuid())
+  snapshotId            String
+  scenarioKey           String
+  source                String
+  filePath              String?
+  title                 String
+  flowJson              Json
+  inputJson             Json
+  expectedJson          Json
+  criterionIds          Json
+  reviewState           String          @default("DRAFT")
+  requirementRevisionId String?
+  scenarioHash          String
+  testHash              String?
+  assertionHashes       Json
+  reviewedByUserId      String?
+  reviewedAt            DateTime?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  snapshot              ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([snapshotId, scenarioKey])
+  @@index([snapshotId, reviewState])
+}
+
+model SystemRunEvent {
+  id           String               @id @default(cuid())
+  assessmentId String
+  sequence     Int
+  runIndex     Int
+  scenarioKey  String?
+  type         String
+  payloadJson  Json
+  createdAt    DateTime             @default(now())
+  assessment   SystemTestAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@unique([assessmentId, sequence])
+  @@index([assessmentId, scenarioKey])
+}
+
+model SystemRunArtifact {
+  id           String               @id @default(cuid())
+  assessmentId String
+  scenarioKey  String?
+  kind         String
+  relativePath String
+  sha256       String
+  mimeType     String
+  byteSize     Int
+  createdAt    DateTime             @default(now())
+  runIndex     Int?
+  attemptIndex Int?
+  stepKey      String?
+  purpose      String?
+  expiredAt    DateTime?
+  assessment   SystemTestAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@index([assessmentId, scenarioKey])
+}
+
+model SystemTestProposal {
+  id                String               @id @default(cuid())
+  snapshotId        String
+  assessmentId      String
+  jobId             String               @unique
+  filePath          String
+  baseTestHash      String
+  candidateTestHash String?
+  state             String               @default("DRAFT")
+  proposedContent   String
+  verificationJson  Json
+  appliedAt         DateTime?
+  appliedByUserId   String?
+  applier           User?                @relation("ProposalApplier", fields: [appliedByUserId], references: [id])
+  assessment        SystemTestAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  snapshot          ProjectSnapshot      @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@index([snapshotId, state])
+}
+
+model SystemSuiteState {
+  snapshotId    String              @id
+  headVersionId String?             @unique
+  revision      Int                 @default(0)
+  head          SystemSuiteVersion? @relation("SuiteHead", fields: [headVersionId], references: [id])
+  snapshot      ProjectSnapshot     @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+}
+
+model SystemSuiteVersion {
+  id                    String               @id @default(cuid())
+  snapshotId            String
+  parentVersionId       String?
+  restoredFromVersionId String?
+  sequence              Int
+  action                String
+  suiteHash             String
+  sourceHash            String
+  configHash            String
+  requirementRevisionId String?
+  manifestJson          Json
+  scenarioSnapshotJson  Json
+  provenanceJson        Json
+  actorId               String?
+  requestId             String
+  requestHash           String
+  createdAt             DateTime             @default(now())
+  state                 SystemSuiteState?    @relation("SuiteHead")
+  parent                SystemSuiteVersion?  @relation("SuiteParent", fields: [parentVersionId], references: [id])
+  children              SystemSuiteVersion[] @relation("SuiteParent")
+  restoredFrom          SystemSuiteVersion?  @relation("SuiteRestore", fields: [restoredFromVersionId], references: [id])
+  restores              SystemSuiteVersion[] @relation("SuiteRestore")
+  snapshot              ProjectSnapshot      @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([snapshotId, sequence])
+  @@unique([snapshotId, requestId])
+}
+
+model SystemTestBlob {
+  sha256    String   @id
+  content   String
+  byteSize  Int
+  createdAt DateTime @default(now())
+}
+
+model SystemMutationRun {
+  id           String               @id @default(cuid())
+  assessmentId String
+  jobId        String               @unique
+  state        String               @default("QUEUED")
+  manifestJson Json
+  resultJson   Json
+  createdAt    DateTime             @default(now())
+  assessment   SystemTestAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+}
+
+model ProjectMember {
+  id             String   @id @default(cuid())
+  projectId      String
+  userId         String
+  role           String
+  revision       Int      @default(0)
+  addedByUserId  String?
+  joinedAt       DateTime @default(now())
+  disciplineRole String?
+  addedBy        User?    @relation("MemberAddedBy", fields: [addedByUserId], references: [id])
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user           User     @relation("MemberUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+
+model ProjectInvitation {
+  id               String               @id @default(cuid())
+  projectId        String
+  canonicalEmail   String
+  role             String
+  tokenHash        String               @unique
+  revision         Int                  @default(0)
+  status           String               @default("PENDING")
+  invitedByUserId  String?
+  acceptedByUserId String?
+  expiresAt        DateTime
+  createdAt        DateTime             @default(now())
+  acceptedAt       DateTime?
+  requestId        String?
+  disciplineRole   String?
+  deliveries       InvitationDelivery[]
+  acceptedBy       User?                @relation("InvitationAccepter", fields: [acceptedByUserId], references: [id])
+  invitedBy        User?                @relation("InvitationSender", fields: [invitedByUserId], references: [id])
+  project          Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, invitedByUserId, requestId])
+  @@unique([projectId, canonicalEmail], map: "ProjectInvitation_pending_email_key", where: raw("(status = 'PENDING'::text)"))
+  @@index([projectId, status])
+}
+
+model InvitationDelivery {
+  id                 String            @id @default(cuid())
+  invitationId       String
+  invitationRevision Int
+  encryptedPayload   String?
+  status             String            @default("QUEUED")
+  attempts           Int               @default(0)
+  nextAttemptAt      DateTime          @default(now())
+  lockedUntil        DateTime?
+  lastErrorCode      String?
+  createdAt          DateTime          @default(now())
+  invitation         ProjectInvitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+
+  @@unique([invitationId, invitationRevision])
+  @@index([status, nextAttemptAt])
+}
+
+model ProjectEvent {
+  id         String   @id @default(cuid())
+  projectId  String
+  sequence   Int
+  type       String
+  actorId    String?
+  resourceId String?
+  revision   Int?
+  payload    Json
+  createdAt  DateTime @default(now())
+  actor      User?    @relation(fields: [actorId], references: [id])
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, sequence])
+}
+
+model ProjectFileVersion {
+  id                  String          @id @default(cuid())
+  snapshotId          String
+  relativePath        String
+  revision            Int             @default(0)
+  sha256              String?
+  deleted             Boolean         @default(false)
+  updatedByUserId     String?
+  updatedAt           DateTime        @updatedAt
+  attributionStatus   String?
+  lineAttributionJson Json?
+  snapshot            ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  updatedBy           User?           @relation(fields: [updatedByUserId], references: [id])
+
+  @@unique([snapshotId, relativePath])
+}
+
+model ProjectMutation {
+  id                        String          @id @default(cuid())
+  inputHash                 String
+  requestId                 String
+  projectId                 String
+  snapshotId                String
+  actorId                   String?
+  kind                      String
+  expectedWorkspaceRevision Int
+  nextWorkspaceRevision     Int
+  journalPath               String
+  state                     String          @default("PREPARED")
+  createdAt                 DateTime        @default(now())
+  actor                     User?           @relation(fields: [actorId], references: [id])
+  project                   Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot                  ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, requestId])
+}
+
+model ProjectOperation {
+  id                        String                    @id @default(cuid())
+  projectId                 String
+  snapshotId                String?
+  actorId                   String?
+  capability                String
+  type                      String
+  requestId                 String
+  semanticKey               String
+  capturedWorkspaceRevision Int
+  status                    String                    @default("ADMITTED")
+  primaryJobId              String?                   @unique
+  inputJson                 Json?
+  resultJson                Json?
+  createdAt                 DateTime                  @default(now())
+  updatedAt                 DateTime                  @updatedAt
+  actor                     User?                     @relation(fields: [actorId], references: [id])
+  primaryJob                Job?                      @relation(fields: [primaryJobId], references: [id])
+  project                   Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot                  ProjectSnapshot?          @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  requests                  ProjectOperationRequest[]
+
+  @@unique([projectId, actorId, requestId])
+  @@unique([projectId, semanticKey], map: "ProjectOperation_active_semantic_key", where: raw("(status = ANY (ARRAY['ADMITTED'::text, 'QUEUED'::text, 'RUNNING'::text, 'PUBLISHING'::text]))"))
+}
+
+model ProjectOperationRequest {
+  id          String           @id @default(cuid())
+  projectId   String
+  actorId     String
+  requestId   String
+  operationId String
+  createdAt   DateTime         @default(now())
+  actor       User             @relation(fields: [actorId], references: [id], onDelete: Cascade)
+  operation   ProjectOperation @relation(fields: [operationId], references: [id], onDelete: Cascade)
+  project     Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, actorId, requestId])
+  @@index([operationId])
+}
+
+model ChatRequest {
+  id                 String      @id @default(cuid())
+  sessionId          String
+  actorId            String?
+  clientRequestId    String
+  inputHash          String
+  status             String      @default("PROCESSING")
+  processingToken    String?
+  userMessageId      String?
+  assistantMessageId String?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  actor              User?       @relation(fields: [actorId], references: [id])
+  session            ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, actorId, clientRequestId])
+}
+
+model AiQuotaReservation {
+  id         String   @id @default(cuid())
+  userId     String
+  requestKey String
+  usageDate  String
+  status     String   @default("RESERVED")
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, requestKey])
+}
+
+model ProjectEditorDocument {
+  id                  String                @id @default(cuid())
+  projectId           String
+  snapshotId          String
+  relativePath        String
+  generation          Int                   @default(1)
+  revision            Int                   @default(0)
+  stateBytes          Bytes
+  text                String
+  contentHash         String
+  baseFileRevision    Int
+  baseFileHash        String
+  checkpointRevision  Int                   @default(0)
+  lineAttributionJson Json
+  attributionStatus   String                @default("AVAILABLE")
+  active              Boolean               @default(true)
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  project             Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot            ProjectSnapshot       @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  updates             ProjectEditorUpdate[]
+
+  @@unique([snapshotId, relativePath])
+  @@index([projectId, active])
+}
+
+model ProjectEditorUpdate {
+  id                String                @id @default(cuid())
+  documentId        String
+  generation        Int
+  actorId           String?
+  requestId         String
+  updateHash        String
+  resultRevision    Int
+  resultContentHash String
+  createdAt         DateTime              @default(now())
+  actor             User?                 @relation(fields: [actorId], references: [id])
+  document          ProjectEditorDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, generation, actorId, requestId])
+}
+
+model ProjectCodeChange {
+  id         String          @id @default(cuid())
+  projectId  String
+  snapshotId String
+  actorId    String?
+  source     String
+  metadata   Json?
+  createdAt  DateTime        @default(now())
+  actor      User?           @relation(fields: [actorId], references: [id])
+  project    Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot   ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, snapshotId])
+}
+
+model GithubPendingLink {
+  id                   String    @id @default(cuid())
+  tokenHash            String    @unique
+  userId               String
+  email                String
+  githubUserId         String
+  githubLogin          String?
+  githubName           String?
+  githubAvatarUrl      String?
+  githubAccessTokenEnc String
+  expiresAt            DateTime
+  consumedAt           DateTime?
+  createdAt            DateTime  @default(now())
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
+}
+
+model AdminAuditLog {
+  id             String   @id
+  actorId        String?
+  action         String
+  targetModel    String
+  targetId       String?
+  beforeSnapshot Json?
+  afterSnapshot  Json?
+  diff           Json?
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime @default(now())
+  User           User?    @relation(fields: [actorId], references: [id])
+
+  @@index([action])
+  @@index([actorId])
+  @@index([createdAt])
+  @@index([targetModel, targetId])
 }
 
 enum ProjectLifecycleStatus {
@@ -882,8 +1374,6 @@ enum SnapshotSource {
 }
 
 enum JobType {
-  AI_EVALUATION
-  AI_EVALUATION_PREPARE
   INGEST
   INSTALL_DEPS
   RUN_TESTS
@@ -891,15 +1381,12 @@ enum JobType {
   BUILD_CFG
   AI_SUGGEST
   AI_TESTS
-  UNIT_TEST_SUGGEST
-  UNIT_TEST_APPLY
   CODE_HYGIENE
   PERFORMANCE_ANALYSIS
   ANALYSIS
   QUALITY_ANALYSIS
   SECURITY_ANALYSIS
   SUPERTEST_COVERAGE
-  PLAYWRIGHT_API_COVERAGE
   RUN_VITEST_TESTS
   VITEST_COVERAGE
   SYSTEM_TEST_ANALYSIS
@@ -910,6 +1397,11 @@ enum JobType {
   CYPRESS_SYSTEM_COVERAGE
   PLAYWRIGHT_SYSTEM_TEST
   PLAYWRIGHT_SYSTEM_COVERAGE
+  PLAYWRIGHT_API_COVERAGE
+  AI_EVALUATION
+  AI_EVALUATION_PREPARE
+  UNIT_TEST_SUGGEST
+  UNIT_TEST_APPLY
 }
 
 enum JobStatus {
@@ -941,10 +1433,10 @@ enum AiSuggestionPriority {
 enum TestType {
   JEST
   SUPERTEST
-  PLAYWRIGHT_API
   PLAYWRIGHT
   CYPRESS
   VITEST
+  PLAYWRIGHT_API
 }
 
 enum IssueType {
@@ -962,421 +1454,9 @@ enum Severity {
   CRITICAL
 }
 
-model SystemRequirementRevision {
-  id String @id @default(cuid())
-  snapshotId String
-  revisionNumber Int
-  status String @default("DRAFT")
-  contentHash String
-  contentJson Json
-  approvedByUserId String?
-  approvedAt DateTime?
-  createdAt DateTime @default(now())
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-  approver User? @relation("RequirementApprover", fields: [approvedByUserId], references: [id], onDelete: SetNull)
-  bindings SystemAssertionBinding[]
-  assessments SystemTestAssessment[]
-  @@unique([snapshotId, revisionNumber])
-}
-model SystemAssertionBinding {
-  id String @id @default(cuid())
-  revisionId String
-  criterionId String
-  testFile String
-  scenarioId String
-  assertionId String
-  testHash String
-  bindingJson Json
-  status String @default("DRAFT")
-  reviewedByUserId String?
-  reviewedAt DateTime?
-  revision SystemRequirementRevision @relation(fields: [revisionId], references: [id], onDelete: Cascade)
-  reviewer User? @relation("BindingApprover", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
-  @@unique([revisionId, assertionId, testHash])
-}
-model SystemTestAssessment {
-  suiteVersionId String?
-  id String @id @default(cuid())
-  snapshotId String
-  jobId String @unique
-  testRunId String?
-  requirementRevisionId String?
-  sourceHash String
-  testHash String
-  scopeHash String
-  runner String
-  executionMode String
-  status String @default("QUEUED")
-  reportJson Json
-  createdAt DateTime @default(now())
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-  testRun TestRun? @relation(fields: [testRunId], references: [id], onDelete: SetNull)
-  requirements SystemRequirementRevision? @relation(fields: [requirementRevisionId], references: [id], onDelete: SetNull)
-  proposals SystemTestProposal[]
-  mutations SystemMutationRun[]
-  events SystemRunEvent[]
-  artifacts SystemRunArtifact[]
-  @@index([snapshotId, createdAt])
-}
-model SystemScenario {
-  id String @id @default(cuid())
-  snapshotId String
-  scenarioKey String
-  source String
-  filePath String?
-  title String
-  flowJson Json
-  inputJson Json
-  expectedJson Json
-  criterionIds Json
-  reviewState String @default("DRAFT")
-  requirementRevisionId String?
-  scenarioHash String
-  testHash String?
-  assertionHashes Json
-  reviewedByUserId String?
-  reviewedAt DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-  @@unique([snapshotId, scenarioKey])
-  @@index([snapshotId, reviewState])
-}
-model SystemRunEvent {
-  id String @id @default(cuid())
-  assessmentId String
-  sequence Int
-  runIndex Int
-  scenarioKey String?
-  type String
-  payloadJson Json
-  createdAt DateTime @default(now())
-  assessment SystemTestAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
-  @@unique([assessmentId, sequence])
-  @@index([assessmentId, scenarioKey])
-}
-model SystemRunArtifact {
-  runIndex Int?
-  attemptIndex Int?
-  stepKey String?
-  purpose String?
-  expiredAt DateTime?
-  id String @id @default(cuid())
-  assessmentId String
-  scenarioKey String?
-  kind String
-  relativePath String
-  sha256 String
-  mimeType String
-  byteSize Int
-  createdAt DateTime @default(now())
-  assessment SystemTestAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
-  @@index([assessmentId, scenarioKey])
-}
-model SystemTestProposal {
-  id String @id @default(cuid())
-  snapshotId String
-  assessmentId String
-  jobId String @unique
-  filePath String
-  baseTestHash String
-  candidateTestHash String?
-  state String @default("DRAFT")
-  proposedContent String @db.Text
-  verificationJson Json
-  appliedAt DateTime?
-  appliedByUserId String?
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-  assessment SystemTestAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
-  applier User? @relation("ProposalApplier", fields: [appliedByUserId], references: [id], onDelete: SetNull)
-  @@index([snapshotId, state])
-}
-model SystemSuiteState {
-  snapshotId String @id
-  headVersionId String? @unique
-  revision Int @default(0)
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-  head SystemSuiteVersion? @relation("SuiteHead", fields: [headVersionId], references: [id], onDelete: SetNull)
-}
-
-model SystemSuiteVersion {
-  id String @id @default(cuid())
-  snapshotId String
-  parentVersionId String?
-  restoredFromVersionId String?
-  sequence Int
-  action String
-  suiteHash String
-  sourceHash String
-  configHash String
-  requirementRevisionId String?
-  manifestJson Json
-  scenarioSnapshotJson Json
-  provenanceJson Json
-  actorId String?
-  requestId String
-  requestHash String
-  createdAt DateTime @default(now())
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-  parent SystemSuiteVersion? @relation("SuiteParent", fields: [parentVersionId], references: [id], onDelete: SetNull)
-  children SystemSuiteVersion[] @relation("SuiteParent")
-  restoredFrom SystemSuiteVersion? @relation("SuiteRestore", fields: [restoredFromVersionId], references: [id], onDelete: SetNull)
-  restores SystemSuiteVersion[] @relation("SuiteRestore")
-  state SystemSuiteState? @relation("SuiteHead")
-  @@unique([snapshotId, sequence])
-  @@unique([snapshotId, requestId])
-}
-
-model SystemTestBlob {
-  sha256 String @id
-  content String @db.Text
-  byteSize Int
-  createdAt DateTime @default(now())
-}
-
-model SystemMutationRun {
-  id String @id @default(cuid())
-  assessmentId String
-  jobId String @unique
-  state String @default("QUEUED")
-  manifestJson Json
-  resultJson Json
-  createdAt DateTime @default(now())
-  assessment SystemTestAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
-}
-
-model ProjectMember {
-  disciplineRole String?
-  id String @id @default(cuid())
-  projectId String
-  userId String
-  role String
-  revision Int @default(0)
-  addedByUserId String?
-  joinedAt DateTime @default(now())
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user User @relation("MemberUser", fields: [userId], references: [id], onDelete: Cascade)
-  addedBy User? @relation("MemberAddedBy", fields: [addedByUserId], references: [id], onDelete: SetNull)
-  @@unique([projectId, userId])
-  @@index([userId])
-}
-model ProjectInvitation {
-  disciplineRole String?
-  id String @id @default(cuid())
-  projectId String
-  canonicalEmail String
-  role String
-  tokenHash String @unique
-  revision Int @default(0)
-  status String @default("PENDING")
-  invitedByUserId String?
-  acceptedByUserId String?
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-  acceptedAt DateTime?
-  requestId String?
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  invitedBy User? @relation("InvitationSender", fields: [invitedByUserId], references: [id], onDelete: SetNull)
-  acceptedBy User? @relation("InvitationAccepter", fields: [acceptedByUserId], references: [id], onDelete: SetNull)
-  deliveries InvitationDelivery[]
-  @@unique([projectId, invitedByUserId, requestId])
-  @@unique([projectId, canonicalEmail], map: "ProjectInvitation_pending_email_key", where: raw("(status = 'PENDING'::text)"))
-  @@index([projectId, status])
-}
-model InvitationDelivery {
-  id String @id @default(cuid())
-  invitationId String
-  invitationRevision Int
-  encryptedPayload String? @db.Text
-  status String @default("QUEUED")
-  attempts Int @default(0)
-  nextAttemptAt DateTime @default(now())
-  lockedUntil DateTime?
-  lastErrorCode String?
-  createdAt DateTime @default(now())
-  invitation ProjectInvitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
-  @@unique([invitationId, invitationRevision])
-  @@index([status, nextAttemptAt])
-}
-model ProjectEvent {
-  id String @id @default(cuid())
-  projectId String
-  sequence Int
-  type String
-  actorId String?
-  resourceId String?
-  revision Int?
-  payload Json
-  createdAt DateTime @default(now())
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
-  @@unique([projectId, sequence])
-}
-model ProjectFileVersion {
-  lineAttributionJson Json?
-  attributionStatus String?
-  id String @id @default(cuid())
-  snapshotId String
-  relativePath String
-  revision Int @default(0)
-  sha256 String?
-  deleted Boolean @default(false)
-  updatedByUserId String?
-  updatedAt DateTime @updatedAt
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-  updatedBy User? @relation(fields: [updatedByUserId], references: [id], onDelete: SetNull)
-  @@unique([snapshotId, relativePath])
-}
-model ProjectMutation {
-  id String @id @default(cuid())
-  inputHash String
-  requestId String
-  projectId String
-  snapshotId String
-  actorId String?
-  kind String
-  expectedWorkspaceRevision Int
-  nextWorkspaceRevision Int
-  journalPath String
-  state String @default("PREPARED")
-  createdAt DateTime @default(now())
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
-  @@unique([projectId, requestId])
-}
-model ProjectOperation {
-  id String @id @default(cuid())
-  projectId String
-  snapshotId String?
-  actorId String?
-  capability String
-  type String
-  requestId String
-  semanticKey String
-  capturedWorkspaceRevision Int
-  status String @default("ADMITTED")
-  primaryJobId String? @unique
-  inputJson Json?
-  resultJson Json?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  snapshot ProjectSnapshot? @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
-  primaryJob Job? @relation(fields: [primaryJobId], references: [id], onDelete: SetNull)
-  requests ProjectOperationRequest[]
-  @@unique([projectId, actorId, requestId])
-  @@unique([projectId, semanticKey], map: "ProjectOperation_active_semantic_key", where: raw("(status = ANY (ARRAY['ADMITTED'::text, 'QUEUED'::text, 'RUNNING'::text, 'PUBLISHING'::text]))"))
-}
-model ProjectOperationRequest {
-  id String @id @default(cuid())
-  projectId String
-  actorId String
-  requestId String
-  operationId String
-  createdAt DateTime @default(now())
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  actor User @relation(fields: [actorId], references: [id], onDelete: Cascade)
-  operation ProjectOperation @relation(fields: [operationId], references: [id], onDelete: Cascade)
-  @@unique([projectId, actorId, requestId])
-  @@index([operationId])
-}
-model ChatRequest {
-  id String @id @default(cuid())
-  sessionId String
-  actorId String?
-  clientRequestId String
-  inputHash String
-  status String @default("PROCESSING")
-  processingToken String?
-  userMessageId String?
-  assistantMessageId String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
-  @@unique([sessionId, actorId, clientRequestId])
-}
-model AiQuotaReservation {
-  id String @id @default(cuid())
-  userId String
-  requestKey String
-  usageDate String
-  status String @default("RESERVED")
-  createdAt DateTime @default(now())
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  @@unique([userId, requestKey])
-}
-
-model ProjectEditorDocument {
-  id String @id @default(cuid())
-  projectId String
-  snapshotId String
-  relativePath String
-  generation Int @default(1)
-  revision Int @default(0)
-  stateBytes Bytes
-  text String @db.Text
-  contentHash String
-  baseFileRevision Int
-  baseFileHash String
-  checkpointRevision Int @default(0)
-  lineAttributionJson Json
-  attributionStatus String @default("AVAILABLE")
-  active Boolean @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-  updates ProjectEditorUpdate[]
-  @@unique([snapshotId, relativePath])
-  @@index([projectId, active])
-}
-model ProjectEditorUpdate {
-  id String @id @default(cuid())
-  documentId String
-  generation Int
-  actorId String?
-  requestId String
-  updateHash String
-  resultRevision Int
-  resultContentHash String
-  createdAt DateTime @default(now())
-  document ProjectEditorDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
-  @@unique([documentId, generation, actorId, requestId])
-}
-model ProjectCodeChange {
-  id String @id @default(cuid())
-  projectId String
-  snapshotId String
-  actorId String?
-  source String
-  metadata Json?
-  createdAt DateTime @default(now())
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  snapshot ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
-  @@index([projectId, snapshotId])
-}
-
-model GithubPendingLink {
-  id                   String    @id @default(cuid())
-  tokenHash            String    @unique
-  userId               String
-  email                String
-  githubUserId         String
-  githubLogin          String?
-  githubName           String?
-  githubAvatarUrl      String?
-  githubAccessTokenEnc String    @db.Text
-  expiresAt            DateTime
-  consumedAt           DateTime?
-  createdAt            DateTime  @default(now())
-
-  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, expiresAt])
-  @@index([expiresAt])
+enum SystemRole {
+  SUPERADMIN
+  ADMIN
+  OPERATOR
+  USER
 }

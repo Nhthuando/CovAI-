@@ -1,6 +1,10 @@
 import { useProjectAccess } from "../../hooks/useProjectAccess";
 import { useChatTestContext } from '../../hooks/useChatTestContext';
-import { getIntegrationScenarioApi, mutateIntegrationScenarioApi } from "../../services/integrationScenario.service";
+import {
+  getIntegrationScenarioApi,
+  mutateIntegrationScenarioApi,
+  bulkDeleteIntegrationScenariosApi,
+} from "../../services/integrationScenario.service";
 import {
   loadStagedOps,
   saveStagedOps,
@@ -77,6 +81,7 @@ import IntegrationErrorBoundary from "./integration/IntegrationErrorBoundary.jsx
 import IntegrationApplyTestsModal from "./integration/IntegrationApplyTestsModal.jsx";
 import IntegrationScenarioEditorModal from "./integration/IntegrationScenarioEditorModal.jsx";
 import SourceCodeViewerModal from "./integration/SourceCodeViewerModal.jsx";
+import IntegrationSimulationStudioModal from "./integration/IntegrationSimulationStudioModal.jsx";
 import { getEndpointCaseCoverage } from "./integration/integrationCaseCoverage.js";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
@@ -426,6 +431,12 @@ export default function IntegrationWorkspace({
   const [editorSaveError, setEditorSaveError] = useState("");
   const [sourceViewerOpen, setSourceViewerOpen] = useState(false);
   const [sourceViewerOptions, setSourceViewerOptions] = useState([]);
+  const [simulationModalState, setSimulationModalState] = useState({
+    isOpen: false,
+    endpoint: null,
+    scenario: null,
+    autoPlay: true,
+  });
   const [showLiveLogsDetails, setShowLiveLogsDetails] = useState(false);
   const [jobElapsedSeconds, setJobElapsedSeconds] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(null); // 'history' | 'compare' | null
@@ -1700,6 +1711,65 @@ export default function IntegrationWorkspace({
       title: "Removed (Temp)",
       message: `Removed "${title}" from view. Click Apply Changes to save.`,
     });
+  };
+
+  const handleDeleteSelectedScenarios = async (selectedScenarios = []) => {
+    if (!projectAccess.can("files.write") || !snapshotId) return false;
+    const validList = Array.isArray(selectedScenarios)
+      ? selectedScenarios.filter(Boolean)
+      : [];
+    if (validList.length === 0) return false;
+
+    setError("");
+    setPendingAction("BULK_DELETE");
+    try {
+      const stagedOnly = validList.filter((sc) => sc.stagedTemp);
+      const persistedList = validList.filter((sc) => !sc.stagedTemp);
+      let deletedCount = stagedOnly.length;
+
+      if (persistedList.length > 0) {
+        const payload = persistedList.map((sc) => ({
+          ...editableScenario(sc),
+          title: sc.title || sc.testName || sc.scenarioId || undefined,
+        }));
+        const res = await bulkDeleteIntegrationScenariosApi(snapshotId, payload);
+        deletedCount += res?.data?.deletedCount ?? payload.length;
+      }
+      const removedKeySet = new Set(
+        validList.map(
+          (sc) =>
+            sc.id ||
+            `${sc.aiTestId || "ep"}::${sc.scenarioId || sc.title || sc.testName}`,
+        ),
+      );
+      setPendingOps((prev) => {
+        const next = {
+          deletes: (prev.deletes || []).filter((d) => !removedKeySet.has(d.key)),
+          updates: (prev.updates || []).filter((u) => !removedKeySet.has(u.key)),
+          adds: (prev.adds || []).filter((a) => !removedKeySet.has(a.key)),
+        };
+        saveStagedOps("integration", snapshotId, next);
+        return next;
+      });
+      await load({ scan: false });
+      showToast({
+        type: "success",
+        title: "Scenarios Deleted",
+        message: `Removed ${deletedCount} selected scenario${deletedCount === 1 ? "" : "s"}.`,
+      });
+      return true;
+    } catch (err) {
+      const msg = err?.message || "Failed to delete selected scenarios.";
+      setError(msg);
+      showToast({
+        type: "error",
+        title: "Bulk Delete Failed",
+        message: msg,
+      });
+      return false;
+    } finally {
+      setPendingAction(null);
+    }
   };
 
   const handleToggleScenario = async (sc, enableState) => {
@@ -2986,6 +3056,24 @@ export default function IntegrationWorkspace({
                         )
                     : null
                 }
+                onApplySelectedScenarios={
+                  projectAccess.can("files.write")
+                    ? (selectedList = []) => {
+                        const aiList = selectedList.filter(
+                          (sc) => sc.aiTestId && sc.scenarioId,
+                        );
+                        if (aiList.length === 0) return;
+                        const testIds = Array.from(
+                          new Set(aiList.map((sc) => sc.aiTestId).filter(Boolean)),
+                        );
+                        const initialKeys = aiList.map(
+                          (sc) =>
+                            `${sc.aiTestId}::${sc.scenarioId || sc.title || sc.testName}`,
+                        );
+                        handleOpenApplyModal(testIds, initialKeys);
+                      }
+                    : null
+                }
                 onOpenAddScenario={
                   projectAccess.can("files.write")
                     ? handleOpenAddScenario
@@ -2995,6 +3083,12 @@ export default function IntegrationWorkspace({
                 onDeleteScenario={
                   projectAccess.can("files.write") ? handleDeleteScenario : null
                 }
+                onDeleteSelectedScenarios={
+                  projectAccess.can("files.write")
+                    ? handleDeleteSelectedScenarios
+                    : null
+                }
+                isDeletingSelected={pendingAction === "BULK_DELETE"}
                 onToggleScenario={
                   projectAccess.can("files.write") ? handleToggleScenario : null
                 }
@@ -3002,6 +3096,22 @@ export default function IntegrationWorkspace({
                   projectAccess.can("ai.use") ? handleAIFixScenario : null
                 }
                 onOpenSourceFile={onOpenFile}
+                onSimulateEndpoint={(ep) =>
+                  setSimulationModalState({
+                    isOpen: true,
+                    endpoint: ep,
+                    scenario: ep?.scenarios?.[0] || null,
+                    autoPlay: true,
+                  })
+                }
+                onSimulateScenario={(sc, ep) =>
+                  setSimulationModalState({
+                    isOpen: true,
+                    endpoint: ep,
+                    scenario: sc,
+                    autoPlay: true,
+                  })
+                }
                 isGenerating={
                   pendingAction === "GENERATE" ||
                   (isJobActive && activeJobType === "GENERATE")
@@ -3537,6 +3647,18 @@ export default function IntegrationWorkspace({
           .map((s) => s.title || s.name || "")
           .filter(Boolean)}
         isAddMode={isAddScenarioMode}
+      />
+
+      <IntegrationSimulationStudioModal
+        isOpen={simulationModalState.isOpen}
+        onClose={() =>
+          setSimulationModalState((prev) => ({ ...prev, isOpen: false }))
+        }
+        snapshotId={snapshotId}
+        endpoint={simulationModalState.endpoint}
+        initialScenario={simulationModalState.scenario}
+        autoPlayOnOpen={simulationModalState.autoPlay}
+        onOpenSourceFile={onOpenFile}
       />
     </div>
   );

@@ -106,10 +106,10 @@ export const traceApiEndpointCoverage = ({ endpoints = [], fileCoverageMap = {},
     for (const ep of endpoints) {
         const method = (ep.method || "GET").toUpperCase();
         const routePath = ep.path || "/";
-        const controllerFile = ep.controllerFile || "";
+        const controllerFile = ep.controllerFile || ep.sourceFile || "";
 
-        let lineStart = ep.controllerLineStart || ep.controllerLine || 1;
-        let lineEnd = ep.controllerLineEnd || (lineStart + 20);
+        let lineStart = ep.controllerLineStart || ep.controllerLine || ep.sourceLineStart || 1;
+        let lineEnd = ep.controllerLineEnd || ep.sourceLineEnd || (lineStart + 20);
 
         const fileCov = findFileCoverage(controllerFile, fileCoverageMap);
 

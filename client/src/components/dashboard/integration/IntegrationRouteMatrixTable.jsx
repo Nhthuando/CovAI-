@@ -44,8 +44,10 @@ export const METHOD_STYLES = {
   GET: "bg-[var(--color-bg)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
   POST: "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border-[var(--color-border-strong)]",
   PUT: "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border-[var(--color-border)]",
-  PATCH: "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
-  DELETE: "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border-[var(--color-border)]",
+  PATCH:
+    "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
+  DELETE:
+    "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border-[var(--color-border)]",
   DEFAULT:
     "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
 };
@@ -111,10 +113,15 @@ export default function IntegrationRouteMatrixTable({
   onOpenAddScenario,
   onOpenEditScenario,
   onDeleteScenario,
+  onDeleteSelectedScenarios = null,
+  isDeletingSelected = false,
   onToggleScenario,
   onAIFixScenario,
   onApplyScenario,
+  onApplySelectedScenarios = null,
   onOpenSourceFile,
+  onSimulateEndpoint = null,
+  onSimulateScenario = null,
   isGenerating = false,
   isRunning = false,
   generatingKey = null,
@@ -137,6 +144,11 @@ export default function IntegrationRouteMatrixTable({
     () => loadMatrixSelection("integration", snapshotId).children,
   );
 
+  const [expandedScenarioCodeKey, setExpandedScenarioCodeKey] = useState(null);
+  const [confirmDeleteKey, setConfirmDeleteKey] = useState(null);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const [copiedKey, setCopiedKey] = useState(null);
+
   useEffect(() => {
     saveMatrixSelection(
       "integration",
@@ -144,10 +156,8 @@ export default function IntegrationRouteMatrixTable({
       selectedEndpointKeys,
       selectedScenarioKeys,
     );
+    setConfirmBulkDelete(false);
   }, [snapshotId, selectedEndpointKeys, selectedScenarioKeys]);
-  const [expandedScenarioCodeKey, setExpandedScenarioCodeKey] = useState(null);
-  const [confirmDeleteKey, setConfirmDeleteKey] = useState(null);
-  const [copiedKey, setCopiedKey] = useState(null);
 
   // Merge endpoint scenarios + aiTests requests so 100% of scenarios (AI, Repo, Custom) live inside the matrix
   const { enrichedEndpoints, unmappedScenarios, totalScenarioCount } =
@@ -765,7 +775,11 @@ export default function IntegrationRouteMatrixTable({
                   title="Apply staged UI edits, additions, and deletions to repository source"
                 >
                   <HardDriveDownload className="w-3.5 h-3.5" />
-                  <span>{isApplyingPending ? "Applying..." : `Apply Changes (${pendingOpsCount})`}</span>
+                  <span>
+                    {isApplyingPending
+                      ? "Applying..."
+                      : `Apply Changes (${pendingOpsCount})`}
+                  </span>
                 </button>
                 {onDiscardPendingChanges && !isApplyingPending && (
                   <button
@@ -867,17 +881,20 @@ export default function IntegrationRouteMatrixTable({
               </button>
             )}
 
-            {onApplyScenario &&
+            {(onApplySelectedScenarios || onApplyScenario) &&
               selectedScenariosList.some(
                 (sc) => sc.aiTestId && sc.scenarioId,
               ) && (
                 <button
                   type="button"
                   onClick={() => {
-                    const first = selectedScenariosList[0];
-                    if (first) onApplyScenario(first);
+                    if (onApplySelectedScenarios) {
+                      onApplySelectedScenarios(selectedScenariosList);
+                    } else if (onApplyScenario && selectedScenariosList[0]) {
+                      onApplyScenario(selectedScenariosList[0]);
+                    }
                   }}
-                  disabled={isRunning || isGenerating}
+                  disabled={isRunning || isGenerating || isDeletingSelected}
                   className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] transition-colors disabled:opacity-50 cursor-pointer"
                 >
                   <HardDriveDownload className="w-3 h-3 text-[var(--color-primary)]" />
@@ -887,9 +904,60 @@ export default function IntegrationRouteMatrixTable({
                 </button>
               )}
 
+            {onDeleteSelectedScenarios &&
+              selectedScenariosList.length > 0 &&
+              (confirmBulkDelete ? (
+                <div className="inline-flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const ok = await onDeleteSelectedScenarios(
+                        selectedScenariosList,
+                      );
+                      setConfirmBulkDelete(false);
+                      if (ok !== false) {
+                        setSelectedEndpointKeys(new Set());
+                        setSelectedScenarioKeys(new Set());
+                      }
+                    }}
+                    disabled={isDeletingSelected || isRunning || isGenerating}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white transition-colors duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span className="tabular-nums">
+                      {isDeletingSelected
+                        ? "Deleting..."
+                        : `Confirm Delete (${selectedScenariosList.length})`}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmBulkDelete(false)}
+                    disabled={isDeletingSelected}
+                    className="px-2 py-1 rounded-md text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border)] bg-[var(--color-surface)] cursor-pointer disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmBulkDelete(true)}
+                  disabled={isDeletingSelected || isRunning || isGenerating}
+                  title={`Delete ${selectedScenariosList.length} selected scenario${selectedScenariosList.length === 1 ? "" : "s"}`}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-colors duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  <span className="tabular-nums">
+                    Delete ({selectedScenariosList.length})
+                  </span>
+                </button>
+              ))}
+
             <button
               type="button"
               onClick={() => {
+                setConfirmBulkDelete(false);
                 setSelectedEndpointKeys(new Set());
                 setSelectedScenarioKeys(new Set());
               }}
@@ -953,7 +1021,10 @@ export default function IntegrationRouteMatrixTable({
                   isGenerating && generatingKey === epActionKey;
                 const isThisRunning = isRunning && runningKey === epActionKey;
                 const sourceFile =
-                  ep.file || ep.sourceFile || ep.source?.sourceFile || "express-router";
+                  ep.file ||
+                  ep.sourceFile ||
+                  ep.source?.sourceFile ||
+                  "express-router";
                 const epCaseCov = getEndpointCaseCoverage(ep, scenarios);
                 const sourceLine = ep.source?.sourceLine || ep.line || null;
                 const hasLogicSnippet = Boolean(
@@ -1023,11 +1094,12 @@ export default function IntegrationRouteMatrixTable({
                             </span>
                           )}
                         </div>
-                        {ep.description && !isBoilerplateDescription(ep.description) && (
-                          <p className="text-[11px] text-[var(--color-text-muted)] mt-1 pl-[66px] line-clamp-1 font-sans">
-                            {ep.description}
-                          </p>
-                        )}
+                        {ep.description &&
+                          !isBoilerplateDescription(ep.description) && (
+                            <p className="text-[11px] text-[var(--color-text-muted)] mt-1 pl-[66px] line-clamp-1 font-sans">
+                              {ep.description}
+                            </p>
+                          )}
                       </td>
 
                       {/* Handler + Source File merged cleanly */}
@@ -1081,7 +1153,8 @@ export default function IntegrationRouteMatrixTable({
                               title={`Missing required cases (${epCaseCov.passedCasesCount}/${epCaseCov.totalRequired} verified)`}
                             >
                               <span className="w-1.5 h-1.5 rounded-full bg-amber-500/60" />
-                              Partial ({epCaseCov.passedCasesCount}/{epCaseCov.totalRequired})
+                              Partial ({epCaseCov.passedCasesCount}/
+                              {epCaseCov.totalRequired})
                             </span>
                           ) : status === "FAIL" ? (
                             <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-rose-300/85">
@@ -1119,6 +1192,17 @@ export default function IntegrationRouteMatrixTable({
                         onClick={(e) => e.stopPropagation()}
                       >
                         <div className="inline-flex items-center justify-end gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
+                          {onSimulateEndpoint && (
+                            <button
+                              type="button"
+                              onClick={() => onSimulateEndpoint(ep)}
+                              title="Open API flow simulation diagram"
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer"
+                            >
+                              <Network className="w-3 h-3" />
+                              <span>Flow</span>
+                            </button>
+                          )}
                           {onOpenAddScenario && (
                             <button
                               type="button"
@@ -1288,7 +1372,13 @@ export default function IntegrationRouteMatrixTable({
                                         : "bg-transparent text-[var(--color-text-muted)] border-[var(--color-border)] border-dashed"
                                     }`}
                                   >
-                                    <span className={c.covered ? "text-emerald-500/75" : "text-[var(--color-text-muted)]"}>
+                                    <span
+                                      className={
+                                        c.covered
+                                          ? "text-emerald-500/75"
+                                          : "text-[var(--color-text-muted)]"
+                                      }
+                                    >
                                       {c.covered ? "✓" : "○"}
                                     </span>
                                     <span>{c.label}</span>
@@ -1300,7 +1390,8 @@ export default function IntegrationRouteMatrixTable({
                                   <span className="text-[var(--color-text-muted)]">
                                     No scenarios
                                   </span>
-                                ) : epCaseCov.passedCount + epCaseCov.failedCount ===
+                                ) : epCaseCov.passedCount +
+                                    epCaseCov.failedCount ===
                                   0 ? (
                                   <span className="text-[var(--color-text-muted)]">
                                     {scenarios.length} ready • not run yet
@@ -1374,7 +1465,8 @@ export default function IntegrationRouteMatrixTable({
                                     scStatus === "FAIL";
                                   const catInfo = classifyScenario(sc);
                                   const caseAnnot =
-                                    epCaseCov.scenarioAnnotations?.[sIdx] || null;
+                                    epCaseCov.scenarioAnnotations?.[sIdx] ||
+                                    null;
                                   const scKey = `${rowKey}-sc-${sc.scenarioId || sIdx}`;
                                   const isCodeOpen =
                                     expandedScenarioCodeKey === scKey;
@@ -1401,7 +1493,8 @@ export default function IntegrationRouteMatrixTable({
                                     getEpIdentityKey(ep),
                                   );
                                   const isSelectedSc =
-                                    isSelected || selectedScenarioKeys.has(scIdentityKey);
+                                    isSelected ||
+                                    selectedScenarioKeys.has(scIdentityKey);
 
                                   return (
                                     <div
@@ -1449,38 +1542,46 @@ export default function IntegrationRouteMatrixTable({
                                               {caseAnnot && (
                                                 <span
                                                   title={
-                                                    caseAnnot.role === "DUPLICATE"
+                                                    caseAnnot.role ===
+                                                    "DUPLICATE"
                                                       ? `Another scenario already covers "${caseAnnot.caseLabel}" — safe to remove if redundant.`
-                                                      : caseAnnot.role === "OPTIONAL_EXTRA"
+                                                      : caseAnnot.role ===
+                                                          "OPTIONAL_EXTRA"
                                                         ? `Supplementary scenario outside the endpoint's required Cases (${epCaseCov.totalRequired}).`
                                                         : `Assigned to cover required case "${caseAnnot.caseLabel}".`
                                                   }
                                                   className={`px-1.5 py-0.2 rounded border font-medium ${
-                                                    caseAnnot.role === "MATCHED_PASS"
+                                                    caseAnnot.role ===
+                                                    "MATCHED_PASS"
                                                       ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                                                      : caseAnnot.role === "MATCHED_FAIL"
+                                                      : caseAnnot.role ===
+                                                          "MATCHED_FAIL"
                                                         ? "border-rose-500/30 bg-rose-500/10 text-rose-300"
-                                                        : caseAnnot.role === "MATCHED_PENDING"
+                                                        : caseAnnot.role ===
+                                                            "MATCHED_PENDING"
                                                           ? "border-[var(--color-primary)]/35 bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
-                                                          : caseAnnot.role === "DUPLICATE"
+                                                          : caseAnnot.role ===
+                                                              "DUPLICATE"
                                                             ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
                                                             : "border-dashed border-[var(--color-border)] bg-transparent text-[var(--color-text-muted)]"
                                                   }`}
                                                 >
-                                                  {caseAnnot.role === "MATCHED_PASS"
+                                                  {caseAnnot.role ===
+                                                  "MATCHED_PASS"
                                                     ? `✓ Case: ${caseAnnot.caseLabel}`
-                                                    : caseAnnot.role === "MATCHED_FAIL"
+                                                    : caseAnnot.role ===
+                                                        "MATCHED_FAIL"
                                                       ? `! Case: ${caseAnnot.caseLabel}`
-                                                      : caseAnnot.role === "MATCHED_PENDING"
+                                                      : caseAnnot.role ===
+                                                          "MATCHED_PENDING"
                                                         ? `○ Case: ${caseAnnot.caseLabel}`
-                                                        : caseAnnot.role === "DUPLICATE"
+                                                        : caseAnnot.role ===
+                                                            "DUPLICATE"
                                                           ? `Duplicate · ${caseAnnot.caseLabel}`
                                                           : "Optional · Extra"}
                                                 </span>
                                               )}
-                                              <span
-                                                className="px-1.5 py-0.2 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-secondary)] font-medium"
-                                              >
+                                              <span className="px-1.5 py-0.2 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-secondary)] font-medium">
                                                 {catInfo.label}
                                               </span>
                                               <span
@@ -1575,21 +1676,34 @@ export default function IntegrationRouteMatrixTable({
 
                                         {/* Quiet Ghost Scenario Actions */}
                                         <div className="flex items-center gap-0.5 shrink-0 opacity-75 group-hover/sc:opacity-100 transition-opacity">
-                                          {scFailed &&
-                                            onAIFixScenario && (
-                                              <button
-                                                type="button"
-                                                onClick={() =>
-                                                  onAIFixScenario(sc, ep)
-                                                }
-                                                disabled={isRunning}
-                                                title="Load failed test & endpoint context into AI Assistant"
-                                                className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer"
-                                              >
-                                                <Wrench className="w-2.5 h-2.5" />
-                                                <span>AI Fix</span>
-                                              </button>
-                                            )}
+                                          {onSimulateScenario && (
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                onSimulateScenario(sc, ep)
+                                              }
+                                              title="Simulate request execution flow for this scenario"
+                                              className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary)]/10 transition-colors cursor-pointer"
+                                            >
+                                              <Play className="w-2.5 h-2.5" />
+                                              <span>Simulate</span>
+                                            </button>
+                                          )}
+
+                                          {scFailed && onAIFixScenario && (
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                onAIFixScenario(sc, ep)
+                                              }
+                                              disabled={isRunning}
+                                              title="Load failed test & endpoint context into AI Assistant"
+                                              className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer"
+                                            >
+                                              <Wrench className="w-2.5 h-2.5" />
+                                              <span>AI Fix</span>
+                                            </button>
+                                          )}
 
                                           {onOpenEditScenario && (
                                             <button
@@ -1677,47 +1791,50 @@ export default function IntegrationRouteMatrixTable({
                                           {(sc.failureSummary ||
                                             sc.executionReason ||
                                             (sc.failureMessages &&
-                                              sc.failureMessages.length >
-                                                0)) && (() => {
-                                            const rawDiag = (
-                                              sc.failureMessages?.join("\n") ||
-                                              sc.executionReason ||
-                                              ""
-                                            )
-                                              .replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, "")
-                                              .replace(/\u001b/g, "");
-                                            const summaryDiag =
-                                              sc.failureSummary ||
-                                              summarizeIntegrationFailure(
+                                              sc.failureMessages.length > 0)) &&
+                                            (() => {
+                                              const rawDiag = (
+                                                sc.failureMessages?.join(
+                                                  "\n",
+                                                ) ||
                                                 sc.executionReason ||
-                                                  sc.failureMessages,
-                                              );
-                                            return (
-                                              <div className="p-2.5 rounded bg-rose-500/10 border border-rose-500/25 text-[11px] text-rose-200 space-y-1.5">
-                                                <div className="flex items-center gap-1.5 font-semibold text-rose-400">
-                                                  <AlertTriangle className="w-3.5 h-3.5" />
-                                                  <span>
-                                                    Failure Summary
-                                                  </span>
+                                                ""
+                                              )
+                                                .replace(
+                                                  /\u001b\[[0-9;?]*[ -\/]*[@-~]/g,
+                                                  "",
+                                                )
+                                                .replace(/\u001b/g, "");
+                                              const summaryDiag =
+                                                sc.failureSummary ||
+                                                summarizeIntegrationFailure(
+                                                  sc.executionReason ||
+                                                    sc.failureMessages,
+                                                );
+                                              return (
+                                                <div className="p-2.5 rounded bg-rose-500/10 border border-rose-500/25 text-[11px] text-rose-200 space-y-1.5">
+                                                  <div className="flex items-center gap-1.5 font-semibold text-rose-400">
+                                                    <AlertTriangle className="w-3.5 h-3.5" />
+                                                    <span>Failure Summary</span>
+                                                  </div>
+                                                  <p className="text-xs leading-relaxed text-[var(--color-text)] m-0">
+                                                    {summaryDiag}
+                                                  </p>
+                                                  {rawDiag &&
+                                                    rawDiag.trim() !==
+                                                      summaryDiag.trim() && (
+                                                      <details className="pt-0.5">
+                                                        <summary className="text-[10px] font-mono text-rose-300/80 hover:text-rose-200 cursor-pointer select-none">
+                                                          Technical details
+                                                        </summary>
+                                                        <pre className="mt-1 p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap break-words font-mono text-[10px] text-[var(--color-text-muted)] max-h-40 overflow-y-auto custom-scrollbar">
+                                                          {rawDiag}
+                                                        </pre>
+                                                      </details>
+                                                    )}
                                                 </div>
-                                                <p className="text-xs leading-relaxed text-[var(--color-text)] m-0">
-                                                  {summaryDiag}
-                                                </p>
-                                                {rawDiag &&
-                                                  rawDiag.trim() !==
-                                                    summaryDiag.trim() && (
-                                                    <details className="pt-0.5">
-                                                      <summary className="text-[10px] font-mono text-rose-300/80 hover:text-rose-200 cursor-pointer select-none">
-                                                        Technical details
-                                                      </summary>
-                                                      <pre className="mt-1 p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] whitespace-pre-wrap break-words font-mono text-[10px] text-[var(--color-text-muted)] max-h-40 overflow-y-auto custom-scrollbar">
-                                                        {rawDiag}
-                                                      </pre>
-                                                    </details>
-                                                  )}
-                                              </div>
-                                            );
-                                          })()}
+                                              );
+                                            })()}
 
                                           {sc.code ? (
                                             <div className="rounded border border-[var(--color-border)] overflow-hidden">
@@ -1756,10 +1873,22 @@ export default function IntegrationRouteMatrixTable({
                                               </pre>
                                             </div>
                                           ) : (
-                                            <div className="text-[11px] font-mono text-[var(--color-text-muted)] py-2">
-                                              No inline snippet available. Click{" "}
-                                              <strong>Edit Code</strong> to open
-                                              the test file in Monaco.
+                                            <div className="flex items-center justify-between gap-3 text-[11px] font-mono text-[var(--color-text-muted)] py-2">
+                                              <span>
+                                                No inline snippet available for this scenario.
+                                              </span>
+                                              {onOpenEditScenario && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    onOpenEditScenario(sc, ep)
+                                                  }
+                                                  className="inline-flex items-center gap-1 px-2 py-1 rounded bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-[11px] font-sans font-medium cursor-pointer shrink-0"
+                                                >
+                                                  <Edit3 className="w-3 h-3 text-[var(--color-primary)]" />
+                                                  <span>Open in Editor</span>
+                                                </button>
+                                              )}
                                             </div>
                                           )}
                                         </div>
@@ -1819,76 +1948,91 @@ export default function IntegrationRouteMatrixTable({
             {unmappedScenarios.map((sc, idx) => {
               const unmappedKey = `unmapped-${sc.scenarioId || idx}`;
               return (
-              <div
-                key={unmappedKey}
-                className="px-3 py-2 rounded bg-[var(--color-surface)] border border-[var(--color-border)] flex items-center justify-between gap-3 text-xs"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <span
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${
-                      METHOD_STYLES[(sc.method || "GET").toUpperCase()] ||
-                      METHOD_STYLES.DEFAULT
-                    }`}
-                  >
-                    {(sc.method || "GET").toUpperCase()}
-                  </span>
-                  <span className="font-mono text-[11px] text-[var(--color-text-secondary)]">
-                    {sc.path || "/"}
-                  </span>
-                  <span className="text-[var(--color-text)] truncate">
-                    {sc.title}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {onOpenEditScenario && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onOpenEditScenario(sc, {
-                          method: sc.method || "GET",
-                          path: sc.path || "/",
-                        })
-                      }
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium bg-[var(--color-bg)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] cursor-pointer"
+                <div
+                  key={unmappedKey}
+                  className="px-3 py-2 rounded bg-[var(--color-surface)] border border-[var(--color-border)] flex items-center justify-between gap-3 text-xs"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${
+                        METHOD_STYLES[(sc.method || "GET").toUpperCase()] ||
+                        METHOD_STYLES.DEFAULT
+                      }`}
                     >
-                      <Edit3 className="w-2.5 h-2.5" />
-                      <span>Edit Code</span>
-                    </button>
-                  )}
-                  {onDeleteScenario && (
-                    confirmDeleteKey === unmappedKey ? (
-                      <div className="inline-flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            onDeleteScenario(sc);
-                            setConfirmDeleteKey(null);
-                          }}
-                          className="px-2 py-1 rounded text-[10px] font-semibold bg-rose-500 text-white hover:bg-rose-600 transition-colors cursor-pointer"
-                        >
-                          Confirm
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setConfirmDeleteKey(null)}
-                          className="px-1.5 py-1 rounded text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
+                      {(sc.method || "GET").toUpperCase()}
+                    </span>
+                    <span className="font-mono text-[11px] text-[var(--color-text-secondary)]">
+                      {sc.path || "/"}
+                    </span>
+                    <span className="text-[var(--color-text)] truncate">
+                      {sc.title}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {onSimulateScenario && (
                       <button
                         type="button"
-                        onClick={() => setConfirmDeleteKey(unmappedKey)}
-                        title="Delete this scenario"
-                        className="p-1 rounded text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                        onClick={() =>
+                          onSimulateScenario(sc, {
+                            method: sc.method || "GET",
+                            path: sc.path || "/",
+                            scenarios: [sc],
+                          })
+                        }
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium bg-[var(--color-bg)] hover:bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-border)] cursor-pointer"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Play className="w-2.5 h-2.5" />
+                        <span>Simulate</span>
                       </button>
-                    )
-                  )}
+                    )}
+                    {onOpenEditScenario && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onOpenEditScenario(sc, {
+                            method: sc.method || "GET",
+                            path: sc.path || "/",
+                          })
+                        }
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium bg-[var(--color-bg)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] cursor-pointer"
+                      >
+                        <Edit3 className="w-2.5 h-2.5" />
+                        <span>Edit Code</span>
+                      </button>
+                    )}
+                    {onDeleteScenario &&
+                      (confirmDeleteKey === unmappedKey ? (
+                        <div className="inline-flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onDeleteScenario(sc);
+                              setConfirmDeleteKey(null);
+                            }}
+                            className="px-2 py-1 rounded text-[10px] font-semibold bg-rose-500 text-white hover:bg-rose-600 transition-colors cursor-pointer"
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteKey(null)}
+                            className="px-1.5 py-1 rounded text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteKey(unmappedKey)}
+                          title="Delete this scenario"
+                          className="p-1 rounded text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      ))}
+                  </div>
                 </div>
-              </div>
               );
             })}
           </div>

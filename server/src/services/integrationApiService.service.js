@@ -64,6 +64,7 @@ const guardedWorkspace = async (args, capability, run) => {
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import { jsonrepair } from "jsonrepair";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { normalizeDiskPath } from "../utils/snapshotWorkspace.js";
@@ -85,12 +86,14 @@ import {
   prepareExpressEntriesForSupertest,
   adaptPlaywrightApiCodeForJest,
   transformTestCodeForProject,
+  ensureProjectDependencies,
 } from "./supertestCoverageJob.service.js";
 import { runSupertest } from "./supertestRunner.service.js";
 import { parseJestResults } from "./testResultParser.service.js";
-import { generateText as generateFeatureText } from './gemini.service.js';
-import { withGeminiFeature } from './geminiRouting.service.js';
-const generateText = (...args) => withGeminiFeature('integration-test', () => generateFeatureText(...args));
+import { generateText as generateFeatureText } from "./gemini.service.js";
+import { withGeminiFeature } from "./geminiRouting.service.js";
+const generateText = (...args) =>
+  withGeminiFeature("integration-test", () => generateFeatureText(...args));
 import { extractTestRequests } from "./testSourceParser.service.js";
 import {
   invalidateEndpointCache,
@@ -103,6 +106,7 @@ import {
 import {
   resolveAndValidateAiTestPath,
   resolveAppImportPath,
+  resolveRelativeProjectImports,
 } from "./aiTestStorage.service.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 import { addJobToQueue } from "./queue.service.js";
@@ -207,7 +211,9 @@ export const detectIntegrationFrameworksService = async ({
 
   if (
     rootDir &&
-    /^\/?app\/(?:storage|uploads)\//i.test(String(rootDir).replace(/\\/g, "/")) &&
+    /^\/?app\/(?:storage|uploads)\//i.test(
+      String(rootDir).replace(/\\/g, "/"),
+    ) &&
     !fs.existsSync(rootDir)
   ) {
     rootDir = resolveProjectRoot(rootDir) || rootDir;
@@ -248,7 +254,9 @@ const installIntegrationDependenciesInWorkspace = async ({
 
   if (
     rootDir &&
-    /^\/?app\/(?:storage|uploads)\//i.test(String(rootDir).replace(/\\/g, "/")) &&
+    /^\/?app\/(?:storage|uploads)\//i.test(
+      String(rootDir).replace(/\\/g, "/"),
+    ) &&
     !fs.existsSync(rootDir)
   ) {
     rootDir = resolveProjectRoot(rootDir) || rootDir;
@@ -458,17 +466,38 @@ export const runIntegrationGenerationPipeline = async ({
           content = fs.readFileSync(absTest, "utf8");
         }
       } catch (readErr) {
-        console.warn("[Integration AI] Could not read existing test file:", readErr?.message);
+        console.warn(
+          "[Integration AI] Could not read existing test file:",
+          readErr?.message,
+        );
       }
     }
     return { path: s.filePath, content };
   });
+
+  const backendSubdir =
+    resolvedSnapshotRoot && fs.existsSync(resolvedSnapshotRoot)
+      ? ["server", "backend", "api"].find(
+          (sub) =>
+            fs.existsSync(
+              path.join(resolvedSnapshotRoot, sub, "package.json"),
+            ) || fs.existsSync(path.join(resolvedSnapshotRoot, sub, "src")),
+        ) || ""
+      : "";
+  const baseTargetFilePath =
+    normFramework === "PLAYWRIGHT_API"
+      ? "tests/api/api-integration.spec.js"
+      : "tests/integration/api-integration.test.js";
+  const targetFilePath = backendSubdir
+    ? `${backendSubdir}/${baseTargetFilePath}`
+    : baseTargetFilePath;
 
   const prompt = buildIntegrationTestPrompt({
     endpoints: endpointsToGenerate,
     sourceCode,
     testFiles: hydratedTestFiles,
     framework: normFramework.toLowerCase(),
+    targetFilePath,
   });
 
   // 3. Call LLM
@@ -480,16 +509,12 @@ export const runIntegrationGenerationPipeline = async ({
   ).catch(() => {});
 
   const callStart = Date.now();
-  const aiResponse = await generateText(
-    prompt,
-    model || null,
-    {
-      taskType: "integration",
-      temperature: 0.2,
-      maxOutputTokens: 4096,
-      returnTelemetry: true,
-    },
-  );
+  const aiResponse = await generateText(prompt, model || null, {
+    taskType: "integration",
+    temperature: 0.2,
+    maxOutputTokens: 8192,
+    returnTelemetry: true,
+  });
   const aiResponseText =
     typeof aiResponse === "object" && aiResponse?.text !== undefined
       ? aiResponse.text
@@ -519,25 +544,26 @@ export const runIntegrationGenerationPipeline = async ({
     "[Integration AI] Kiểm duyệt an toàn cú pháp Babel AST...",
   ).catch(() => {});
 
-  const targetFilePath =
-    normFramework === "PLAYWRIGHT_API"
-      ? "tests/api/api-integration.spec.js"
-      : "tests/integration/api-integration.test.js";
-
   const parseAndDeduplicateResponse = (rawResponseText) => {
     let extracted = "";
     try {
       let jsonStr = String(rawResponseText || "").trim();
-      const jsonMatch = jsonStr.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/i);
-      if (jsonMatch && jsonMatch[1]) {
-        jsonStr = jsonMatch[1].trim();
+      const fencedJsonMatch = jsonStr.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+      if (fencedJsonMatch && fencedJsonMatch[1]) {
+        jsonStr = fencedJsonMatch[1].trim();
       } else {
-        jsonStr = jsonStr
-          .replace(/^```(?:json)?\s*/i, "")
-          .replace(/\s*```$/i, "")
-          .trim();
+        const firstBrace = jsonStr.indexOf("{");
+        const lastBrace = jsonStr.lastIndexOf("}");
+        if (firstBrace !== -1 && lastBrace > firstBrace) {
+          jsonStr = jsonStr.slice(firstBrace, lastBrace + 1);
+        } else {
+          jsonStr = jsonStr
+            .replace(/^```(?:json)?\s*/i, "")
+            .replace(/\s*```$/i, "")
+            .trim();
+        }
       }
-      const parsed = JSON.parse(jsonStr);
+      const parsed = JSON.parse(jsonrepair(jsonStr));
       if (Array.isArray(parsed?.tests) && parsed.tests.length > 0) {
         extracted = parsed.tests
           .map((t) => t.content)
@@ -554,13 +580,14 @@ export const runIntegrationGenerationPipeline = async ({
 
     if (!extracted) {
       const codeMatch = String(rawResponseText || "").match(
-        /```(?:javascript|js|typescript|ts)?\s*([\s\S]*?)```/i,
+        /```(?:javascript|js|typescript|ts)?\s*([\s\S]*)```/i,
       );
-      extracted = codeMatch?.[1]?.trim() || String(rawResponseText || "").trim();
+      extracted =
+        codeMatch?.[1]?.trim() || String(rawResponseText || "").trim();
     }
 
     const innerMatch = extracted.match(
-      /```(?:javascript|js|typescript|ts)?\s*([\s\S]*?)```/i,
+      /^```(?:javascript|js|typescript|ts)?\s*([\s\S]*?)\s*```$/i,
     );
     if (innerMatch?.[1]) extracted = innerMatch[1].trim();
 
@@ -576,6 +603,13 @@ export const runIntegrationGenerationPipeline = async ({
           dedupErr?.message,
         );
       }
+      if (resolvedSnapshotRoot && fs.existsSync(resolvedSnapshotRoot)) {
+        extracted = resolveRelativeProjectImports(
+          extracted,
+          resolvedSnapshotRoot,
+          targetFilePath,
+        );
+      }
     }
 
     validateIntegrationTestCode(extracted, normFramework.toLowerCase());
@@ -584,34 +618,162 @@ export const runIntegrationGenerationPipeline = async ({
 
   let cleanedCode = parseAndDeduplicateResponse(aiResponseText);
 
+const evaluateGeneratedCompleteness = (
+  code,
+  filePath,
+  endpointsToGenerate = [],
+) => {
+  const parsedRequests = extractTestRequests(code, filePath);
+  const matchEndpoint = (r) =>
+    endpointsToGenerate.find((ep) => {
+      const epMethod = String(ep.method || "GET").toUpperCase();
+      if (String(r.method || "").toUpperCase() !== epMethod) return false;
+      const epPath = (ep.fullPath || ep.path || "/").replace(/\/+$/, "") || "/";
+      const cleanReq =
+        String(r.path || "/")
+          .split("?")[0]
+          .replace(/\/+$/, "") || "/";
+      return new RegExp("^" + epPath.replace(/:[^/]+/g, "[^/]+") + "$").test(
+        cleanReq,
+      );
+    });
+
+  const coveredByEpKey = new Map();
+  const unexpectedRequests = [];
+
+  for (const r of parsedRequests) {
+    const matchedEp = matchEndpoint(r);
+    if (!matchedEp) {
+      unexpectedRequests.push({
+        method: String(r.method || "GET").toUpperCase(),
+        path: r.path || "/",
+        testName: r.testName || "Unnamed scenario",
+      });
+      continue;
+    }
+    const epKey = `${String(matchedEp.method || "GET").toUpperCase()} ${matchedEp.fullPath || matchedEp.path || "/"}`;
+    const caseKey = getScenarioCaseKey({
+      title: r.testName,
+      expectedStatus: r.expectedStatus,
+      expectedStatuses: r.expectedStatuses,
+    });
+    const set = coveredByEpKey.get(epKey) || new Set();
+    set.add(caseKey);
+    coveredByEpKey.set(epKey, set);
+  }
+
+  let coveredCasesCount = 0;
+  let totalRequiredCases = 0;
+  const missingCases = [];
+
+  for (const ep of endpointsToGenerate) {
+    const epMethod = String(ep.method || "GET").toUpperCase();
+    const epPath = ep.fullPath || ep.path || "/";
+    const epKey = `${epMethod} ${epPath}`;
+    const requiredCases = getEndpointRequiredCases(ep);
+    totalRequiredCases += requiredCases.length;
+    const present = coveredByEpKey.get(epKey) || new Set();
+    const missing = [];
+    for (const rc of requiredCases) {
+      if (present.has(rc.key)) {
+        coveredCasesCount++;
+      } else {
+        missing.push(rc.promptHint || rc.label || rc.key);
+      }
+    }
+    if (missing.length > 0) {
+      missingCases.push({
+        epKey,
+        method: epMethod,
+        path: epPath,
+        missingLabels: missing,
+      });
+    }
+  }
+
+  return {
+    parsedRequests,
+    coveredCasesCount,
+    totalRequiredCases,
+    missingCases,
+    unexpectedRequests,
+  };
+};
+
   // 4.5 Verify generated scenarios against real Jest/Supertest runner & auto-repair failures
   let verificationSummary = null;
-  const hasRunnableJestAndSupertest = Boolean(
+  const checkHasRunnableJestAndSupertest = () =>
+    Boolean(
+      resolvedSnapshotRoot &&
+        fs.existsSync(resolvedSnapshotRoot) &&
+        ["", "server", "backend", "api"].some(
+          (sub) =>
+            fs.existsSync(
+              path.join(resolvedSnapshotRoot, sub, "node_modules", "jest"),
+            ) &&
+            fs.existsSync(
+              path.join(resolvedSnapshotRoot, sub, "node_modules", "supertest"),
+            ),
+        ),
+    );
+  let hasRunnableJestAndSupertest = checkHasRunnableJestAndSupertest();
+  if (
+    !hasRunnableJestAndSupertest &&
     resolvedSnapshotRoot &&
-      fs.existsSync(resolvedSnapshotRoot) &&
-      ["", "server", "backend", "api"].some(
-        (sub) =>
-          fs.existsSync(path.join(resolvedSnapshotRoot, sub, "node_modules", "jest")) &&
-          fs.existsSync(path.join(resolvedSnapshotRoot, sub, "node_modules", "supertest")),
-      ),
-  );
+    fs.existsSync(resolvedSnapshotRoot) &&
+    !abortSignal?.aborted
+  ) {
+    try {
+      await addJobLog(
+        jobId,
+        "INFO",
+        "[Integration AI] Đang chuẩn bị dependencies (jest/supertest) để xác minh kịch bản AI...",
+      ).catch(() => {});
+      await ensureProjectDependencies(jobId, resolvedSnapshotRoot);
+      hasRunnableJestAndSupertest = checkHasRunnableJestAndSupertest();
+      if (!hasRunnableJestAndSupertest) {
+        await installIntegrationDependencies(resolvedSnapshotRoot, "supertest");
+        hasRunnableJestAndSupertest = checkHasRunnableJestAndSupertest();
+      }
+    } catch (depErr) {
+      console.warn(
+        "[Integration AI] Dependency install before verification warning:",
+        depErr?.message,
+      );
+      await addJobLog(
+        jobId,
+        "WARN",
+        `[Integration AI] Không thể cài dependencies tự động để xác minh: ${depErr?.message || "Unknown error"}`,
+      ).catch(() => {});
+    }
+  }
 
   if (hasRunnableJestAndSupertest && !abortSignal?.aborted) {
-    const absCandidatePath = resolveAndValidateAiTestPath(resolvedSnapshotRoot, targetFilePath);
+    const absCandidatePath = resolveAndValidateAiTestPath(
+      resolvedSnapshotRoot,
+      targetFilePath,
+    );
     const hadOriginalFile = fs.existsSync(absCandidatePath);
-    const originalFileContent = hadOriginalFile ? fs.readFileSync(absCandidatePath, "utf8") : null;
+    const originalFileContent = hadOriginalFile
+      ? fs.readFileSync(absCandidatePath, "utf8")
+      : null;
     let restoreEntries = () => {};
     let bestCode = cleanedCode;
+    let bestCoveredCases = -1;
     let bestPassed = -1;
     let bestFailed = Number.POSITIVE_INFINITY;
 
     try {
-      restoreEntries = await prepareExpressEntriesForSupertest(resolvedSnapshotRoot);
-      const maxVerifyPasses = 3;
+      restoreEntries =
+        await prepareExpressEntriesForSupertest(resolvedSnapshotRoot);
+      const maxVerifyPasses = 4;
 
       for (let pass = 1; pass <= maxVerifyPasses; pass++) {
         if (abortSignal?.aborted) break;
-        await updateJobStatus({ jobId, progress: Math.min(92, 72 + pass * 6) }).catch(() => {});
+        await updateJobStatus({
+          jobId,
+          progress: Math.min(92, 72 + pass * 5),
+        }).catch(() => {});
         await addJobLog(
           jobId,
           "INFO",
@@ -619,8 +781,13 @@ export const runIntegrationGenerationPipeline = async ({
         ).catch(() => {});
 
         const adaptedForExec =
-          normFramework === "PLAYWRIGHT_API" || /@playwright\/test/.test(cleanedCode)
-            ? adaptPlaywrightApiCodeForJest(cleanedCode, resolvedSnapshotRoot, absCandidatePath)
+          normFramework === "PLAYWRIGHT_API" ||
+          /@playwright\/test/.test(cleanedCode)
+            ? adaptPlaywrightApiCodeForJest(
+                cleanedCode,
+                resolvedSnapshotRoot,
+                absCandidatePath,
+              )
             : cleanedCode;
         const execCode = await transformTestCodeForProject(
           adaptedForExec,
@@ -636,31 +803,60 @@ export const runIntegrationGenerationPipeline = async ({
           null,
           [absCandidatePath],
           { useLiveDatabase: false, signal: abortSignal },
-        ).catch((err) => ({ exitCode: 1, stderr: err?.message || "Execution failed", stdout: "", coverageDir: null }));
+        ).catch((err) => ({
+          exitCode: 1,
+          stderr: err?.message || "Execution failed",
+          stdout: "",
+          coverageDir: null,
+        }));
 
         const parsedJest = runResult?.coverageDir
-          ? parseJestResults(runResult.coverageDir, { rootDir: resolvedSnapshotRoot })
+          ? parseJestResults(runResult.coverageDir, {
+              rootDir: resolvedSnapshotRoot,
+            })
           : null;
-        const scenarios = Array.isArray(parsedJest?.scenarios) ? parsedJest.scenarios : [];
+        const scenarios = Array.isArray(parsedJest?.scenarios)
+          ? parsedJest.scenarios
+          : [];
         const totalTests = scenarios.length;
-        const passedTests = scenarios.filter((s) => s.status === "passed").length;
+        const passedTests = scenarios.filter(
+          (s) => s.status === "passed",
+        ).length;
         const failedScenarios = scenarios.filter((s) => s.status === "failed");
         const failedTests = failedScenarios.length;
+        const completeness = evaluateGeneratedCompleteness(
+          cleanedCode,
+          targetFilePath,
+          endpointsToGenerate,
+        );
+        const coveredCasesCount = completeness.coveredCasesCount;
+        const isComplete =
+          completeness.missingCases.length === 0 &&
+          completeness.unexpectedRequests.length === 0;
 
-        if (
-          (totalTests > 0 && passedTests > bestPassed) ||
-          (passedTests === bestPassed && failedTests < bestFailed)
-        ) {
+        const isBetterCandidate =
+          coveredCasesCount > bestCoveredCases ||
+          (coveredCasesCount === bestCoveredCases &&
+            ((totalTests > 0 && passedTests > bestPassed) ||
+              (passedTests === bestPassed && failedTests < bestFailed)));
+        if (isBetterCandidate) {
           bestCode = cleanedCode;
+          bestCoveredCases = coveredCasesCount;
           bestPassed = passedTests;
           bestFailed = failedTests;
         }
 
         verificationSummary = {
-          passed: totalTests > 0 && failedTests === 0 && runResult.exitCode === 0,
+          passed:
+            totalTests > 0 &&
+            failedTests === 0 &&
+            runResult.exitCode === 0 &&
+            isComplete,
           totalTests,
           passedTests,
           failedTests,
+          coveredCases: coveredCasesCount,
+          totalRequiredCases: completeness.totalRequiredCases,
           attempts: pass,
         };
 
@@ -668,7 +864,7 @@ export const runIntegrationGenerationPipeline = async ({
           await addJobLog(
             jobId,
             "INFO",
-            `[Integration AI] Xác minh thành công ${passedTests}/${totalTests} kịch bản pass 100%!`,
+            `[Integration AI] Xác minh thành công ${passedTests}/${totalTests} kịch bản pass 100% và bao phủ đủ ${coveredCasesCount}/${completeness.totalRequiredCases} case!`,
           ).catch(() => {});
           break;
         }
@@ -679,23 +875,44 @@ export const runIntegrationGenerationPipeline = async ({
         }
 
         const failureDetails = [];
-        for (const fsItem of failedScenarios.slice(0, 8)) {
+        for (const fsItem of failedScenarios.slice(0, 12)) {
           const msg = Array.isArray(fsItem.failureMessages)
             ? fsItem.failureMessages.join("\n")
             : fsItem.errorMessage || "";
-          failureDetails.push(`FAILED: ${fsItem.title}\n${String(msg).slice(0, 600)}`);
+          failureDetails.push(
+            `FAILED: ${fsItem.title}\n${String(msg).slice(0, 1200)}`,
+          );
         }
-        const rawStderr = String(runResult?.stderr || runResult?.stdout || "").trim();
+        const rawStderr = String(
+          runResult?.stderr || runResult?.stdout || "",
+        ).trim();
         if (failureDetails.length === 0 && rawStderr) {
-          failureDetails.push(rawStderr.slice(-2000));
+          failureDetails.push(rawStderr.slice(-2500));
         } else if (rawStderr) {
           failureDetails.push(`Jest Output Tail:\n${rawStderr.slice(-1200)}`);
+        }
+
+        // If a mocked module omitted a required named export, surface that file's exports explicitly for repair
+        const combinedErrorText = `${failureDetails.join("\n")}\n${rawStderr}`;
+        const exportErrMatch = combinedErrorText.match(
+          /The requested module ['"]([^'"]+)['"] does not provide an export named ['"]([^'"]+)['"]/i,
+        );
+        if (exportErrMatch) {
+          const [, missingMod, missingExport] = exportErrMatch;
+          const cleanMod = missingMod.replace(/^(?:\.\.?\/)+/, "");
+          const modFile = (sourceCode || []).find((f) => {
+            const p = String(f.path || f.filePath || "").replace(/\\/g, "/");
+            return p === cleanMod || p.endsWith(`/${cleanMod}`) || p.endsWith(cleanMod);
+          });
+          failureDetails.push(
+            `CRITICAL MOCK FIX NEEDED: Your mock for '${missingMod}' MUST also export '${missingExport}' (plus any default/named exports in that file):${modFile?.content ? `\n// ${modFile.path || modFile.filePath}\n${String(modFile.content).slice(0, 1500)}` : ""}`,
+          );
         }
 
         await addJobLog(
           jobId,
           "WARN",
-          `[Integration AI] Phát hiện ${failedTests || "lỗi"} kịch bản fail (${passedTests}/${totalTests} pass). Đang gửi lại AI tự sửa...`,
+          `[Integration AI] Pass ${passedTests}/${totalTests}, bao phủ ${coveredCasesCount}/${completeness.totalRequiredCases} case. Đang gửi AI tự sửa...`,
         ).catch(() => {});
 
         const repairPrompt = buildIntegrationRepairPrompt({
@@ -704,15 +921,19 @@ export const runIntegrationGenerationPipeline = async ({
           framework: normFramework.toLowerCase(),
           endpoints: endpointsToGenerate,
           sourceCode,
+          targetFilePath,
+          missingCases: completeness.missingCases,
+          unexpectedPaths: completeness.unexpectedRequests,
         });
         const repairResponse = await generateText(repairPrompt, model || null, {
           taskType: "integration",
           temperature: 0.15,
-          maxOutputTokens: 4096,
+          maxOutputTokens: 8192,
           returnTelemetry: true,
         });
         const repairText =
-          typeof repairResponse === "object" && repairResponse?.text !== undefined
+          typeof repairResponse === "object" &&
+          repairResponse?.text !== undefined
             ? repairResponse.text
             : repairResponse;
         if (repairText && repairText.trim()) {
@@ -727,12 +948,18 @@ export const runIntegrationGenerationPipeline = async ({
         }
       }
     } catch (verifyErr) {
-      console.warn("[Integration AI] Verification pass warning:", verifyErr?.message);
+      console.warn(
+        "[Integration AI] Verification pass warning:",
+        verifyErr?.message,
+      );
     } finally {
       try {
         restoreEntries();
       } catch (restoreErr) {
-        console.warn("[Integration AI] Express restore warning:", restoreErr?.message);
+        console.warn(
+          "[Integration AI] Express restore warning:",
+          restoreErr?.message,
+        );
       }
       try {
         if (hadOriginalFile && originalFileContent !== null) {
@@ -741,7 +968,10 @@ export const runIntegrationGenerationPipeline = async ({
           fs.unlinkSync(absCandidatePath);
         }
       } catch (cleanupErr) {
-        console.warn("[Integration AI] Candidate cleanup warning:", cleanupErr?.message);
+        console.warn(
+          "[Integration AI] Candidate cleanup warning:",
+          cleanupErr?.message,
+        );
       }
     }
   }
@@ -758,22 +988,33 @@ export const runIntegrationGenerationPipeline = async ({
       const epMethod = String(ep.method || "GET").toUpperCase();
       if (String(r.method || "").toUpperCase() !== epMethod) return false;
       const epPath = (ep.fullPath || ep.path || "/").replace(/\/+$/, "") || "/";
-      const cleanReq = String(r.path || "/").split("?")[0].replace(/\/+$/, "") || "/";
-      return new RegExp("^" + epPath.replace(/:[^\/]+/g, "[^/]+") + "$").test(cleanReq);
+      const cleanReq =
+        String(r.path || "/")
+          .split("?")[0]
+          .replace(/\/+$/, "") || "/";
+      return new RegExp("^" + epPath.replace(/:[^\/]+/g, "[^/]+") + "$").test(
+        cleanReq,
+      );
     });
     if (!matchedEp) {
       prunedRequests.push(r);
       continue;
     }
     const epKey = `${String(matchedEp.method || "GET").toUpperCase()} ${matchedEp.fullPath || matchedEp.path || "/"}`;
-    const reqCaseSet = new Set(getEndpointRequiredCases(matchedEp).map((c) => c.key));
+    const reqCaseSet = new Set(
+      getEndpointRequiredCases(matchedEp).map((c) => c.key),
+    );
     const caseKey = getScenarioCaseKey({
       title: r.testName,
       expectedStatus: r.expectedStatus,
       expectedStatuses: r.expectedStatuses,
     });
     const usedCases = seenGeneratedCaseKeys.get(epKey) || new Set();
-    if (!reqCaseSet.has(caseKey) || usedCases.has(caseKey)) {
+    if (reqCaseSet.has(caseKey) && usedCases.has(caseKey)) {
+      prunedRequests.push(r);
+      continue;
+    }
+    if (!reqCaseSet.has(caseKey) && usedCases.size >= reqCaseSet.size) {
       prunedRequests.push(r);
       continue;
     }
@@ -782,9 +1023,14 @@ export const runIntegrationGenerationPipeline = async ({
     keptRequests.push(r);
   }
   if (keptRequests.length > 0 && prunedRequests.length > 0) {
-    cleanedCode = pruneScenariosFromCode(cleanedCode, originalTestRequests, prunedRequests);
+    cleanedCode = pruneScenariosFromCode(
+      cleanedCode,
+      originalTestRequests,
+      prunedRequests,
+    );
   }
-  const testRequests = keptRequests.length > 0 ? keptRequests : originalTestRequests;
+  const testRequests =
+    keptRequests.length > 0 ? keptRequests : originalTestRequests;
   const requestsMeta = testRequests.map((r) => ({
     scenarioId: crypto.randomUUID(),
     testName: r.testName,
@@ -810,10 +1056,79 @@ export const runIntegrationGenerationPipeline = async ({
     },
   }));
 
+  const previousIntegrationRows = await prisma.aiTest
+    .findMany({
+      where: { snapshotId },
+      select: { id: true, metaJson: true, filePath: true },
+    })
+    .catch(() => []);
+  const previousIntegrationAiTests = previousIntegrationRows.filter((row) => {
+    try {
+      const meta = row?.metaJson ? JSON.parse(row.metaJson) : {};
+      if (
+        meta.framework === "SUPERTEST" ||
+        meta.framework === "PLAYWRIGHT_API"
+      ) {
+        return true;
+      }
+    } catch (_) {}
+    const normPath = String(row?.filePath || "").replace(/\\/g, "/");
+    return /(?:^|\/)tests\/(?:integration|api)\//i.test(normPath);
+  });
+  const previousIntegrationAiTestIds = previousIntegrationAiTests.map(
+    (r) => r.id,
+  );
+  const existingProjectTitles = new Set(
+    existingReqs
+      .map((r) => String(r.testName || r.title || "").trim())
+      .filter(Boolean),
+  );
+  const staleAiTitles = Array.from(
+    new Set(
+      previousIntegrationAiTests
+        .flatMap((row) => {
+          try {
+            const meta = row?.metaJson ? JSON.parse(row.metaJson) : {};
+            return Array.isArray(meta.requests)
+              ? meta.requests.map((r) =>
+                  String(r.testName || r.title || "").trim(),
+                )
+              : [];
+          } catch (_) {
+            return [];
+          }
+        })
+        .filter((t) => t && !existingProjectTitles.has(t)),
+    ),
+  );
+
+  if (previousIntegrationAiTestIds.length > 0) {
+    await addJobLog(
+      jobId,
+      "INFO",
+      `[Integration AI] Đã xóa ${previousIntegrationAiTestIds.length} bộ test AI sinh trước đó, chỉ giữ lại test có sẵn của project để sinh bộ mới.`,
+    ).catch(() => {});
+  }
+
   const plannedId = crypto.randomUUID();
   const createdAiTest = await stageArtifact(
-    (tx) =>
-      tx.aiTest.create({
+    async (tx) => {
+      if (previousIntegrationAiTestIds.length > 0) {
+        await tx.aiTest.deleteMany({
+          where: { id: { in: previousIntegrationAiTestIds } },
+        });
+      }
+      if (staleAiTitles.length > 0 && tx.testScenario?.deleteMany) {
+        await tx.testScenario
+          .deleteMany({
+            where: {
+              title: { in: staleAiTitles },
+              testRun: { snapshotId, type: "SUPERTEST" },
+            },
+          })
+          .catch(() => {});
+      }
+      return tx.aiTest.create({
         data: {
           id: plannedId,
           projectId,
@@ -827,10 +1142,13 @@ export const runIntegrationGenerationPipeline = async ({
             isValid: true,
             requests: requestsMeta,
             telemetry,
-            ...(verificationSummary ? { verification: verificationSummary } : {}),
+            ...(verificationSummary
+              ? { verification: verificationSummary }
+              : {}),
           }),
         },
-      }),
+      });
+    },
     { id: plannedId },
   );
 
@@ -1006,7 +1324,9 @@ const applyIntegrationTestsInWorkspace = async ({
   let rootDir = resolveExistingRootDir(snapshot, project);
   if (
     rootDir &&
-    /^\/?app\/(?:storage|uploads)\//i.test(String(rootDir).replace(/\\/g, "/")) &&
+    /^\/?app\/(?:storage|uploads)\//i.test(
+      String(rootDir).replace(/\\/g, "/"),
+    ) &&
     !fs.existsSync(rootDir)
   ) {
     rootDir = resolveProjectRoot(rootDir) || rootDir;

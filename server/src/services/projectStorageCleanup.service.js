@@ -1,12 +1,15 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { getBucket } from "../config/firebase.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { clearManifestCache } from "./unitTestVersion.service.js";
 
+const execFileAsync = promisify(execFile);
 const validId = value => typeof value === "string" && /^[a-zA-Z0-9_-]+$/.test(value);
 const CLOUD_CLEANUP_TIMEOUT_MS = 30000;
-const STORAGE_CLEANUP_TIMEOUT_MS = 45000;
+const STORAGE_CLEANUP_TIMEOUT_MS = 180000;
 
 function withTimeout(promise, ms, label) {
     let timer;
@@ -62,7 +65,7 @@ async function resetReadOnlyAttributes(dirPath) {
         if (stat.isDirectory()) {
             await fs.chmod(dirPath, 0o777).catch(() => {});
             const entries = await fs.readdir(dirPath, { withFileTypes: true }).catch(() => []);
-            const BATCH_SIZE = 32;
+            const BATCH_SIZE = 128;
             for (let i = 0; i < entries.length; i += BATCH_SIZE) {
                 await Promise.all(
                     entries.slice(i, i + BATCH_SIZE).map((entry) =>
@@ -76,17 +79,35 @@ async function resetReadOnlyAttributes(dirPath) {
     } catch (_) { }
 }
 
-async function forceRemoveDirectory(target) {
+async function clearWindowsReadOnlyFlags(target) {
+    if (process.platform !== "win32") return;
     try {
-        await fs.rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+        // Clear read-only flags on the directory itself and recursively on all nested files/subdirs
+        await execFileAsync("attrib", ["-R", path.join(target, "*"), "/S", "/D"], {
+            windowsHide: true,
+            timeout: 15000,
+        });
+    } catch (_) {
+        // Fallback to Node recursive chmod below
+    }
+}
+
+async function forceRemoveDirectory(target) {
+    const rmOpts = { recursive: true, force: true, maxRetries: 5, retryDelay: 200 };
+    try {
+        await fs.rm(target, rmOpts);
     } catch (err) {
         if (err.code === "ENOENT") return;
-        if (err.code === "EPERM" || err.code === "EACCES") {
-            try {
-                await resetReadOnlyAttributes(target);
-                await fs.rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
-                return;
-            } catch (_) { }
+        if (
+            err.code === "EPERM" ||
+            err.code === "EACCES" ||
+            err.code === "EBUSY" ||
+            err.code === "ENOTEMPTY"
+        ) {
+            await clearWindowsReadOnlyFlags(target);
+            await resetReadOnlyAttributes(target);
+            await fs.rm(target, rmOpts);
+            return;
         }
         throw err;
     }

@@ -38,12 +38,40 @@ export const extractValidatedTestRequests = (t) => {
       Array.isArray(meta.requests) &&
       (meta.requests.length > 0 || meta.userModified)
     ) {
-      const metaMap = new Map(meta.requests.map((r) => [r.testName, r]));
+      const usedMetaIndices = new Set();
+      const findMetaRequest = (r) => {
+        const rMethod = String(r.method || "").toUpperCase();
+        const rPath = String(r.path || "").split("?")[0];
+        const findUnused = (pred) => {
+          const idx = meta.requests.findIndex(
+            (mr, i) => !usedMetaIndices.has(i) && pred(mr),
+          );
+          if (idx !== -1) {
+            usedMetaIndices.add(idx);
+            return meta.requests[idx];
+          }
+          return null;
+        };
+        return (
+          findUnused(
+            (mr) =>
+              mr.testName === r.testName &&
+              String(mr.method || "").toUpperCase() === rMethod &&
+              String(mr.path || "").split("?")[0] === rPath,
+          ) ||
+          findUnused(
+            (mr) =>
+              mr.scenarioId &&
+              (mr.scenarioId === r.scenarioId || mr.scenarioId === r.id),
+          ) ||
+          findUnused((mr) => mr.testName === r.testName)
+        );
+      };
       const validNames = new Set(meta.requests.map((r) => r.testName));
       const filteredReqs = reqs
         .filter((r) => validNames.has(r.testName))
         .map((r) => {
-          const mr = metaMap.get(r.testName);
+          const mr = findMetaRequest(r);
           return {
             ...r,
             scenarioId: mr?.scenarioId || r.scenarioId,
@@ -1538,7 +1566,7 @@ const executeBuildIntegrationWorkspace = async (
       artifactPrefix.split("/").includes(".."))
   )
     artifactPrefix = undefined;
-  const firebaseCacheKey = `${snapshotId}_${latestRun?.id || "none"}_${outputJob?.id || "legacy"}`;
+  const firebaseCacheKey = `v2::${snapshotId}_${latestRun?.id || "none"}_${outputJob?.id || "legacy"}`;
   if (executeFailedBeforeTests) {
     // Current execution job failed before tests could execute; do not load stale prior scenarios
     testScenarios = [];
@@ -1546,14 +1574,14 @@ const executeBuildIntegrationWorkspace = async (
     testScenarios = firebaseCache.get(firebaseCacheKey);
   } else if (latestRun?.scenarios?.length > 0) {
     // FAST PATH 1: Directly use scenarios already retrieved from PostgreSQL DB (0ms network),
-    // merging across recent runs (newest wins per testFile + title) so targeted single-endpoint runs
-    // never wipe out other endpoints' executed scenarios on reload.
+    // merging across recent runs (newest wins per testFile + suiteName + title) so targeted single-endpoint runs
+    // never wipe out other endpoints' executed scenarios on reload, and identical titles in different suites stay distinct.
     const mergedRunScenarios = [];
     const seenRunScenarioKeys = new Set();
     for (const runItem of testRuns || [latestRun]) {
       for (const s of runItem?.scenarios || []) {
         const cleanFile = cleanStoragePath(s.testFile) || s.testFile || "";
-        const dedupKey = `${String(cleanFile).toLowerCase()}::${String(s.title || "").trim().toLowerCase()}`;
+        const dedupKey = `${String(cleanFile).toLowerCase()}::${String(s.suiteName || "").trim().toLowerCase()}::${String(s.title || "").trim().toLowerCase()}`;
         if (seenRunScenarioKeys.has(dedupKey)) continue;
         seenRunScenarioKeys.add(dedupKey);
         mergedRunScenarios.push(s);
@@ -1900,7 +1928,7 @@ const executeBuildIntegrationWorkspace = async (
   const parsedTests = integrationTests.map((t) => {
     const currentVersionKey = crypto
       .createHash("md5")
-      .update((t.content || "") + "::" + (t.metaJson || ""))
+      .update("v2::" + (t.content || "") + "::" + (t.metaJson || ""))
       .digest("hex");
     let requests;
     const cacheEntry = snapshotParseCache.get(t.id);
@@ -1916,10 +1944,18 @@ const executeBuildIntegrationWorkspace = async (
         const metaReq = tMeta.requests
           ? tMeta.requests.find(
               (mr) =>
-                (mr.scenarioId &&
-                  (mr.scenarioId === r.scenarioId || mr.scenarioId === r.id)) ||
-                mr.testName === r.testName,
-            )
+                mr.scenarioId &&
+                (mr.scenarioId === r.scenarioId || mr.scenarioId === r.id),
+            ) ||
+            tMeta.requests.find(
+              (mr) =>
+                mr.testName === r.testName &&
+                String(mr.method || "").toUpperCase() ===
+                  String(r.method || "").toUpperCase() &&
+                String(mr.path || "").split("?")[0] ===
+                  String(r.path || "").split("?")[0],
+            ) ||
+            tMeta.requests.find((mr) => mr.testName === r.testName)
           : null;
         const fallbackId = crypto
           .createHash("md5")
@@ -1998,13 +2034,17 @@ const executeBuildIntegrationWorkspace = async (
 
   const activeTestScenarios = testScenarios.filter((s) => !isStagedDeletedScenario(s, s.testFile));
   const enrichedScenarios = activeTestScenarios.map((s) => {
-    let matchingRequests = allParsedRequests.filter(
-      (pr) =>
-        pr.testName === s.title &&
-        (s.suiteName?.includes(pr.suiteName) ||
-          pr.suiteName?.includes(s.suiteName) ||
-          s.suiteName === pr.suiteName),
-    );
+    const sSuite = String(s.suiteName || "").trim();
+    let matchingRequests = allParsedRequests.filter((pr) => {
+      if (pr.testName !== s.title) return false;
+      const prSuite = String(pr.suiteName || "").trim();
+      if (!sSuite || !prSuite) return false;
+      return (
+        sSuite === prSuite ||
+        sSuite.includes(prSuite) ||
+        prSuite.includes(sSuite)
+      );
+    });
     if (matchingRequests.length === 0 && s.scenarioId) {
       matchingRequests = allParsedRequests.filter(
         (pr) => pr.scenarioId === s.scenarioId,
@@ -3212,11 +3252,18 @@ const executeBuildIntegrationWorkspace = async (
           const metaReq = meta.requests
             ? meta.requests.find(
                 (mr) =>
-                  (mr.scenarioId &&
-                    (mr.scenarioId === r.scenarioId ||
-                      mr.scenarioId === r.id)) ||
-                  mr.testName === r.testName,
-              )
+                  mr.scenarioId &&
+                  (mr.scenarioId === r.scenarioId || mr.scenarioId === r.id),
+              ) ||
+              meta.requests.find(
+                (mr) =>
+                  mr.testName === r.testName &&
+                  String(mr.method || "").toUpperCase() ===
+                    String(r.method || "").toUpperCase() &&
+                  String(mr.path || "").split("?")[0] ===
+                    String(r.path || "").split("?")[0],
+              ) ||
+              meta.requests.find((mr) => mr.testName === r.testName)
             : null;
           const fallbackId = crypto
             .createHash("md5")

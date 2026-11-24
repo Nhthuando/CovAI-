@@ -101,6 +101,111 @@ export const resolveAppEntryPoint = (rootDir, filePath) => {
  * @param {string} filePath 
  * @returns {string} Transformed code with correct relative app imports
  */
+const findExistingModuleFile = (baseAbsPath) => {
+    const candidates = [
+        baseAbsPath,
+        `${baseAbsPath}.js`,
+        `${baseAbsPath}.mjs`,
+        `${baseAbsPath}.cjs`,
+        path.join(baseAbsPath, "index.js"),
+        path.join(baseAbsPath, "index.mjs"),
+    ];
+    for (const candidate of candidates) {
+        try {
+            if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+                return candidate;
+            }
+        } catch (_) {}
+    }
+    return null;
+};
+
+const isPackageEsm = (dir) => {
+    let cur = path.resolve(dir);
+    for (let i = 0; i < 6; i++) {
+        const pkgPath = path.join(cur, "package.json");
+        if (fs.existsSync(pkgPath)) {
+            try {
+                const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+                if (pkg?.type) return pkg.type === "module";
+            } catch (_) {}
+            return false;
+        }
+        const parent = path.dirname(cur);
+        if (parent === cur) break;
+        cur = parent;
+    }
+    return false;
+};
+
+/**
+ * Resolves any broken relative module specifiers in imports, dynamic imports,
+ * requires, or Jest mocks (e.g. `../../src/config/prisma.js` when running from
+ * repo root `tests/integration/` -> `../../server/src/config/prisma.js`, or vice versa).
+ *
+ * @param {string} code
+ * @param {string} rootDir
+ * @param {string} filePath
+ * @returns {string}
+ */
+export const resolveRelativeProjectImports = (code, rootDir, filePath) => {
+    if (!code || typeof code !== "string" || !rootDir || !filePath) return code;
+    try {
+        const fullTestPath = path.isAbsolute(filePath) ? filePath : path.resolve(rootDir, filePath);
+        const testDir = path.dirname(fullTestPath);
+        const searchRoots = [
+            rootDir,
+            path.join(rootDir, "server"),
+            path.join(rootDir, "backend"),
+            path.join(rootDir, "api"),
+        ].filter((dir, idx, arr) => arr.indexOf(dir) === idx && fs.existsSync(dir));
+        const useEsm = isPackageEsm(testDir) || searchRoots.some((d) => isPackageEsm(d));
+
+        const specRegex = /((?:from\s+|import\s*\(\s*|require\s*\(\s*|jest\.(?:unstable_mockModule|mock|doMock)\s*\(\s*))(['"])(\.\.?\/[^'"\r\n]+)\2/g;
+        return code.replace(specRegex, (fullMatch, prefix, quote, relSpec) => {
+            const directCandidate = path.resolve(testDir, relSpec);
+            if (findExistingModuleFile(directCandidate)) {
+                return fullMatch;
+            }
+
+            const stripped = relSpec.replace(/^(?:\.\.?\/)+/, "");
+            const strippedNoSub = stripped.replace(/^(?:server|backend|api)\//i, "");
+            const candidateRelPaths = strippedNoSub !== stripped ? [stripped, strippedNoSub] : [stripped];
+
+            let matchedFile = null;
+            for (const subRoot of searchRoots) {
+                for (const relCandidate of candidateRelPaths) {
+                    const hit = findExistingModuleFile(path.resolve(subRoot, relCandidate));
+                    if (hit) {
+                        matchedFile = hit;
+                        break;
+                    }
+                }
+                if (matchedFile) break;
+            }
+
+            if (!matchedFile) {
+                return fullMatch;
+            }
+
+            let nextRel = path.relative(testDir, matchedFile).replace(/\\/g, "/");
+            if (!nextRel.startsWith(".")) {
+                nextRel = `./${nextRel}`;
+            }
+            const hadExt = /\.(?:js|mjs|cjs)$/i.test(relSpec);
+            const isIndexFile = /\/index\.(?:js|mjs|cjs)$/i.test(nextRel);
+            if (!hadExt && !useEsm && !isIndexFile) {
+                nextRel = nextRel.replace(/\.(?:js|mjs|cjs)$/i, "");
+            }
+
+            return `${prefix}${quote}${nextRel}${quote}`;
+        });
+    } catch (e) {
+        console.warn("[aiTestStorage] resolveRelativeProjectImports warning:", e?.message);
+        return code;
+    }
+};
+
 export const resolveAppImportPath = (code, rootDir, filePath) => {
     if (!code || typeof code !== 'string' || !rootDir || !filePath) return code;
     try {
@@ -135,6 +240,9 @@ export const resolveAppImportPath = (code, rootDir, filePath) => {
             const useExt = relImport.endsWith(".js") ? ".js" : "";
             return `${quote1}${targetRelativeNoExt}${useExt}${quote2}`;
         });
+
+        // Also fix any remaining broken relative imports/mocks (e.g. ../../src/config/prisma.js)
+        modifiedCode = resolveRelativeProjectImports(modifiedCode, rootDir, fullTestPath);
 
         // Verification: verify that the resulting app import resolves to an existing file
         const appMatches = [...modifiedCode.matchAll(/(?:require\s*\(\s*|from\s+)(['"])((?:\.\.?\/)+[^'"]*?(?:index|app|server|main)(?:\.js)?)\1/g)];

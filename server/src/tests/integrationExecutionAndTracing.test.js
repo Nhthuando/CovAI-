@@ -1,7 +1,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { runPlaywrightApiTests, parsePlaywrightApiJsonResults } from '../services/playwrightApiRunner.service.js';
 import { traceApiEndpointCoverage, diagnoseApiFailureLayer, buildApiCoverageReport } from '../services/apiCoverageTracer.service.js';
-import { classifyScenarioFailure } from '../services/integrationWorkspace.service.js';
+import { classifyScenarioFailure, extractValidatedTestRequests } from '../services/integrationWorkspace.service.js';
 
 describe('Phase 3: Execution & Tracing Engine Test Suite', () => {
     describe('Task 3.1 & 3.2: Playwright API Runner & Test Results Parser', () => {
@@ -166,6 +166,37 @@ describe('Phase 3: Execution & Tracing Engine Test Suite', () => {
             expect(deleteEp.coveragePct).toBe(0);
         });
 
+        it('falls back to sourceFile and sourceLineStart/End for inline route handlers without controllerFile', () => {
+            const traceResult = traceApiEndpointCoverage({
+                endpoints: [
+                    {
+                        method: 'GET',
+                        path: '/',
+                        controllerFile: null,
+                        sourceFile: 'server/src/index.js',
+                        sourceLineStart: 38,
+                        sourceLineEnd: 40,
+                    },
+                ],
+                fileCoverageMap: {
+                    'server/src/index.js': {
+                        path: 'server/src/index.js',
+                        lineHits: { 38: 1, 39: 1, 40: 1 },
+                        lines: { total: 3, covered: 3, pct: 100 },
+                        statements: { total: 3, covered: 3, pct: 100 },
+                        branches: { total: 0, covered: 0, pct: 100 },
+                        functions: { total: 1, covered: 1, pct: 100 },
+                        uncoveredBranches: [],
+                    },
+                },
+            });
+
+            expect(traceResult.summary.coveredEndpoints).toBe(1);
+            expect(traceResult.summary.uncoveredEndpoints).toBe(0);
+            expect(traceResult.endpointsTraceability[0].status).toBe('COVERED');
+            expect(traceResult.endpointsTraceability[0].controllerFile).toBe('server/src/index.js');
+        });
+
         it('should generate a comprehensive API coverage report', () => {
             const traceResult = traceApiEndpointCoverage({
                 endpoints: mockEndpoints,
@@ -291,6 +322,41 @@ describe('Phase 3: Execution & Tracing Engine Test Suite', () => {
 
             expect(diagnosis.failureLayer).toBe('ASSERTION_FAILED');
             expect(diagnosis.diagnosticsDetails.controllerEntered).toBe(true);
+        });
+
+        it('preserves distinct scenarioId metadata when two suites share identical test titles', () => {
+            const code = [
+                "import request from 'supertest';",
+                "describe('POST /summarize', () => {",
+                "  it('should return 400 when content is missing', async () => {",
+                "    const res = await request(app).post('/summarize').send({});",
+                "    expect(res.status).toBe(400);",
+                "  });",
+                "});",
+                "describe('POST /classify', () => {",
+                "  it('should return 400 when content is missing', async () => {",
+                "    const res = await request(app).post('/classify').send({});",
+                "    expect(res.status).toBe(400);",
+                "  });",
+                "});",
+            ].join('\n');
+
+            const reqs = extractValidatedTestRequests({
+                id: 'aitest-1',
+                filePath: 'server/tests/integration/api-integration.test.js',
+                content: code,
+                metaJson: JSON.stringify({
+                    framework: 'SUPERTEST',
+                    requests: [
+                        { scenarioId: 'sc-summarize-400', method: 'POST', path: '/summarize', testName: 'should return 400 when content is missing' },
+                        { scenarioId: 'sc-classify-400', method: 'POST', path: '/classify', testName: 'should return 400 when content is missing' },
+                    ],
+                }),
+            });
+
+            expect(reqs).toHaveLength(2);
+            expect(reqs.find((r) => r.path === '/summarize')?.scenarioId).toBe('sc-summarize-400');
+            expect(reqs.find((r) => r.path === '/classify')?.scenarioId).toBe('sc-classify-400');
         });
     });
 });

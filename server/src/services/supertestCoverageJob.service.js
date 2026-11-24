@@ -47,7 +47,7 @@ import {
 /**
  * Ensure project and subproject dependencies (e.g. server/node_modules) are installed.
  */
-const ensureProjectDependencies = async (jobId, rootDir) => {
+export const ensureProjectDependencies = async (jobId, rootDir) => {
   const candidates = [
     rootDir,
     path.join(rootDir, "server"),
@@ -415,8 +415,7 @@ export const prepareExpressEntriesForSupertest = async (rootDir) => {
         if (
           Array.isArray(node.specifiers) &&
           node.specifiers.some(
-            (s) =>
-              s.exported?.name === "app" || s.exported?.name === "default",
+            (s) => s.exported?.name === "app" || s.exported?.name === "default",
           )
         ) {
           if (node.specifiers.some((s) => s.exported?.name === "default")) {

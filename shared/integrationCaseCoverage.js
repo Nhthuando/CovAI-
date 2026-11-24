@@ -161,7 +161,21 @@ export function getScenarioCaseKey(sc) {
 export function getEndpointRequiredCases(ep) {
   const method = (ep?.method || "GET").toUpperCase();
   const pathStr = ep?.path || ep?.route || ep?.fullPath || "/";
-  const snippet = (ep?.source?.logicSnippet || ep?.logicSnippet || "").toLowerCase();
+  const snippet = (
+    ep?.source?.logicSnippet ||
+    ep?.source?.controllerSnippet ||
+    ep?.logicSnippet ||
+    ep?.controllerSnippet ||
+    ep?.source?.routeSnippet ||
+    ep?.routeSnippet ||
+    ""
+  ).toLowerCase();
+  const hasTryCatch = Boolean(
+    ep?.errorHandling?.hasTryCatch ||
+      ep?.source?.errorHandling?.hasTryCatch ||
+      ep?.source?.behaviorEvidence?.errorHandling?.hasTryCatch ||
+      ep?.behaviorEvidence?.errorHandling?.hasTryCatch,
+  );
 
   const rawMiddlewares =
     ep?.middlewares ||
@@ -206,7 +220,12 @@ export function getEndpointRequiredCases(ep) {
   ) {
     requiredCases.push({ ...CASE_DEFINITIONS.NOT_FOUND });
   }
-  if (/catch|500|throw|limit|length|boundary/.test(snippet)) {
+  if (
+    hasTryCatch ||
+    /catch|500|5\d\d|throw|next\s*\(|limit|length|boundary|error|exception|async\s+|await\s+|prisma|mongoose|sequelize|knex|typeorm/.test(
+      snippet,
+    )
+  ) {
     requiredCases.push({ ...CASE_DEFINITIONS.EDGE });
   }
 

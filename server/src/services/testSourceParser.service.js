@@ -15,6 +15,7 @@ export const extractTestRequests = (sourceCode, filePath) => {
     try {
         const parsed = babelParse(sourceCode, {
             sourceType: "unambiguous",
+            ranges: true,
             plugins: [
                 "estree",
                 "jsx",
@@ -304,6 +305,11 @@ export const extractTestRequests = (sourceCode, filePath) => {
                                     } catch (_) {}
                                 }
 
+                                const codeRange = Array.isArray(node.range)
+                                    ? node.range
+                                    : typeof node.start === "number" && typeof node.end === "number"
+                                      ? [node.start, node.end]
+                                      : null;
                                 testRequests.push({
                                     suiteName: currentSuite,
                                     testName: currentTest,
@@ -314,7 +320,7 @@ export const extractTestRequests = (sourceCode, filePath) => {
                                     queryParams: qParams,
                                     expectedStatus: testExpectedStatus,
                                     ...(testExpectedStatuses ? { expectedStatuses: testExpectedStatuses } : {}),
-                                    code: node.range ? sourceCode.slice(node.range[0], node.range[1]) : undefined,
+                                    code: codeRange ? sourceCode.slice(codeRange[0], codeRange[1]) : undefined,
                                 });
                             }
                         }

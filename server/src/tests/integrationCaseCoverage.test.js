@@ -276,4 +276,43 @@ describe("Integration Case Coverage Contract (Option A)", () => {
     expect(code).toContain("const request = require('supertest');");
     expect(code).toContain("const app = require('../../src/app.js');");
   });
+
+  it("includes EDGE (exception/500) when source.controllerSnippet or controllerSnippet has try/catch or error handling", () => {
+    const epFromParser = {
+      method: "POST",
+      fullPath: "/summarize",
+      controllerSnippet: "static async summarize(req, res) { try { const { content } = req.body; return res.status(200).json({}); } catch (err) { return res.status(500).json({ error: err.message }); } }",
+      errorHandling: { hasTryCatch: true },
+    };
+    const casesParser = getEndpointRequiredCases(epFromParser);
+    expect(casesParser.map((c) => c.key)).toEqual(["HAPPY", "VALIDATION", "EDGE"]);
+
+    const epFromWorkspace = {
+      method: "GET",
+      path: "/api/stats",
+      source: {
+        controllerSnippet: "const getStats = async (req, res) => { const weekly = await statsService.getWeekly(); res.status(200).json(weekly); };",
+        errorHandling: { hasTryCatch: true },
+      },
+    };
+    const casesWorkspace = getEndpointRequiredCases(epFromWorkspace);
+    expect(casesWorkspace.map((c) => c.key)).toEqual(["HAPPY", "EDGE"]);
+  });
+
+  it("extracts inline scenario code block from @babel/parser AST via extractTestRequests", () => {
+    const sample = [
+      "import request from 'supertest';",
+      "describe('AI API', () => {",
+      "  it('POST /summarize returns 500 on service failure', async () => {",
+      "    const res = await request(app).post('/summarize').send({ content: 'abc' });",
+      "    expect(res.status).toBe(500);",
+      "  });",
+      "});",
+    ].join("\n");
+    const reqs = extractTestRequests(sample, "server/tests/integration/api-integration.test.js");
+    expect(reqs).toHaveLength(1);
+    expect(reqs[0].code).toBeDefined();
+    expect(reqs[0].code).toContain("it('POST /summarize returns 500 on service failure'");
+    expect(reqs[0].code).toContain("expect(res.status).toBe(500);");
+  });
 });
