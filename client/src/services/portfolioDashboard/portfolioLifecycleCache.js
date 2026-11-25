@@ -83,3 +83,41 @@ export function applyLifecycleStatusToProjectsList(
       : p,
   );
 }
+
+/**
+ * Immutably remove a deleted project from the portfolio React Query cache.
+ */
+export function removeProjectFromPortfolioCache(cacheData, projectId) {
+  if (!cacheData || !projectId) return cacheData;
+
+  if (Array.isArray(cacheData.projects)) {
+    const projects = cacheData.projects.filter((p) => p.id !== projectId);
+    if (projects.length === cacheData.projects.length) return cacheData;
+    return { ...cacheData, projects };
+  }
+
+  if (Array.isArray(cacheData.data?.projects)) {
+    const projects = cacheData.data.projects.filter((p) => p.id !== projectId);
+    if (projects.length === cacheData.data.projects.length) return cacheData;
+    return { ...cacheData, data: { ...cacheData.data, projects } };
+  }
+
+  return cacheData;
+}
+
+/**
+ * Immutably remove a deleted project from a flat ["projects"] React Query list.
+ */
+export function removeProjectFromProjectsList(projectsList, projectId) {
+  if (!projectId) return projectsList;
+  if (Array.isArray(projectsList)) {
+    return projectsList.filter((p) => p.id !== projectId);
+  }
+  if (Array.isArray(projectsList?.projects)) {
+    return {
+      ...projectsList,
+      projects: projectsList.projects.filter((p) => p.id !== projectId),
+    };
+  }
+  return projectsList;
+}

@@ -6703,10 +6703,13 @@ export function ensureNodeDomFallback(code, { force = false } = {}) {
     /\/\*\s*__covaiDomFallbackApplied[\s\S]*?\}\)\(\);\s*\r?\n?\r?\n?/,
     "",
   );
-  if (!force && /^\s*(?:const|let|var)\s+document\b/m.test(working)) return working;
+  if (!force && /^\s*(?:const|let|var)\s+document\b/m.test(working))
+    return working;
   const usesDomOrBrowser =
     force ||
-    /\bjest\.spyOn\s*\(\s*(?:document|window|chrome|navigator|localStorage|sessionStorage)\b/.test(working) ||
+    /\bjest\.spyOn\s*\(\s*(?:document|window|chrome|navigator|localStorage|sessionStorage)\b/.test(
+      working,
+    ) ||
     /\bdocument\.(?:getElementById|querySelector|querySelectorAll|createElement|addEventListener|removeEventListener|dispatchEvent|body|cookie|title|documentElement|visibilityState|hidden)\b/.test(
       working,
     ) ||
@@ -6780,12 +6783,38 @@ export function ensureNodeDomFallback(code, { force = false } = {}) {
     `  if (typeof globalThis.sessionStorage === 'undefined') { globalThis.sessionStorage = __covaiMkStorage(); }\n` +
     `  if (typeof globalThis.window.localStorage === 'undefined') { globalThis.window.localStorage = globalThis.localStorage; }\n` +
     `  if (typeof globalThis.window.sessionStorage === 'undefined') { globalThis.window.sessionStorage = globalThis.sessionStorage; }\n` +
-    `  if (typeof globalThis.chrome === 'undefined') {\n` +
+    `  if (typeof globalThis.chrome === 'undefined' || !globalThis.chrome?.runtime?.onMessage?.dispatch) {\n` +
+    `    const __covaiStorage = { pendingEvents: [] };\n` +
+    `    const __covaiMkEvent = () => {\n` +
+    `      const listeners = [];\n` +
+    `      return {\n` +
+    `        _listeners: listeners,\n` +
+    `        addListener: __covaiDomFn((cb) => { if (typeof cb === 'function') listeners.push(cb); }),\n` +
+    `        removeListener: __covaiDomFn((cb) => { const i = listeners.indexOf(cb); if (i !== -1) listeners.splice(i, 1); }),\n` +
+    `        hasListener: __covaiDomFn((cb) => listeners.includes(cb)),\n` +
+    `        dispatch: (...args) => listeners.map((fn) => fn(...args))\n` +
+    `      };\n` +
+    `    };\n` +
     `    globalThis.chrome = {\n` +
-    `      runtime: { onMessage: { addListener: __covaiDomFn() }, onInstalled: { addListener: __covaiDomFn() }, sendMessage: __covaiDomFn((m, cb) => cb && cb({})) },\n` +
-    `      alarms: { create: __covaiDomFn(), clear: __covaiDomFn(), onAlarm: { addListener: __covaiDomFn() } },\n` +
-    `      storage: { local: { get: __covaiDomFn((k, cb) => cb && cb({})), set: __covaiDomFn((v, cb) => cb && cb()), remove: __covaiDomFn((k, cb) => cb && cb()) } },\n` +
-    `      tabs: { query: __covaiDomFn((q, cb) => cb && cb([{ id: 1, url: 'https://example.com' }])), create: __covaiDomFn(), sendMessage: __covaiDomFn((id, m, cb) => cb && cb({})) }\n` +
+    `      runtime: {\n` +
+    `        lastError: null,\n` +
+    `        onMessage: __covaiMkEvent(),\n` +
+    `        onInstalled: __covaiMkEvent(),\n` +
+    `        sendMessage: __covaiDomFn((m, cb) => { const res = { ok: true, sessionId: 'sess-1', startTime: Date.now() - 5000, articleTitle: 'Test Article' }; if (typeof cb === 'function') cb(res); return Promise.resolve(res); })\n` +
+    `      },\n` +
+    `      alarms: { create: __covaiDomFn(), clear: __covaiDomFn(), onAlarm: __covaiMkEvent() },\n` +
+    `      storage: {\n` +
+    `        local: {\n` +
+    `          get: __covaiDomFn((k, cb) => { const out = typeof k === 'string' ? { [k]: __covaiStorage[k] } : { ...__covaiStorage }; if (typeof cb === 'function') cb(out); return Promise.resolve(out); }),\n` +
+    `          set: __covaiDomFn((v, cb) => { if (v && typeof v === 'object') Object.assign(__covaiStorage, v); if (typeof cb === 'function') cb(); return Promise.resolve(); }),\n` +
+    `          remove: __covaiDomFn((k, cb) => { if (typeof k === 'string') delete __covaiStorage[k]; if (typeof cb === 'function') cb(); return Promise.resolve(); })\n` +
+    `        }\n` +
+    `      },\n` +
+    `      tabs: {\n` +
+    `        query: __covaiDomFn((q, cb) => { const list = [{ id: 1, url: 'https://vnexpress.net/test-article', active: true }]; if (typeof cb === 'function') cb(list); return Promise.resolve(list); }),\n` +
+    `        create: __covaiDomFn(),\n` +
+    `        sendMessage: __covaiDomFn((id, m, cb) => { const res = { ok: true, sessionId: 'sess-1', startTime: Date.now() - 5000, domain: 'vnexpress.net', status: 'ACTIVE', total_active_time: 120 }; if (typeof cb === 'function') cb(res); return Promise.resolve(res); })\n` +
+    `      }\n` +
     `    };\n` +
     `  }\n` +
     `})();\n\n`;
@@ -6793,7 +6822,9 @@ export function ensureNodeDomFallback(code, { force = false } = {}) {
   // In CommonJS Jest tests (not Vitest/native ESM), rewrite static relative `import` of SUT modules
   // into `require(...)` so the DOM shim executes BEFORE the SUT module initializes top-level `window`/`document`.
   const isVitestOrNativeEsm =
-    /\bfrom\s+['"]vitest['"]|\bjest\.unstable_mockModule\b|\bimport\.meta\b/.test(working);
+    /\bfrom\s+['"]vitest['"]|\bjest\.unstable_mockModule\b|\bimport\.meta\b/.test(
+      working,
+    );
   if (!isVitestOrNativeEsm) {
     working = working
       .replace(

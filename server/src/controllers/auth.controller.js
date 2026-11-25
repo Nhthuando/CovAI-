@@ -208,12 +208,13 @@ export const getGithubRepositories = async (req, res) => {
 
     let repos = [];
     let page = 1;
-    const perPage = 15;
+    const perPage = 100;
 
     while (true) {
       const response = await fetch(
-        `https://api.github.com/user/repos?per_page=${perPage}&page=${page}&sort=created&direction=desc`,
+        `https://api.github.com/user/repos?per_page=${perPage}&page=${page}&sort=pushed&direction=desc&affiliation=owner,collaborator,organization_member`,
         {
+          cache: "no-store",
           headers: {
             Authorization: `Bearer ${accessToken}`,
             Accept: "application/vnd.github.v3+json",
@@ -233,6 +234,12 @@ export const getGithubRepositories = async (req, res) => {
       if (pageRepos.length < perPage) break;
       page++;
     }
+
+    repos.sort((a, b) => {
+      const timeB = new Date(b.pushed_at || b.updated_at || 0).getTime();
+      const timeA = new Date(a.pushed_at || a.updated_at || 0).getTime();
+      return timeB - timeA;
+    });
 
     const enrichedRepos = await Promise.all(
       repos.map(async (repo) => {
@@ -284,6 +291,7 @@ export const getGithubRepositories = async (req, res) => {
       }),
     );
 
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate");
     return res.status(200).json(enrichedRepos);
   } catch (error) {
     logger.error("[getGithubRepositories] Error:", error?.message || error);

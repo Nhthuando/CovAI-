@@ -10,7 +10,11 @@ import {
   PanelRightOpen,
 } from "lucide-react";
 import CovaiLogo from "../components/common/CovaiLogo";
-import { deleteProjectApi } from "../services/project.service";
+import { deleteProjectApi, invalidateFileContentCache } from "../services/project.service";
+import {
+  removeProjectFromPortfolioCache,
+  removeProjectFromProjectsList,
+} from "../services/portfolioDashboard/portfolioLifecycleCache";
 import ImportLayout from "../components/dashboard/import/ImportLayout";
 import { useAuth } from "../hooks/useAuth";
 import ThemeSelector from "../components/common/ThemeSelector";
@@ -103,18 +107,34 @@ export default function ProjectSelectionPage() {
   };
 
   const handleConfirmDelete = async () => {
-    if (!projectToDelete) return;
+    if (!projectToDelete || isDeleting) return;
     const targetProject = projectToDelete;
     try {
       setIsDeleting(true);
       await deleteProjectApi(targetProject.id);
+      invalidateFileContentCache(targetProject.id);
+      queryClient.setQueryData(["projectsPortfolio", "live"], (old) =>
+        removeProjectFromPortfolioCache(old, targetProject.id),
+      );
+      queryClient.setQueriesData({ queryKey: ["projects"] }, (old) =>
+        removeProjectFromProjectsList(old, targetProject.id),
+      );
       queryClient.invalidateQueries({ queryKey: ["projects", userId] });
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["projectsPortfolio"] });
       setProjectToDelete(null);
+      showToast({
+        type: "success",
+        title: "Project deleted",
+        message: `"${targetProject.name}" has been permanently removed.`,
+      });
     } catch (err) {
       console.error("Failed to delete project", err);
-      alert(err.message || "Failed to delete project");
+      showToast({
+        type: "error",
+        title: "Delete failed",
+        message: err.message || "Could not delete the project. Please retry.",
+      });
     } finally {
       setIsDeleting(false);
     }
@@ -406,7 +426,7 @@ export default function ProjectSelectionPage() {
 
       <ConfirmDialog
         isOpen={Boolean(projectToDelete)}
-        onClose={() => setProjectToDelete(null)}
+        onClose={() => !isDeleting && setProjectToDelete(null)}
         onConfirm={handleConfirmDelete}
         title="Delete Project Workspace"
         message="This action is permanent and cannot be undone. All synthesized tests and coverage snapshots will be permanently removed."

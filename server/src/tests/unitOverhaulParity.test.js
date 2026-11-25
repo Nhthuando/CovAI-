@@ -362,4 +362,132 @@ describe("Unit Test Overhaul: Jest/Vitest runner filtering, Prisma safety, and f
       fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
   });
+
+  test("passed scenarios increment unit function coverage count even without Istanbul line hits and avoid false Duplicate badges across distinct existing scenarios", () => {
+    const file = {
+      filePath: "server/src/services/stats.service.js",
+      linesPct: 0,
+      funcsPct: 0,
+      functionCallees: {
+        getWeeklyReadingTopicStats: ["getDayName", "calculateActiveSessionDuration"],
+      },
+    };
+    const fns = [
+      { key: "getWeeklyReadingTopicStats:13", functionName: "getWeeklyReadingTopicStats", startLine: 13, hit: 0 },
+      { key: "getDayName:53", functionName: "getDayName", startLine: 53, hit: 0 },
+      { key: "calculateActiveSessionDuration:102", functionName: "calculateActiveSessionDuration", startLine: 102, hit: 0 },
+      { key: "fetchStats:136", functionName: "fetchStats", startLine: 136, hit: 0 },
+      { key: "getArticleSessionStats:156", functionName: "getArticleSessionStats", startLine: 156, hit: 0 },
+    ];
+    const tests = [
+      {
+        id: "t1",
+        title: "aggregates weekly reading time",
+        code: "await getWeeklyReadingTopicStats();",
+        status: "passed",
+        origin: "PROJECT_EXISTING",
+        testFile: "server/tests/unit/stats.service.test.js",
+      },
+      {
+        id: "t2",
+        title: "computes article statistics",
+        code: "await getArticleSessionStats();",
+        status: "passed",
+        origin: "PROJECT_EXISTING",
+        testFile: "server/tests/unit/stats.service.test.js",
+      },
+      {
+        id: "t3",
+        title: "handles fetchStats success",
+        code: "await fetchStats();",
+        status: "passed",
+        origin: "PROJECT_EXISTING",
+        testFile: "server/tests/unit/stats.service.test.js",
+      },
+      {
+        id: "t4",
+        title: "returns null when no articles exist",
+        code: "await getArticleSessionStats();",
+        status: "failed",
+        origin: "PROJECT_EXISTING",
+        testFile: "server/tests/unit/stats.service.test.js",
+      },
+    ];
+    const covStats = getFileUnitCaseCoverage(file, fns, tests);
+    // 4 passed (getWeeklyReadingTopicStats, getDayName, calculateActiveSessionDuration, fetchStats), 1 failed (getArticleSessionStats)
+    expect(covStats.functionCoverage.coveredFunctions).toBe(4);
+    expect(covStats.functionCoverage.totalFunctions).toBe(5);
+    expect(covStats.functionCoverage.functions.filter((f) => f.passed).length).toBe(4);
+    expect(covStats.functionCoverage.functions.find((f) => f.name === "getArticleSessionStats").failed).toBe(true);
+
+    // 1-function file with 4 distinct existing scenarios should NOT mark distinct cases as Duplicate
+    const singleFile = { filePath: "server/src/services/session.service.js", linesPct: 0, funcsPct: 0 };
+    const singleFns = [{ key: "getSessions:3", functionName: "getSessions", startLine: 3, hit: 0 }];
+    const singleTests = [
+      { id: "s1", title: "computes pagination metadata", status: "passed", origin: "PROJECT_EXISTING", testFile: "server/tests/unit/session.service.test.js" },
+      { id: "s2", title: "recalculates active time from unsorted events", status: "passed", origin: "PROJECT_EXISTING", testFile: "server/tests/unit/session.service.test.js" },
+      { id: "s3", title: "handles legacy ACTIVE events still open", status: "passed", origin: "PROJECT_EXISTING", testFile: "server/tests/unit/session.service.test.js" },
+      { id: "s4", title: "filters out zero active time sessions", status: "passed", origin: "PROJECT_EXISTING", testFile: "server/tests/unit/session.service.test.js" },
+      { id: "s5", title: "redundant test from redundant suite", status: "passed", origin: "PROJECT_EXISTING", testFile: "server/tests/unit/session.redundant.test.js" },
+    ];
+    const covSingle = getFileUnitCaseCoverage(singleFile, singleFns, singleTests);
+    expect(covSingle.functionCoverage.coveredFunctions).toBe(1);
+    expect(covSingle.functionCoverage.totalFunctions).toBe(1);
+    expect(covSingle.redundantCount).toBe(1);
+    expect(covSingle.scenarioAnnotations.s3.badgeType).toBe("PRIMARY_PASS");
+    expect(covSingle.scenarioAnnotations.s5.badgeType).toBe("DUPLICATE");
+  });
+
+  test("preserves bare ESM mocks referenced by source code, extracts Zod controller fields, and enriches chrome DOM shim dispatchers", () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "covai-esm-src-mock-"));
+    try {
+      const cronSrcPath = path.join(tmpRoot, "server/src/cron/cleanup.cron.js");
+      fs.mkdirSync(path.dirname(cronSrcPath), { recursive: true });
+      const cronSrc = `
+        import cron from "node-cron";
+        export const startCleanupJob = () => cron.schedule("0 * * * *", async () => {});
+      `;
+      fs.writeFileSync(cronSrcPath, cronSrc, "utf8");
+
+      const contracts = buildIsolationMockContracts({
+        sourceCode: cronSrc,
+        rootDir: tmpRoot,
+        sourceFile: "server/src/cron/cleanup.cron.js",
+        targetTestFile: "server/tests/cron/cleanup.cron.test.js",
+        framework: "jest",
+      });
+      const sample = `
+        ${contracts.mockPreambleCode}
+        import { startCleanupJob } from "../../src/cron/cleanup.cron.js";
+        test("runs", () => startCleanupJob());
+      `;
+      const repaired = convertJestMocksAndStaticImportsToEsm(sample, {
+        testFilePath: "server/tests/cron/cleanup.cron.test.js",
+        sourceCode: [{ path: "server/src/cron/cleanup.cron.js", content: cronSrc }],
+        rootDir: tmpRoot,
+        targetSourceFile: "server/src/cron/cleanup.cron.js",
+      });
+      expect(repaired).toMatch(/jest\.unstable_mockModule\(\s*['"]node-cron['"]/);
+
+      // Zod controller body key extraction
+      const ctrlSrc = `
+        import { z } from "zod";
+        const eventSchema = z.object({ event_type: z.enum(["PAGE_ENTER"]), url: z.string(), session_id: z.string() });
+        export const createEvent = async (req, res) => { const p = eventSchema.parse(req.body); return res.status(201).json(p); };
+      `;
+      const draft = generateFallbackUnitTests({
+        framework: "jest",
+        sourceFile: "server/src/controllers/event.controller.js",
+        targetTestFile: "server/tests/controllers/event.controller.test.js",
+        rootDir: tmpRoot,
+        baseName: "event.controller",
+        sourceCode: ctrlSrc,
+      });
+      expect(draft.fullUpdatedContent).toContain('"event_type"');
+      expect(draft.fullUpdatedContent).toContain('"PAGE_ENTER"');
+      expect(draft.fullUpdatedContent).toContain('"session_id"');
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
 });

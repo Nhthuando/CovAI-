@@ -902,8 +902,9 @@ export default function Sidebar({
       {/* ── Project Delete Modal ─────────────────────────── */}
       <ConfirmDialog
         isOpen={Boolean(projectToDelete)}
-        onClose={() => setProjectToDelete(null)}
+        onClose={() => !isDeleting && setProjectToDelete(null)}
         onConfirm={async () => {
+          if (isDeleting) return;
           setIsDeleting(true);
           try {
             const deleted = await onDeleteProject(projectToDelete.id);

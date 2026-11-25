@@ -32,12 +32,13 @@ export class GitHubRepositoryAccessService {
     const accessToken = await this.getGitHubToken(userId);
     let repos = [];
     let page = 1;
-    const perPage = 15;
+    const perPage = 100;
 
     while (true) {
       const response = await fetch(
-        `https://api.github.com/user/repos?per_page=${perPage}&page=${page}&sort=created&direction=desc`,
+        `https://api.github.com/user/repos?per_page=${perPage}&page=${page}&sort=pushed&direction=desc&affiliation=owner,collaborator,organization_member`,
         {
+          cache: "no-store",
           headers: {
             Authorization: `Bearer ${accessToken}`,
             Accept: "application/json",
@@ -65,6 +66,12 @@ export class GitHubRepositoryAccessService {
       page++;
     }
 
+    repos.sort((a, b) => {
+      const timeB = new Date(b.pushed_at || b.updated_at || 0).getTime();
+      const timeA = new Date(a.pushed_at || a.updated_at || 0).getTime();
+      return timeB - timeA;
+    });
+
     return repos.map((repo) => ({
       id: repo.id,
       name: repo.name,
@@ -72,6 +79,8 @@ export class GitHubRepositoryAccessService {
       private: repo.private,
       defaultBranch: repo.default_branch,
       htmlUrl: repo.html_url,
+      pushedAt: repo.pushed_at || null,
+      updatedAt: repo.updated_at || null,
     }));
   }
 }

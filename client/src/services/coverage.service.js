@@ -222,7 +222,7 @@ export async function suggestUnitTestcase(snapshotId, filePath, projectId, frame
     return handleResponse(res);
 }
 
-export async function suggestAllUnitTestcases(snapshotId, { filePaths = [], projectId, framework = null, validationMode = 'full', async: asyncMode = true } = {}) {
+export async function suggestAllUnitTestcases(snapshotId, { filePaths = [], projectId, framework = null, validationMode = 'fast', async: asyncMode = true } = {}) {
     const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/suggest-testcase-all`, {
         method: "POST",
         headers: getAuthHeaders(),

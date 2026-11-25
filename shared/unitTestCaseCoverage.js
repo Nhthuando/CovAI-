@@ -262,6 +262,11 @@ export function matchUnitTestToFunctions(
     }
   }
 
+  // 6. Single-function file fallback: tests mapped to a 1-function file target that function
+  if (matched.length === 0 && testableFunctions.length === 1) {
+    addMatch(testableFunctions[0]);
+  }
+
   return matched;
 }
 
@@ -448,11 +453,13 @@ export function getFileUnitFunctionCoverage(
     const hasFailedTest = matchedTests.some(isUnitTestFailed);
     const hasDraftTest = matchedTests.length > 0;
     // A function with any failing assertion MUST NOT count as verified/covered.
+    // Whenever at least one matched scenario passed (and none failed), count the function as covered
+    // even if a selective run did not collect per-file Istanbul line hits yet.
     const rawExecutedHit =
+      hasPassedTest ||
       fn.hit > 0 ||
       fileFuncsPct >= 100 ||
-      fileLinesPct >= 100 ||
-      (hasPassedTest && fileLinesPct > 0);
+      fileLinesPct >= 100;
     const covered = !hasFailedTest && rawExecutedHit;
     return {
       ...fn,
@@ -521,16 +528,33 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
     } else {
       score = 20;
     }
-    const slotKey =
+    const normTitle = String(tc.title || tc.testName || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ");
+    const isRedundantFile = /(?:^|\/)[^/]*\.redundant\./i.test(
+      String(tc.testFile || tc.filePath || "").replace(/\\/g, "/"),
+    );
+    const fnKeyPrefix = matchedFn ? matchedFn.name.toLowerCase() : "module";
+    const categorySlotKey =
       matchedFn && (useFunctionSlots || /^\[\s*[A-Za-z_$]/.test(String(tc.title || "").trim()))
-        ? `FN::${matchedFn.name.toLowerCase()}::${def.key}`
+        ? `FN::${fnKeyPrefix}::${def.key}`
         : def.key;
+    // Distinct existing tests (e.g. multiple edge cases for 1 business function) get unique slots
+    // by normalized title so they are not falsely flagged Duplicate against one another.
+    const slotKey =
+      isProjectExisting && !isRedundantFile
+        ? `EXISTING::${fnKeyPrefix}::${normTitle || index}`
+        : categorySlotKey;
     return {
       tc,
       index,
       id: unitTestIdentity(tc, index),
       key: def.key,
       slotKey,
+      categorySlotKey,
+      normTitle,
+      isRedundantFile,
       matchedFn,
       matchedFns,
       def,
@@ -542,9 +566,16 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
   });
 
   const bestForSlot = new Map();
+  const coveredExistingCategorySlots = new Map();
   for (const entry of orderedEntries) {
-    const isFnSlot = entry.slotKey.startsWith("FN::");
+    const isFnSlot = entry.categorySlotKey.startsWith("FN::");
     if (!isFnSlot && !requiredByKey.has(entry.key)) continue;
+    if (entry.isProjectExisting && !entry.isRedundantFile && !entry.failed) {
+      const prevExisting = coveredExistingCategorySlots.get(entry.categorySlotKey);
+      if (!prevExisting || entry.score > prevExisting.score) {
+        coveredExistingCategorySlots.set(entry.categorySlotKey, entry);
+      }
+    }
     const prev = bestForSlot.get(entry.slotKey);
     if (!prev || entry.score > prev.score) {
       bestForSlot.set(entry.slotKey, entry);
@@ -561,7 +592,7 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
   let extraCount = 0;
 
   for (const entry of orderedEntries) {
-    const isFnSlot = entry.slotKey.startsWith("FN::");
+    const isFnSlot = entry.categorySlotKey.startsWith("FN::");
     const reqDef = requiredByKey.get(entry.key) || entry.def;
     const matchedNames = (entry.matchedFns || []).map((f) => f.name);
     const fnLabel =
@@ -585,8 +616,11 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
       continue;
     }
 
-    const winner = bestForSlot.get(entry.slotKey);
-    const isPrimary = primaryBySlot.get(entry.slotKey) === entry.id;
+    const existingWinnerForCategory = coveredExistingCategorySlots.get(entry.categorySlotKey);
+    const isSupersededByExisting =
+      (!entry.isProjectExisting || entry.isRedundantFile) && Boolean(existingWinnerForCategory);
+    const winner = existingWinnerForCategory || bestForSlot.get(entry.slotKey);
+    const isPrimary = !isSupersededByExisting && primaryBySlot.get(entry.slotKey) === entry.id;
     const displayTarget = fnPrefix || "Module Logic";
 
     if (isPrimary) {
