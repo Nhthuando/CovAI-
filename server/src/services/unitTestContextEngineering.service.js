@@ -2175,7 +2175,7 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
                 if (c.isAsync === false && !(c.chainedMethods && c.chainedMethods.length > 0)) {
                     const syncVal = c.expectedReturnType === "array" ? `[${defaultItemJson}]`
                         : (c.expectedReturnType === "number" ? "1" : (c.expectedReturnType === "boolean" ? "true" : defaultItemJson));
-                    linesOut.push(`    ${c.method}: ${fnMakerVar}(() => ${syncVal}),`);
+                    linesOut.push(`    ${c.method}: ${fnMakerVar}(() => (${syncVal})),`);
                 } else if (c.expectedReturnType === "array" || (c.chainedMethods && c.chainedMethods.length > 0)) {
                     const arrVal = c.expectedReturnType === "array" ? `[${defaultItemJson}]` : defaultItemJson;
                     linesOut.push(`    ${c.method}: ${fnMakerVar}(() => _createQuery(${arrVal})),`);
@@ -2353,7 +2353,7 @@ jest.mock('axios', () => ({ create: jest.fn(() => _mockAxios), ..._mockAxios, de
                 `  Object.defineProperty(rootFn, 'default', { value: outerProxy, writable: true, enumerable: false, configurable: true });\n` +
                 `  return outerProxy;\n` +
                 `};\n` +
-                `var mockCreateUniversalStub = globalThis.__mockCreateUniversalStub = globalThis.__mockCreateUniversalStub || (() => _createStubMaker());\n`;
+                `var mockCreateUniversalStub = globalThis.__mockCreateUniversalStub = _createStubMaker;\n`;
             for (const reqPath of localRequires) {
                 const mockPaths = [reqPath];
                 if (sourceFile && targetTestFile) {

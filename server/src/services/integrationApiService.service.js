@@ -339,7 +339,9 @@ export const runIntegrationGenerationPipeline = async ({
   abortSignal = null,
   model,
 }) => {
-  const normFramework = normalizeFramework(framework);
+  // Integration Test generation targets Jest + Supertest exclusively (Playwright remains reserved for System/E2E tests)
+  void framework;
+  const normFramework = "SUPERTEST";
   await updateJobStatus({ jobId, progress: 10, status: "RUNNING" }).catch(
     () => {},
   );
@@ -1195,7 +1197,9 @@ export const queueRegenerateScenarioService = async ({
   }
 
   const decodedScenarioId = decodeURIComponent(scenarioId);
-  const normFramework = normalizeFramework(framework);
+  // Integration Test generation targets Jest + Supertest exclusively (Playwright remains reserved for System/E2E tests)
+  void framework;
+  const normFramework = "SUPERTEST";
 
   const tests = await prisma.aiTest.findMany({ where: { snapshotId } });
   const artifact = tests.find((test) => {

@@ -2694,7 +2694,7 @@ const executeBuildIntegrationWorkspace = async (
 
     const finalExecutedCount = hasActualRun ? executedCount : 0;
     if (!hasActualRun && visibleScenarios.length === 0) {
-      status = wasAnalyzed ? "UNCOVERED" : "DISCOVERED";
+      status = "UNCOVERED";
     }
 
     return {

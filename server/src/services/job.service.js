@@ -296,6 +296,7 @@ export const createRunTestsJob = ({
   userId,
   mode = "FULL",
   testType,
+  framework = null,
   requestId,
   chainBuildCfg = false,
   useHermeticMock = true,
@@ -303,8 +304,13 @@ export const createRunTestsJob = ({
   targetFiles = [],
   targetTestNames = [],
   draftTests = [],
-}) =>
-  createSnapshotJob({
+}) => {
+  const normalizedFramework =
+    typeof framework === "string" &&
+    ["auto", "jest", "vitest"].includes(framework.trim().toLowerCase())
+      ? framework.trim().toLowerCase()
+      : null;
+  return createSnapshotJob({
     projectId,
     snapshotId,
     userId,
@@ -313,6 +319,7 @@ export const createRunTestsJob = ({
       snapshotId,
       mode,
       ...(testType ? { testType } : {}),
+      ...(normalizedFramework ? { framework: normalizedFramework } : {}),
       ...(chainBuildCfg ? { chainBuildCfg: true } : {}),
       ...(verifyPublishedUnitTests ? { verifyPublishedUnitTests: true } : {}),
       ...(Array.isArray(targetFiles) && targetFiles.length > 0 ? { targetFiles } : {}),
@@ -322,6 +329,7 @@ export const createRunTestsJob = ({
     },
     requestId,
   });
+};
 
 /** Creates a queued RUN_VITEST_TESTS job for a snapshot. */
 export const createVitestJob = createTypedJob("RUN_VITEST_TESTS");

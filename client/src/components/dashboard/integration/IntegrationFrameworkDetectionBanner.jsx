@@ -19,11 +19,7 @@ export default function IntegrationFrameworkDetectionBanner({
   isInstalling = false,
   isGenerating = false,
 }) {
-  const [selectedFramework, setSelectedFramework] = useState(
-    detectionInfo?.targetFramework ||
-      detectionInfo?.suggestedFrameworks?.[0] ||
-      "supertest"
-  );
+  const selectedFramework = "supertest";
   const [showInstallModal, setShowInstallModal] = useState(false);
 
   if (!detectionInfo) return null;
@@ -36,8 +32,8 @@ export default function IntegrationFrameworkDetectionBanner({
   } = detectionInfo;
 
   const missingPackages = permutationDetails?.missingPackages || [
-    selectedFramework === "playwright" ? "@playwright/test" : "supertest",
-    selectedFramework === "playwright" ? "playwright" : "jest",
+    "supertest",
+    "jest",
   ];
 
   return (
@@ -113,73 +109,28 @@ export default function IntegrationFrameworkDetectionBanner({
                     </span>
                   </h4>
                   <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                    No API test files found in repository. Select your preferred testing framework to let AI analyze AST router/controller endpoints and synthesize full coverage scenarios.
+                    No API test files found in repository. AI will analyze AST router/controller endpoints and synthesize full Supertest + Jest coverage scenarios.
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* Framework Selector & AI CTA */}
+            {/* Framework Info & AI CTA */}
             <div className="flex flex-wrap items-center justify-between gap-4 pt-1">
-              {/* Radio Selector Cards */}
               <div className="flex flex-wrap items-center gap-3">
-                <label
-                  onClick={() => setSelectedFramework("supertest")}
-                  className={`flex items-center gap-2.5 px-3.5 py-2 rounded-[var(--radius-md)] border cursor-pointer transition-all select-none ${
-                    selectedFramework === "supertest"
-                      ? "border-[var(--color-primary)] bg-[var(--color-primary)]/15 text-[var(--color-text)] shadow-xs font-semibold"
-                      : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="integrationFramework"
-                    value="supertest"
-                    checked={selectedFramework === "supertest"}
-                    onChange={() => setSelectedFramework("supertest")}
-                    className="accent-[var(--color-primary)]"
-                  />
+                <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-[var(--radius-md)] border border-[var(--color-primary)] bg-[var(--color-primary)]/15 text-[var(--color-text)] shadow-xs font-semibold select-none">
                   <div>
                     <div className="text-xs font-bold flex items-center gap-1.5">
                       <span>Supertest + Jest</span>
                       <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 font-mono">
-                        Recommended for Express
+                        Active Runner
                       </span>
                     </div>
-                    <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-                      In-memory Express HTTP server verification
+                    <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5 font-normal">
+                      In-memory Express HTTP server verification &amp; Istanbul coverage
                     </div>
                   </div>
-                </label>
-
-                <label
-                  onClick={() => setSelectedFramework("playwright")}
-                  className={`flex items-center gap-2.5 px-3.5 py-2 rounded-[var(--radius-md)] border cursor-pointer transition-all select-none ${
-                    selectedFramework === "playwright"
-                      ? "border-[var(--color-primary)] bg-[var(--color-primary)]/15 text-[var(--color-text)] shadow-xs font-semibold"
-                      : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="integrationFramework"
-                    value="playwright"
-                    checked={selectedFramework === "playwright"}
-                    onChange={() => setSelectedFramework("playwright")}
-                    className="accent-[var(--color-primary)]"
-                  />
-                  <div>
-                    <div className="text-xs font-bold flex items-center gap-1.5">
-                      <span>Playwright API Testing</span>
-                      <span className="text-[9px] px-1 py-0.2 rounded bg-sky-500/10 text-sky-500 border border-sky-500/20 font-mono">
-                        Playwright Runner
-                      </span>
-                    </div>
-                    <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-                      HTTP API verification via Playwright request context
-                    </div>
-                  </div>
-                </label>
+                </div>
               </div>
 
               {/* Generate AI CTA Button */}

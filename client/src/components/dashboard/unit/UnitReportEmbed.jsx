@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import { useMemo } from "react";
 import {
   CheckCircle2,
   XCircle,
@@ -10,7 +10,11 @@ import {
   FileCode,
   AlertTriangle,
 } from "lucide-react";
-import { isUnitTestFailed, summarizeUnitFailure } from "./unitTestCaseCoverage.js";
+import {
+  diagnoseUnitFailure,
+  isUnitTestFailed,
+  summarizeUnitFailure,
+} from "./unitTestCaseCoverage.js";
 
 function computeGrade(score) {
   if (score >= 90) return { grade: "A", color: "text-emerald-400 border-emerald-500/30 bg-emerald-500/10" };
@@ -218,19 +222,32 @@ export default function UnitReportEmbed({
         ) : (
           <div className="divide-y divide-[var(--color-border)]/70">
             {failingTests.map((tc, idx) => {
-              const summary = tc.failureSummary || summarizeUnitFailure(tc.failureMessages);
+              const diag = diagnoseUnitFailure(tc);
+              const summary = diag?.summary || tc.failureSummary || summarizeUnitFailure(tc.failureMessages);
               const rawErr = Array.isArray(tc.failureMessages)
                 ? tc.failureMessages.join("\n").trim()
                 : "";
               return (
-                <div key={tc.id || idx} className="p-4 space-y-2">
+                <div key={tc.id || idx} className="p-4 space-y-2.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="space-y-0.5 min-w-0">
-                      <div className="text-xs font-semibold text-[var(--color-text)]">
-                        {tc.title || tc.testName}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-semibold text-[var(--color-text)]">
+                          {tc.title || tc.testName}
+                        </span>
+                        {diag?.label && (
+                          <span className="px-1.5 py-0.5 rounded bg-rose-500/10 border border-rose-500/25 text-[10px] font-mono text-rose-300">
+                            {diag.label}
+                          </span>
+                        )}
                       </div>
-                      <div className="text-[11px] font-mono text-[var(--color-text-muted)] truncate">
-                        {tc.testFile || tc.sourceFile}
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-[var(--color-text-muted)]">
+                        <span className="truncate">{tc.testFile || tc.sourceFile}</span>
+                        {diag?.locationHint && (
+                          <span className="text-[10px] text-[var(--color-text-secondary)]">
+                            @ {diag.locationHint}
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -264,9 +281,19 @@ export default function UnitReportEmbed({
                     </div>
                   </div>
 
-                  <div className="rounded border border-rose-500/25 bg-rose-500/5 px-3 py-2 text-xs text-rose-300 flex items-start gap-2">
-                    <AlertTriangle size={13} className="shrink-0 mt-0.5 text-rose-400" />
-                    <span>{summary}</span>
+                  <div className="rounded border border-rose-500/25 bg-rose-500/5 px-3 py-2 text-xs space-y-1">
+                    <div className="flex items-start gap-2 text-rose-300">
+                      <AlertTriangle size={13} className="shrink-0 mt-0.5 text-rose-400" />
+                      <span className="font-medium leading-snug">
+                        {diag?.explanation || summary}
+                      </span>
+                    </div>
+                    {diag?.suggestedFix && (
+                      <div className="pl-5 text-[11px] text-[var(--color-text-secondary)]">
+                        <span className="text-[var(--color-text-muted)] font-mono mr-1">Fix hint:</span>
+                        {diag.suggestedFix}
+                      </div>
+                    )}
                   </div>
 
                   {rawErr && (

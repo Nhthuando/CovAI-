@@ -1372,8 +1372,12 @@ export const findAssociatedSourceFile = (rootDir, testFilePath) => {
     if (fs.existsSync(fullTestPath)) {
         try {
             const content = fs.readFileSync(fullTestPath, "utf8");
-            // Match ESM imports, CommonJS require, and dynamic import(...)
-            const importMatches = [...content.matchAll(/(?:import\s*(?:\([^)]*\)|(?:.*?\s+from\s+)?)|require\s*\(\s*)['"]([^'"]+)['"]/g)];
+            // Match static ESM imports, CommonJS require, and multiline dynamic import(...)
+            const importMatches = [
+              ...content.matchAll(
+                /(?:import\s*\(\s*|require\s*\(\s*|import\s+[\s\S]*?\s+from\s+|import\s+)['"]([^'"]+)['"]/g,
+              ),
+            ];
             const candidates = [];
 
             for (const match of importMatches) {
