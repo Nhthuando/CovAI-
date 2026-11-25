@@ -31,9 +31,6 @@ export const installVitestDeps = async (jobId, rootDir) => {
 };
 
 /**
- * Resolve the best vitest executable path
- */
-/**
  * Detect the major version of Vitest installed in the project or container.
  */
 export const resolveVitestMajorVersion = (dir) => {
@@ -154,7 +151,7 @@ export const runVitestTests = async (jobId, rootDir, vitestCommand) => {
 };
 
 /**
- * Resolve the best vitest executable path
+ * Build a Vitest command from a resolved entry point and an optional custom command
  */
 export const buildVitestCommand = (binPath, customCommand = null, platform = process.platform) => {
     const base = binPath ? `node "${binPath}"` : "npx --no-install vitest";
@@ -165,6 +162,19 @@ export const buildVitestCommand = (binPath, customCommand = null, platform = pro
     const runner = /^(?:"(?:\.\.?[\\/])*node_modules[\\/]\.bin[\\/]vitest(?:\.cmd)?"|(?:\.\.?[\\/])*node_modules[\\/]\.bin[\\/]vitest(?:\.cmd)?|(?:npx(?:\.cmd)?\s+(?:(?:--yes|--no-install)\s+)?)?vitest(?:\.cmd)?)(?=\s|$)/i;
     return command.replace(runner, () => base);
 };
+
+/**
+ * Resolve the best vitest executable path
+ */
+const resolveVitestBin = (dir, customCommand = null) => {
+    const localBin = path.join(dir, "node_modules", "vitest", "vitest.mjs");
+    if (fs.existsSync(localBin)) return buildVitestCommand("node_modules/vitest/vitest.mjs", customCommand);
+    const parentBin = path.join(dir, "..", "node_modules", "vitest", "vitest.mjs");
+    if (fs.existsSync(parentBin)) return buildVitestCommand("../node_modules/vitest/vitest.mjs", customCommand);
+    if (fs.existsSync("/app/node_modules/vitest/vitest.mjs")) return buildVitestCommand("/app/node_modules/vitest/vitest.mjs", customCommand);
+    return buildVitestCommand(null, customCommand);
+};
+
 const SHARED_ENV = {
     NODE_OPTIONS: "--experimental-vm-modules",
     NODE_PATH: "/app/node_modules:/usr/local/lib/node_modules:./node_modules:../node_modules",
