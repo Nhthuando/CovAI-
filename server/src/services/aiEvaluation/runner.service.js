@@ -2,11 +2,12 @@ import crypto from 'node:crypto';
 import { getAgentManifest } from '../../agents/registry.js';
 import prisma from '../../config/prisma.js';
 import { executeTurn } from './httpJson.adapter.js';
+import { classifyTargetFailure, createTargetPacer } from './targetRateLimit.js';
 import { targetCredential, runFor } from './management.service.js';
 import { closeGateway } from './gateway.service.js';
 import { evaluateCase, evaluateRule, aggregationInputs, deriveCaseRepetitionVerdicts } from './evaluator.service.js';
 import { aggregateTrustProfile } from './scoring.service.js';
-import { hash, redact, serial, safeError, TERMINAL, requireEnabled, fail, lastLogLines } from './common.js';
+import { hash, redact, serial, safeError, TERMINAL, requireEnabled, fail, lastLogLines, isBehaviorOnly } from './common.js';
 import { extractKnowledge } from './knowledge.service.js';
 import { generateChatbotScenarios, providerJson } from './judge.service.js';
 import { parse, caseSchema } from './contracts.js';
@@ -46,6 +47,28 @@ function sleepWithSignal(ms, signal) {
         timer.unref?.();
         signal?.addEventListener('abort', onAbort, { once: true });
     });
+}
+
+function createActiveTimeBudget(caseMs) {
+    const controller = new AbortController();
+    let remaining = caseMs;
+    let started;
+    let timer;
+    return {
+        signal: controller.signal,
+        resume() {
+            started = performance.now();
+            timer = setTimeout(() => controller.abort(), Math.ceil(remaining));
+            timer.unref?.();
+        },
+        pause() {
+            if (timer === undefined) return;
+            clearTimeout(timer);
+            timer = undefined;
+            remaining -= performance.now() - started;
+            if (remaining <= 0) controller.abort();
+        },
+    };
 }
 
 function parseSecretRefs(payloadJson) {
@@ -426,7 +449,9 @@ export async function processEvaluation(jobId, {
         const probeEligible =
             run.targetVersion.config.executionMode === 'MANAGED_PROJECT' ||
             (Array.isArray(definition.sources) && definition.sources.length > 0);
-        if (run.manifest?.skipKnowledgeProbe) {
+        if (isBehaviorOnly(definition.sources)) {
+            extraSummary = { knowledgeProbe: { skipped: true, ready: null, status: 'NOT_APPLICABLE', probes: [] } };
+        } else if (run.manifest?.skipKnowledgeProbe) {
             extraSummary = {
                 knowledgeProbe: {
                     skipped: true,
@@ -461,6 +486,10 @@ export async function processEvaluation(jobId, {
         }
 
         const observedLatenciesMs = [];
+        const pacer = createTargetPacer({
+            sleep: (ms, signal) => sleepWithSignal(process.env.NODE_ENV === 'test' ? Math.min(ms, 10) : ms, signal),
+        });
+        const rateLimit = { hits: 0, waitedMs: 0, dailyQuota: false };
         const targetConcurrency = Math.min(16, Math.max(1, Number.parseInt(process.env.AI_EVALUATION_TARGET_CONCURRENCY || '', 10) || 4));
         const targetWaiters = [];
         let activeTargetRequests = 0;
@@ -512,7 +541,7 @@ export async function processEvaluation(jobId, {
             const testCase = caseResult.testCase.definition;
             const observations = [];
             const refs = [];
-            async function runRepetition(repetition) {
+            function emitScenarioProgress(repetition, waiting) {
                 if (ownerJob?.userId) {
                     emitEvaluationEvent('evaluation:progress', {
                         projectId: run.projectId,
@@ -526,8 +555,12 @@ export async function processEvaluation(jobId, {
                         completed,
                         total: run.cases.length,
                         executionStatus: 'RUNNING',
+                        ...waiting,
                     }, ownerJob.userId);
                 }
+            }
+            async function runRepetition(repetition) {
+                emitScenarioProgress(repetition);
                 const token = crypto.randomBytes(32).toString('base64url');
                 const attemptSecrets = [...runSecrets, token];
                 const action = testCase.taskType === 'ACTION_TOOL';
@@ -543,7 +576,8 @@ export async function processEvaluation(jobId, {
                         expiresAt: new Date(Date.now() + definition.limits.caseMs),
                     },
                 });
-                const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(definition.limits.caseMs)]);
+                const activeTime = action ? null : createActiveTimeBudget(definition.limits.caseMs);
+                const signal = AbortSignal.any([controller.signal, activeTime?.signal ?? AbortSignal.timeout(definition.limits.caseMs)]);
                 const messages = testCase.context ? [{ role: 'system', content: testCase.context }] : [];
                 const responses = [];
                 let conversationId;
@@ -566,29 +600,65 @@ export async function processEvaluation(jobId, {
                             }
                             : { executionMode: 'ANSWER_ONLY', toolsAllowed: false };
                         let response;
-                        for (let retry = 0; ; retry++) {
-                            try {
-                                response = await withTargetSlot(async () => {
+                        let rateLimitRetries = 0;
+                        let transientRetries = 0;
+                        for (;;) {
+                            let retryDelayMs;
+                            let transientError;
+                            response = await withTargetSlot(async () => {
+                                await pacer.beforeRequest(signal);
+                                if (signal.aborted) throw new Error('aborted');
+                                const started = performance.now();
+                                try {
+                                    let result;
+                                    activeTime?.resume();
+                                    try {
+                                        result = await turnExecutor(
+                                            run.targetVersion.config,
+                                            { requestId: `${attempt.requestId}-${responses.length}`, conversationKey: attempt.requestId, messages: run.targetVersion.config.conversationMode === 'session' && conversationId ? [messages.at(-1)] : messages, conversationId, evaluationContext, signal },
+                                            { credential, lease: managedRuntime?.loopbackLease || null, transport, timeoutMs: definition.limits.requestMs },
+                                        );
+                                    } finally {
+                                        activeTime?.pause();
+                                    }
                                     if (signal.aborted) throw new Error('aborted');
-                                    const started = performance.now();
-                                    const result = await turnExecutor(
-                                        run.targetVersion.config,
-                                        { requestId: `${attempt.requestId}-${responses.length}`, messages: run.targetVersion.config.conversationMode === 'session' && conversationId ? [messages.at(-1)] : messages, conversationId, evaluationContext, signal },
-                                        { credential, lease: managedRuntime?.loopbackLease || null, transport, timeoutMs: definition.limits.requestMs },
-                                    );
                                     latencyMs += performance.now() - started;
                                     return result;
-                                });
-                                break;
-                            } catch (error) {
-                                const code = error?.code;
-                                const transient = code === 'TARGET_RATE_LIMIT' || code === 'TARGET_CONNECTION_ERROR'
-                                    || (code === 'TARGET_HTTP_ERROR' && error.details?.targetStatus >= 500
-                                        && /429|503|RESOURCE_EXHAUSTED|high demand|overloaded|rate limit|quota|UNAVAILABLE|temporarily/i.test(error.message));
-                                if (retry >= 2 || signal.aborted || !transient) throw error;
-                                console.info(`[Evaluation] ${testCase.caseKey} turn retry ${retry + 1}/2 after ${code}`);
-                                await sleepWithSignal(process.env.NODE_ENV === 'test' ? 10 : 3000 * (retry + 1), signal);
-                                if (signal.aborted) throw error;
+                                } catch (error) {
+                                    if (signal.aborted) throw error;
+                                    const failure = classifyTargetFailure(error);
+                                    if (failure.kind === 'DAILY_QUOTA' || failure.kind === 'RATE_LIMIT') {
+                                        rateLimit.hits++;
+                                        extraSummary = { ...(extraSummary || {}), rateLimit };
+                                        if (failure.kind === 'DAILY_QUOTA') {
+                                            rateLimit.dailyQuota = true;
+                                            pacer.onDailyQuota(error);
+                                            throw error;
+                                        }
+                                        const alreadyWaiting = pacer.waitingUntil > Date.now();
+                                        if (rateLimitRetries >= 4 || pacer.dailyQuotaError || !pacer.onRateLimit(failure, rateLimitRetries)) throw error;
+                                        rateLimitRetries++;
+                                        rateLimit.waitedMs = pacer.totalWaitMs;
+                                        if (!alreadyWaiting) {
+                                            const waitingUntil = new Date(pacer.waitingUntil).toISOString();
+                                            const seconds = Math.ceil((pacer.waitingUntil - Date.now()) / 1000);
+                                            console.info(`[Evaluation] chatbot rate limit; waiting ${seconds} s`);
+                                            emitScenarioProgress(repetition, { waitingUntil, waitingReason: 'RATE_LIMIT' });
+                                        }
+                                        retryDelayMs = 0;
+                                        return;
+                                    }
+                                    if (failure.kind !== 'TRANSIENT' || transientRetries >= 2) throw error;
+                                    transientRetries++;
+                                    console.info(`[Evaluation] ${testCase.caseKey} turn retry ${transientRetries}/2 after ${error.code}`);
+                                    retryDelayMs = 3000 * transientRetries;
+                                    transientError = error;
+                                }
+                            });
+                            if (retryDelayMs === undefined) break;
+                            if (retryDelayMs > 0) {
+                                await sleepWithSignal(process.env.NODE_ENV === 'test' ? 10 : retryDelayMs, signal);
+                                if (signal.aborted) throw transientError;
                             }
                         }
                         conversationId = response.conversationId;
@@ -818,7 +888,7 @@ export async function processEvaluationPrepare(jobId, { db = prisma, provider } 
             if (!version || version.status !== 'DRAFT' || version.revision !== payload.revision) throw new Error('Draft changed');
             const sources = await db.aiEvaluationKnowledgeSource.findMany({
                 where: { id: { in: version.definition.sourceIds }, projectId: job.projectId, status: 'READY' },
-                select: { id: true, name: true, content: true },
+                select: { id: true, name: true, content: true, provenance: true },
             });
             if (!sources.length) throw new Error('Knowledge required');
             if (Array.isArray(version.definition.tools) && version.definition.tools.length > 0) {
@@ -866,6 +936,7 @@ export async function processEvaluationPrepare(jobId, { db = prisma, provider } 
                     profileVersionId: version.id,
                     revision: version.revision,
                     topicMap: generated.topicMap,
+                    groundingMode: generated.groundingMode,
                     cases: generated.cases,
                     unverifiedReferenceCount: generated.unverifiedReferenceCount,
                     evaluator: generated.evaluator,

@@ -96,7 +96,7 @@ export function calculateTax(income, options = {}) {
             // 5. Strict Generation Rules & Methodology
             expect(prompt).toContain("### 5. STRICT GENERATION RULES & METHODOLOGY");
             expect(prompt).toContain("NEVER USE test.skip / it.skip / describe.skip");
-            expect(prompt).toContain("MANDATORY TEST MATRIX (DECISION TABLE)");
+            expect(prompt).toContain("MANDATORY COMPLETE BUSINESS FUNCTION & BRANCH COVERAGE SUITE");
             expect(prompt).toContain("ISOLATION MOCK CONTRACTS");
 
             // 6. Output Format

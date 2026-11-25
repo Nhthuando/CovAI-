@@ -36,6 +36,45 @@ describe("unitReport.service - Peak Coverage Snapshot", () => {
     jest.clearAllMocks();
   });
 
+  it("replaces a peak with equal totals and fewer files but keeps it over a smaller targeted run", async () => {
+    const totals = { total: 10, covered: 8, pct: 80 };
+    const summaryTotal = { lines: totals, branches: totals, functions: totals, statements: totals };
+    const unitFile = {
+      filePath: "server/services/productService.js",
+      linesPct: 80,
+      branchesPct: 80,
+      funcsPct: 80,
+      stmtsPct: 80,
+    };
+    const testStats = { total: 2, passed: 2 };
+    const inflated = await capturePeakUnitReportIfHigher(snapshotId, {
+      summaryTotal,
+      fileCoverages: [unitFile, { ...unitFile, filePath: "server/routes/cartRoutes.js" }],
+      testStats,
+    });
+    const replacement = await capturePeakUnitReportIfHigher(snapshotId, {
+      summaryTotal,
+      fileCoverages: [unitFile],
+      testStats,
+    });
+
+    expect(replacement.peakMeta.score).toBeLessThan(inflated.peakMeta.score);
+    expect(replacement.rawTotals).toEqual(inflated.rawTotals);
+    expect(replacement.fileCoverages).toEqual([unitFile]);
+    expect(await getPeakUnitReport(snapshotId)).toEqual(replacement);
+
+    const smallerTotals = { total: 5, covered: 4, pct: 80 };
+    const targeted = await capturePeakUnitReportIfHigher(snapshotId, {
+      summaryTotal: { ...summaryTotal, lines: smallerTotals },
+      fileCoverages: [unitFile],
+      testStats: { total: 1, passed: 1 },
+      isTargetedRun: true,
+    });
+
+    expect(targeted).toEqual(replacement);
+    expect(await getPeakUnitReport(snapshotId)).toEqual(replacement);
+  });
+
   it("captures initial analysis run and preserves higher coverage version on lower subsequent run", async () => {
     // 0% targeted run before any full run must not seed a 0% peak report
     const zeroTargeted = await capturePeakUnitReportIfHigher(snapshotId, {

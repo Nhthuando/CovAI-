@@ -1,5 +1,6 @@
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 import { detectSupertest } from "./supertestDetection.service.js";
+import { applyIntegrationFileCoverage } from "./integrationFileCoverage.service.js";
 import { scenarioArtifactVersion } from "./scenarioManager.service.js";
 import fs from "fs";
 import path from "path";
@@ -38,12 +39,40 @@ export const extractValidatedTestRequests = (t) => {
       Array.isArray(meta.requests) &&
       (meta.requests.length > 0 || meta.userModified)
     ) {
-      const metaMap = new Map(meta.requests.map((r) => [r.testName, r]));
+      const usedMetaIndices = new Set();
+      const findMetaRequest = (r) => {
+        const rMethod = String(r.method || "").toUpperCase();
+        const rPath = String(r.path || "").split("?")[0];
+        const findUnused = (pred) => {
+          const idx = meta.requests.findIndex(
+            (mr, i) => !usedMetaIndices.has(i) && pred(mr),
+          );
+          if (idx !== -1) {
+            usedMetaIndices.add(idx);
+            return meta.requests[idx];
+          }
+          return null;
+        };
+        return (
+          findUnused(
+            (mr) =>
+              mr.testName === r.testName &&
+              String(mr.method || "").toUpperCase() === rMethod &&
+              String(mr.path || "").split("?")[0] === rPath,
+          ) ||
+          findUnused(
+            (mr) =>
+              mr.scenarioId &&
+              (mr.scenarioId === r.scenarioId || mr.scenarioId === r.id),
+          ) ||
+          findUnused((mr) => mr.testName === r.testName)
+        );
+      };
       const validNames = new Set(meta.requests.map((r) => r.testName));
       const filteredReqs = reqs
         .filter((r) => validNames.has(r.testName))
         .map((r) => {
-          const mr = metaMap.get(r.testName);
+          const mr = findMetaRequest(r);
           return {
             ...r,
             scenarioId: mr?.scenarioId || r.scenarioId,
@@ -226,6 +255,7 @@ export function summarizeFailureMessage(
   failureMessages,
   parsedFailure = null,
   req = null,
+  serverErrorMessage = null,
 ) {
   const parsed = parsedFailure || parseFailureMessages(failureMessages, req);
   const rawText = stripAnsi(
@@ -234,9 +264,15 @@ export function summarizeFailureMessage(
         ? failureMessages.join("\n")
         : String(failureMessages || "")),
   ).trim();
+  const cleanServerError =
+    typeof serverErrorMessage === "string" && serverErrorMessage.trim()
+      ? serverErrorMessage.trim().slice(0, 220)
+      : "";
 
   if (!rawText) {
-    return "Assertion or runtime failure during API test execution.";
+    return cleanServerError
+      ? `Server returned error: ${cleanServerError}`
+      : "Assertion or runtime failure during API test execution.";
   }
 
   // 1. CommonJS / ESM syntax mismatch
@@ -267,7 +303,7 @@ export function summarizeFailureMessage(
     /^\d{3}$/.test(parsed.expected.trim()) &&
     /^\d{3}$/.test(parsed.received.trim())
   ) {
-    return `HTTP status mismatch: Expected ${parsed.expected.trim()}, but server returned ${parsed.received.trim()}.`;
+    return `HTTP status mismatch: Expected ${parsed.expected.trim()}, but server returned ${parsed.received.trim()}${cleanServerError ? ` — "${cleanServerError}"` : ""}.`;
   }
 
   // 5. General Jest Expect (Expected vs Received)
@@ -286,7 +322,7 @@ export function summarizeFailureMessage(
     /expected\s+(\d{3})\b[^,\n]*,\s*got\s+(\d{3})\b/i,
   );
   if (supertestStatus) {
-    return `HTTP status mismatch: Expected ${supertestStatus[1]}, but received ${supertestStatus[2]}.`;
+    return `HTTP status mismatch: Expected ${supertestStatus[1]}, but received ${supertestStatus[2]}${cleanServerError ? ` — "${cleanServerError}"` : ""}.`;
   }
 
   // 7. Timeout
@@ -586,8 +622,8 @@ export function evaluateEndpointMetrics({
       status = "Script Error";
     } else if (failedCount > 0) {
       status = "Partial";
-    } else if (passedCount === executedCount) {
-      status = caseCoverageComplete ? "Covered" : "Partial";
+    } else if (passedCount > 0 && caseCoverageComplete) {
+      status = "Covered";
     } else {
       status = "Partial";
     }
@@ -1241,7 +1277,7 @@ const executeBuildIntegrationWorkspace = async (
   const [
     testRuns,
     coverageSummary,
-    coverageFiles,
+    sharedCoverageFiles,
     aiTests,
     snapshot,
     jobs,
@@ -1299,6 +1335,7 @@ const executeBuildIntegrationWorkspace = async (
               .catch(() => null)
           : Promise.resolve(null),
     ]);
+  const coverageFiles = applyIntegrationFileCoverage(sharedCoverageFiles, jobs);
   const dbTime = Date.now() - startDb;
   const latestRun = (testRuns && testRuns[0]) || null;
   const resolvedSnapshotRoot = snapshot?.rootDir
@@ -1538,7 +1575,7 @@ const executeBuildIntegrationWorkspace = async (
       artifactPrefix.split("/").includes(".."))
   )
     artifactPrefix = undefined;
-  const firebaseCacheKey = `${snapshotId}_${latestRun?.id || "none"}_${outputJob?.id || "legacy"}`;
+  const firebaseCacheKey = `v2::${snapshotId}_${latestRun?.id || "none"}_${outputJob?.id || "legacy"}`;
   if (executeFailedBeforeTests) {
     // Current execution job failed before tests could execute; do not load stale prior scenarios
     testScenarios = [];
@@ -1546,14 +1583,14 @@ const executeBuildIntegrationWorkspace = async (
     testScenarios = firebaseCache.get(firebaseCacheKey);
   } else if (latestRun?.scenarios?.length > 0) {
     // FAST PATH 1: Directly use scenarios already retrieved from PostgreSQL DB (0ms network),
-    // merging across recent runs (newest wins per testFile + title) so targeted single-endpoint runs
-    // never wipe out other endpoints' executed scenarios on reload.
+    // merging across recent runs (newest wins per testFile + suiteName + title) so targeted single-endpoint runs
+    // never wipe out other endpoints' executed scenarios on reload, and identical titles in different suites stay distinct.
     const mergedRunScenarios = [];
     const seenRunScenarioKeys = new Set();
     for (const runItem of testRuns || [latestRun]) {
       for (const s of runItem?.scenarios || []) {
         const cleanFile = cleanStoragePath(s.testFile) || s.testFile || "";
-        const dedupKey = `${String(cleanFile).toLowerCase()}::${String(s.title || "").trim().toLowerCase()}`;
+        const dedupKey = `${String(cleanFile).toLowerCase()}::${String(s.suiteName || "").trim().toLowerCase()}::${String(s.title || "").trim().toLowerCase()}`;
         if (seenRunScenarioKeys.has(dedupKey)) continue;
         seenRunScenarioKeys.add(dedupKey);
         mergedRunScenarios.push(s);
@@ -1900,7 +1937,7 @@ const executeBuildIntegrationWorkspace = async (
   const parsedTests = integrationTests.map((t) => {
     const currentVersionKey = crypto
       .createHash("md5")
-      .update((t.content || "") + "::" + (t.metaJson || ""))
+      .update("v2::" + (t.content || "") + "::" + (t.metaJson || ""))
       .digest("hex");
     let requests;
     const cacheEntry = snapshotParseCache.get(t.id);
@@ -1916,10 +1953,18 @@ const executeBuildIntegrationWorkspace = async (
         const metaReq = tMeta.requests
           ? tMeta.requests.find(
               (mr) =>
-                (mr.scenarioId &&
-                  (mr.scenarioId === r.scenarioId || mr.scenarioId === r.id)) ||
-                mr.testName === r.testName,
-            )
+                mr.scenarioId &&
+                (mr.scenarioId === r.scenarioId || mr.scenarioId === r.id),
+            ) ||
+            tMeta.requests.find(
+              (mr) =>
+                mr.testName === r.testName &&
+                String(mr.method || "").toUpperCase() ===
+                  String(r.method || "").toUpperCase() &&
+                String(mr.path || "").split("?")[0] ===
+                  String(r.path || "").split("?")[0],
+            ) ||
+            tMeta.requests.find((mr) => mr.testName === r.testName)
           : null;
         const fallbackId = crypto
           .createHash("md5")
@@ -1998,13 +2043,17 @@ const executeBuildIntegrationWorkspace = async (
 
   const activeTestScenarios = testScenarios.filter((s) => !isStagedDeletedScenario(s, s.testFile));
   const enrichedScenarios = activeTestScenarios.map((s) => {
-    let matchingRequests = allParsedRequests.filter(
-      (pr) =>
-        pr.testName === s.title &&
-        (s.suiteName?.includes(pr.suiteName) ||
-          pr.suiteName?.includes(s.suiteName) ||
-          s.suiteName === pr.suiteName),
-    );
+    const sSuite = String(s.suiteName || "").trim();
+    let matchingRequests = allParsedRequests.filter((pr) => {
+      if (pr.testName !== s.title) return false;
+      const prSuite = String(pr.suiteName || "").trim();
+      if (!sSuite || !prSuite) return false;
+      return (
+        sSuite === prSuite ||
+        sSuite.includes(prSuite) ||
+        prSuite.includes(sSuite)
+      );
+    });
     if (matchingRequests.length === 0 && s.scenarioId) {
       matchingRequests = allParsedRequests.filter(
         (pr) => pr.scenarioId === s.scenarioId,
@@ -2152,30 +2201,7 @@ const executeBuildIntegrationWorkspace = async (
             ? req.expectedStatus
             : expectedFromFailure || expectedFromTitle;
 
-        const failureDiagnostics =
-          rest.status === "failed"
-            ? diagnoseApiFailureLayer({
-                endpoint: ep,
-                scenario: {
-                  ...rest,
-                  actualStatus:
-                    rest.actualStatus !== undefined ? rest.actualStatus : null,
-                  expectedStatus: expectedStatus,
-                },
-                failureMessages: rest.failureMessages || [],
-                fileCoverageMap: getOrLoadFileCoverage(),
-                sourceCode: sourceCodeList || loadedSourceCode || [],
-              })
-            : null;
-        const classification = classifyScenarioFailure(rest, req);
-        const classificationReason = getClassificationReason(
-          classification,
-          rest,
-          req,
-          parsedFailure,
-        );
-
-        // Match runtime evidence items for this scenario title
+        // Match runtime evidence items for this scenario title BEFORE failure diagnosis
         const scenarioTitleLower = (rest.title || "").trim().toLowerCase();
         const matchingEvidences = runtimeEvidences.filter((ev) => {
           const evTitle = (ev.testTitle || "").trim().toLowerCase();
@@ -2289,6 +2315,44 @@ const executeBuildIntegrationWorkspace = async (
           actualStatusFromRuntime = Number(rest.responseStatus);
           evidenceSource = "TEST_SERVER_HTTP_RESPONSE";
         }
+
+        const serverErrorMessage =
+          mainEv?.serverErrorMessage ||
+          rest.serverErrorMessage ||
+          null;
+        const responseBodyPreview =
+          mainEv?.responseBodyPreview ||
+          rest.responseBodyPreview ||
+          null;
+
+        const failureDiagnostics =
+          rest.status === "failed"
+            ? diagnoseApiFailureLayer({
+                endpoint: ep,
+                scenario: {
+                  ...rest,
+                  actualStatus:
+                    actualStatus !== null && actualStatus !== undefined
+                      ? actualStatus
+                      : rest.actualStatus !== undefined
+                        ? rest.actualStatus
+                        : null,
+                  expectedStatus: expectedStatus,
+                  serverErrorMessage,
+                  responseBodyPreview,
+                },
+                failureMessages: rest.failureMessages || [],
+                fileCoverageMap: getOrLoadFileCoverage(),
+                sourceCode: sourceCodeList || loadedSourceCode || [],
+              })
+            : null;
+        const classification = classifyScenarioFailure(rest, req);
+        const classificationReason = getClassificationReason(
+          classification,
+          rest,
+          req,
+          parsedFailure,
+        );
 
         // DO NOT assign VERIFIED_CONTRACT when there is no traceable contract source.
         let contractSource = req?.contractSource || null;
@@ -2513,11 +2577,18 @@ const executeBuildIntegrationWorkspace = async (
           evidenceSource,
           capturedAt: evidenceCapturedAt,
           runtimeEvidence: structuredEvidence,
+          serverErrorMessage,
+          responseBodyPreview,
           setupRequests,
           teardownRequests,
           failureSummary:
             rest.status === "failed" || parsedFailure
-              ? summarizeFailureMessage(rest.failureMessages, parsedFailure, req)
+              ? summarizeFailureMessage(
+                  rest.failureMessages,
+                  parsedFailure,
+                  req,
+                  serverErrorMessage,
+                )
               : null,
           failureDetails: parsedFailure,
           failureMessages: Array.isArray(rest.failureMessages)
@@ -2623,7 +2694,7 @@ const executeBuildIntegrationWorkspace = async (
 
     const finalExecutedCount = hasActualRun ? executedCount : 0;
     if (!hasActualRun && visibleScenarios.length === 0) {
-      status = wasAnalyzed ? "UNCOVERED" : "DISCOVERED";
+      status = "UNCOVERED";
     }
 
     return {
@@ -2814,6 +2885,8 @@ const executeBuildIntegrationWorkspace = async (
   };
 
   // 1. Process all executed scenarios from enrichedScenarios
+  const suiteLoadErrors = [];
+  const seenSuiteErrorFiles = new Set();
   const classifiedExecutedTitles = new Set();
   enrichedScenarios.forEach((sc) => {
     if (classifiedExecutedTitles.has(sc.title)) return;
@@ -2828,7 +2901,28 @@ const executeBuildIntegrationWorkspace = async (
       !allParsedRequests.some((r) => r.testName === sc.title);
     if (isUnmatchedSuiteFailure && sc.status === "failed") {
       qualityClassification.testScriptErrors++;
+      const errKey = sc.testFile || sc.title;
+      if (!seenSuiteErrorFiles.has(errKey)) {
+        seenSuiteErrorFiles.add(errKey);
+        suiteLoadErrors.push({
+          testFile: sc.testFile || sc.title,
+          title: sc.title,
+          summary: summarizeFailureMessage(sc.failureMessages, null, req),
+        });
+      }
       return;
+    }
+
+    if (sc.isSuiteLevelFailure && sc.status === "failed") {
+      const errKey = sc.testFile || sc.title;
+      if (!seenSuiteErrorFiles.has(errKey)) {
+        seenSuiteErrorFiles.add(errKey);
+        suiteLoadErrors.push({
+          testFile: sc.testFile || sc.title,
+          title: sc.title,
+          summary: summarizeFailureMessage(sc.failureMessages, null, req),
+        });
+      }
     }
 
     qualityClassification.total++;
@@ -3212,11 +3306,18 @@ const executeBuildIntegrationWorkspace = async (
           const metaReq = meta.requests
             ? meta.requests.find(
                 (mr) =>
-                  (mr.scenarioId &&
-                    (mr.scenarioId === r.scenarioId ||
-                      mr.scenarioId === r.id)) ||
-                  mr.testName === r.testName,
-              )
+                  mr.scenarioId &&
+                  (mr.scenarioId === r.scenarioId || mr.scenarioId === r.id),
+              ) ||
+              meta.requests.find(
+                (mr) =>
+                  mr.testName === r.testName &&
+                  String(mr.method || "").toUpperCase() ===
+                    String(r.method || "").toUpperCase() &&
+                  String(mr.path || "").split("?")[0] ===
+                    String(r.path || "").split("?")[0],
+              ) ||
+              meta.requests.find((mr) => mr.testName === r.testName)
             : null;
           const fallbackId = crypto
             .createHash("md5")
@@ -3257,6 +3358,7 @@ const executeBuildIntegrationWorkspace = async (
           timestamp: latestRun.finishedAt || latestRun.createdAt || null,
         }
       : null,
+    suiteLoadErrors,
     semanticState,
   };
 

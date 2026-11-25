@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import {
   loadMatrixSelection,
   saveMatrixSelection,
@@ -17,8 +17,6 @@ import {
   Edit3,
   Code2,
   Trash2,
-  Wand2,
-  Sparkles,
   CheckCircle2,
   XCircle,
   Clock,
@@ -26,22 +24,32 @@ import {
   ChevronsUpDown,
   Check,
   AlertTriangle,
+  Copy,
+  ExternalLink,
+  X,
 } from "lucide-react";
+import { getFileCoverage, getUnitTestCaseDetail } from "../../../services/coverage.service.js";
+import ConfirmDialog from "../../common/ConfirmDialog.jsx";
 import {
+  diagnoseUnitFailure,
   getFileUnitCaseCoverage,
   isUnitTestFailed,
   isUnitTestPassed,
   summarizeUnitFailure,
 } from "./unitTestCaseCoverage.js";
+import { TEST_UI, calmPctTextClass } from "../shared/testingUiTokens.js";
+
+const NEUTRAL_ROLE_BADGE =
+  "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]";
 
 const METHOD_LIKE_FILE_BADGES = {
-  service: "bg-sky-500/10 text-sky-400 border-sky-500/25",
-  controller: "bg-emerald-500/10 text-emerald-400 border-emerald-500/25",
-  middleware: "bg-amber-500/10 text-amber-400 border-amber-500/25",
-  util: "bg-purple-500/10 text-purple-400 border-purple-500/25",
-  validator: "bg-indigo-500/10 text-indigo-400 border-indigo-500/25",
-  component: "bg-cyan-500/10 text-cyan-400 border-cyan-500/25",
-  default: "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
+  service: NEUTRAL_ROLE_BADGE,
+  controller: NEUTRAL_ROLE_BADGE,
+  middleware: NEUTRAL_ROLE_BADGE,
+  util: NEUTRAL_ROLE_BADGE,
+  validator: NEUTRAL_ROLE_BADGE,
+  component: NEUTRAL_ROLE_BADGE,
+  default: NEUTRAL_ROLE_BADGE,
 };
 
 function inferRoleBadge(filePath = "") {
@@ -55,72 +63,92 @@ function inferRoleBadge(filePath = "") {
   return { label: "SRC", style: METHOD_LIKE_FILE_BADGES.default };
 }
 
-function getFileRowStatus(entry) {
+function getFileRowStatus(entry, caseCov = null) {
   const hasFailures = (entry.testCases || []).some(isUnitTestFailed);
   const linesPct = Number(entry.linesPct ?? 0);
   const stmtsPct = Number(entry.stmtsPct ?? 0);
   const funcsPct = Number(entry.funcsPct ?? 0);
   const branchesPct = Number(entry.branchesPct ?? 0);
+  const branchesTotal = Number(entry.branchesTotal || 0);
   const funcsTotal = Number(entry.funcsTotal ?? (entry.functions || []).length ?? 0);
   const funcsCovered = Number(
     entry.funcsCovered ??
       (entry.functions || []).filter((f) => Number(f.hit || 0) > 0).length ??
       0,
   );
+  const allFuncsCovered = funcsTotal === 0 || funcsCovered >= funcsTotal || funcsPct >= 100;
 
   if (hasFailures) return "FAIL";
   if (
     linesPct >= 100 &&
-    (funcsTotal === 0 || funcsPct >= 100) &&
-    (Number(entry.branchesTotal || 0) === 0 || branchesPct >= 100)
+    allFuncsCovered &&
+    (branchesTotal === 0 || branchesPct >= 100)
   ) {
     return "PASS";
   }
-  if (linesPct > 0 || stmtsPct > 0 || funcsCovered > 0) {
+  // If all unit functions are covered cleanly with >= 80% line & branch coverage and passing tests, mark Covered
+  if (
+    allFuncsCovered &&
+    linesPct >= 80 &&
+    (branchesTotal === 0 || branchesPct >= 80) &&
+    Number(caseCov?.passedCount || 0) > 0
+  ) {
+    return "PASS";
+  }
+  if (
+    linesPct > 0 ||
+    stmtsPct > 0 ||
+    funcsCovered > 0 ||
+    Number(caseCov?.passedCount || 0) > 0
+  ) {
     return "PARTIAL";
   }
   return "UNCOVERED";
 }
 
 function pctColorClass(pct) {
-  if (pct == null) return "text-[var(--color-text-muted)]";
-  if (pct >= 80) return "text-emerald-400";
-  if (pct >= 50) return "text-amber-400";
-  return "text-rose-400";
+  return calmPctTextClass(pct);
 }
 
-export default function UnitFileMatrixTable({
-  snapshotId = null,
-  fileEntries = [],
-  hasExecuted = false,
-  onSuggestSelected,
-  onSuggestAllUncovered,
-  onApplySelected,
-  onApplySingleDraft,
-  onRunSelectedFiles,
-  onRunSelectedTests,
-  onRunFile,
-  onRunTestCase,
-  onOpenAddTest,
-  onOpenEditTest,
-  onDeleteTestCase,
-  onAIFixTestCase,
-  onOpenFileAnalysis,
-  onOpenSourceFile,
-  onOpenDiffReview,
-  isGenerating = false,
-  isApplying = false,
-  isRunning = false,
-  fixingTestId = null,
-  runningTargetKey = null,
-  pendingOpsCount = 0,
-  isApplyingPending = false,
-  onApplyPendingChanges = null,
-  onDiscardPendingChanges = null,
-}) {
+const UnitFileMatrixTable = forwardRef(function UnitFileMatrixTable(
+  {
+    snapshotId = null,
+    fileEntries = [],
+    onSuggestSelected,
+    onSuggestAllUncovered,
+    onApplySelected,
+    onRunSelectedTests,
+    onOpenAddTest,
+    onOpenEditTest,
+    onDeleteTestCase,
+    onBulkDeleteTestCases = null,
+    onAIFixTestCase,
+    onOpenFileAnalysis,
+    onOpenSourceFile,
+    isGenerating = false,
+    isApplying = false,
+    isRunning = false,
+    fixingTestId = null,
+    pendingOpsCount = 0,
+    isApplyingPending = false,
+    onApplyPendingChanges = null,
+    onDiscardPendingChanges = null,
+  },
+  ref,
+) {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [expandedPaths, setExpandedPaths] = useState(() => new Set());
+  const [expandedSourcePaths, setExpandedSourcePaths] = useState(() => new Set());
+  const [fetchedSourceByPath, setFetchedSourceByPath] = useState({});
+  const [loadingSourcePaths, setLoadingSourcePaths] = useState(() => new Set());
+  const [sourceErrorByPath, setSourceErrorByPath] = useState({});
+  const [highlightedSourceLine, setHighlightedSourceLine] = useState(null);
+  const [expandedCodeIds, setExpandedCodeIds] = useState(() => new Set());
+  const [fetchedCodeByKey, setFetchedCodeByKey] = useState({});
+  const [loadingCodeKeys, setLoadingCodeKeys] = useState(() => new Set());
+  const [copiedCodeKey, setCopiedCodeKey] = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null);
   const [selectedFiles, setSelectedFiles] = useState(
     () => loadMatrixSelection("unit", snapshotId).parents,
   );
@@ -131,6 +159,159 @@ export default function UnitFileMatrixTable({
   useEffect(() => {
     saveMatrixSelection("unit", snapshotId, selectedFiles, selectedTestIds);
   }, [snapshotId, selectedFiles, selectedTestIds]);
+
+  const getUnitTestSelectionKey = (tc, entry) => {
+    const title = tc?.title || tc?.testName;
+    if (title) {
+      return `${entry?.filePath || tc?.sourceFile || ""}::${tc?.testFile || ""}::${title}`;
+    }
+    return String(tc?.id || "");
+  };
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      selectAllFiles: () => {
+        const parentSet = new Set();
+        const childSet = new Set();
+        for (const entry of fileEntries || []) {
+          if (!entry?.filePath) continue;
+          parentSet.add(entry.filePath);
+          for (const tc of entry.testCases || []) {
+            const k = getUnitTestSelectionKey(tc, entry);
+            if (k) childSet.add(k);
+          }
+        }
+        setSelectedFiles(parentSet);
+        setSelectedTestIds(childSet);
+        saveMatrixSelection("unit", snapshotId, parentSet, childSet);
+      },
+    }),
+    [fileEntries, snapshotId],
+  );
+
+  const toggleSourceCodePreview = async (filePath, targetLine = null) => {
+    if (!filePath) return;
+    const isCurrentlyOpen = expandedSourcePaths.has(filePath);
+    if (targetLine != null) {
+      setExpandedSourcePaths((prev) => new Set(prev).add(filePath));
+      setHighlightedSourceLine({ filePath, line: targetLine });
+    } else {
+      setExpandedSourcePaths((prev) => {
+        const next = new Set(prev);
+        if (next.has(filePath)) next.delete(filePath);
+        else next.add(filePath);
+        return next;
+      });
+      if (isCurrentlyOpen) return;
+    }
+
+    const scrollToTargetLine = () => {
+      if (targetLine == null || typeof document === "undefined") return;
+      requestAnimationFrame(() => {
+        const el = document.getElementById(`covai-src-${filePath}-L${targetLine}`);
+        if (el && typeof el.scrollIntoView === "function") {
+          el.scrollIntoView({ block: "center", behavior: "smooth" });
+        }
+      });
+    };
+
+    if (fetchedSourceByPath[filePath] || !snapshotId) {
+      scrollToTargetLine();
+      return;
+    }
+
+    setLoadingSourcePaths((prev) => new Set(prev).add(filePath));
+    setSourceErrorByPath((prev) => {
+      if (!prev[filePath]) return prev;
+      const next = { ...prev };
+      delete next[filePath];
+      return next;
+    });
+    try {
+      const res = await getFileCoverage(snapshotId, filePath);
+      const detail = res?.data || res || {};
+      const code = detail?.sourceCode || detail?.code || "";
+      const uncoveredSet = new Set(
+        Array.isArray(detail?.uncoveredLines)
+          ? detail.uncoveredLines.map((n) => Number(n)).filter(Number.isFinite)
+          : [],
+      );
+      setFetchedSourceByPath((prev) => ({
+        ...prev,
+        [filePath]: { code, uncoveredLines: uncoveredSet },
+      }));
+      scrollToTargetLine();
+    } catch (err) {
+      console.warn("[UnitFileMatrixTable] Failed to fetch source code preview:", err?.message);
+      setSourceErrorByPath((prev) => ({
+        ...prev,
+        [filePath]: err?.message || "Unable to load source file content.",
+      }));
+    } finally {
+      setLoadingSourcePaths((prev) => {
+        const next = new Set(prev);
+        next.delete(filePath);
+        return next;
+      });
+    }
+  };
+
+  const toggleCodePreview = async (tcKey, tc) => {
+    const isCurrentlyOpen = expandedCodeIds.has(tcKey);
+    setExpandedCodeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(tcKey)) next.delete(tcKey);
+      else next.add(tcKey);
+      return next;
+    });
+    if (isCurrentlyOpen) return;
+
+    const inlineCode =
+      tc?.code ||
+      tc?.suggestionObj?.fullUpdatedContent ||
+      tc?.suggestionObj?.suggestedTestCode ||
+      tc?.suggestionObj?.generatedCode ||
+      "";
+    if (inlineCode || fetchedCodeByKey[tcKey] || !snapshotId || !tc?.testFile) {
+      return;
+    }
+
+    setLoadingCodeKeys((prev) => new Set(prev).add(tcKey));
+    try {
+      const res = await getUnitTestCaseDetail(snapshotId, {
+        testFile: tc.testFile,
+        testName: tc.title || tc.testName,
+      });
+      const detail = res?.data || res;
+      const resolvedCode =
+        detail?.code || detail?.testCode || detail?.fullContent || "";
+      if (resolvedCode) {
+        setFetchedCodeByKey((prev) => ({ ...prev, [tcKey]: resolvedCode }));
+      }
+    } catch (err) {
+      console.warn("[UnitFileMatrixTable] Failed to fetch unit test code preview:", err?.message);
+    } finally {
+      setLoadingCodeKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(tcKey);
+        return next;
+      });
+    }
+  };
+
+  const handleCopyCode = (tcKey, text) => {
+    if (!text || typeof navigator === "undefined" || !navigator.clipboard) return;
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopiedCodeKey(tcKey);
+        setTimeout(() => {
+          setCopiedCodeKey((cur) => (cur === tcKey ? null : cur));
+        }, 1600);
+      })
+      .catch(() => {});
+  };
 
   const enrichedEntries = useMemo(() => {
     return (fileEntries || []).map((entry) => {
@@ -169,15 +350,8 @@ export default function UnitFileMatrixTable({
     setExpandedPaths(new Set());
   };
 
-  const getUnitTestSelectionKey = (tc, entry) => {
-    const title = tc?.title || tc?.testName;
-    if (title) {
-      return `${entry?.filePath || tc?.sourceFile || ""}::${tc?.testFile || ""}::${title}`;
-    }
-    return String(tc?.id || "");
-  };
-
   const toggleSelectFile = (filePath) => {
+    setConfirmBulkDelete(false);
     const targetEntry = enrichedEntries.find((e) => e.filePath === filePath);
     const next = toggleParentSelection({
       parentKey: filePath,
@@ -195,6 +369,7 @@ export default function UnitFileMatrixTable({
   };
 
   const toggleSelectAllFiles = () => {
+    setConfirmBulkDelete(false);
     if (filteredEntries.length === 0) return;
     const allSelected = filteredEntries.every((e) => selectedFiles.has(e.filePath));
     const next = toggleAllParentsSelection({
@@ -216,6 +391,7 @@ export default function UnitFileMatrixTable({
   };
 
   const toggleSelectTest = (testKey, entry = null, legacyId = null) => {
+    setConfirmBulkDelete(false);
     const next = toggleChildSelection({
       childKey: testKey,
       legacyChildKey: legacyId ? String(legacyId) : null,
@@ -237,9 +413,11 @@ export default function UnitFileMatrixTable({
 
   const selectedDraftSuggestions = useMemo(() => {
     const byId = new Map();
+    const hasFilter = selectedFiles.size > 0 || selectedTestIds.size > 0;
     for (const entry of enrichedEntries) {
-      if (selectedFiles.size > 0 && !selectedFiles.has(entry.filePath)) continue;
+      const fileSelected = selectedFiles.has(entry.filePath);
       for (const tc of entry.testCases || []) {
+        if (hasFilter && !fileSelected && !selectedTestIds.has(tc.id)) continue;
         if (tc.origin === "AI_DRAFT" && tc.suggestionObj && !tc.isApplied) {
           const key =
             tc.suggestionObj.suggestionId ||
@@ -252,7 +430,7 @@ export default function UnitFileMatrixTable({
       }
     }
     return Array.from(byId.values());
-  }, [enrichedEntries, selectedFiles]);
+  }, [enrichedEntries, selectedFiles, selectedTestIds]);
 
   const totalPendingDrafts = useMemo(() => {
     let count = 0;
@@ -331,7 +509,9 @@ export default function UnitFileMatrixTable({
 
           {/* Global / Batch Actions */}
           <div className="flex flex-wrap items-center gap-2">
-            {onSuggestAllUncovered && (
+            {onSuggestAllUncovered &&
+              selectedFileList.length === 0 &&
+              selectedTestCasesList.length === 0 && (
               <button
                 type="button"
                 onClick={onSuggestAllUncovered}
@@ -340,9 +520,9 @@ export default function UnitFileMatrixTable({
                 title="Generate AI unit test drafts for uncovered source files"
               >
                 {isGenerating ? (
-                  <Loader2 size={12} className="animate-spin text-[var(--color-primary)]" />
+                  <Loader2 size={12} className="animate-spin text-[var(--color-text-secondary)]" />
                 ) : (
-                  <Sparkles size={12} className="text-[var(--color-primary)]" />
+                  <Plus size={12} className="text-[var(--color-text-muted)]" />
                 )}
                 <span>{isGenerating ? "Generating..." : "Generate All"}</span>
               </button>
@@ -354,7 +534,7 @@ export default function UnitFileMatrixTable({
                   type="button"
                   onClick={onApplyPendingChanges}
                   disabled={isApplyingPending || isApplying || isRunning}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
+                  className={TEST_UI.btnPrimary}
                   title="Write temporary unit test additions, edits, and deletions to source files"
                 >
                   {isApplyingPending ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
@@ -364,7 +544,7 @@ export default function UnitFileMatrixTable({
                   <button
                     type="button"
                     onClick={onDiscardPendingChanges}
-                    className="px-2 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[11px] font-medium text-[var(--color-text-muted)] cursor-pointer"
+                    className={TEST_UI.btnSecondary}
                   >
                     Discard
                   </button>
@@ -372,12 +552,15 @@ export default function UnitFileMatrixTable({
               </div>
             )}
 
-            {totalPendingDrafts > 0 && onApplySelected && selectedFileList.length === 0 && (
+            {totalPendingDrafts > 0 &&
+              onApplySelected &&
+              selectedFileList.length === 0 &&
+              selectedTestCasesList.length === 0 && (
               <button
                 type="button"
                 onClick={() => onApplySelected(selectedDraftSuggestions)}
                 disabled={isApplying || isRunning}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
+                className={TEST_UI.btnPrimary}
                 title="Verify & apply all pending AI draft unit tests to disk"
               >
                 {isApplying ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
@@ -388,7 +571,7 @@ export default function UnitFileMatrixTable({
             <button
               type="button"
               onClick={expandedPaths.size > 0 ? collapseAll : expandAll}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors cursor-pointer"
+              className={TEST_UI.btnSecondary}
             >
               <ChevronsUpDown size={12} />
               <span>{expandedPaths.size > 0 ? "Collapse all" : "Expand all"}</span>
@@ -414,34 +597,24 @@ export default function UnitFileMatrixTable({
                   type="button"
                   onClick={() => onSuggestSelected(selectedFileList)}
                   disabled={isGenerating || isApplying || isRunning}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-[var(--color-primary)]/40 bg-[var(--color-primary)]/10 text-[var(--color-primary)] hover:bg-[var(--color-primary)]/20 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
+                  className={TEST_UI.btnSecondary}
                 >
-                  <Sparkles size={12} />
+                  <Plus size={12} className="text-[var(--color-text-muted)]" />
                   <span>Generate Selected ({selectedFileList.length})</span>
                 </button>
               )}
 
-              {selectedFileList.length > 0 && selectedDraftSuggestions.length > 0 && onApplySelected && (
+              {(selectedFileList.length > 0 || selectedTestCasesList.length > 0) &&
+                selectedDraftSuggestions.length > 0 &&
+                onApplySelected && (
                 <button
                   type="button"
                   onClick={() => onApplySelected(selectedDraftSuggestions)}
                   disabled={isApplying || isRunning}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
+                  className={TEST_UI.btnSecondary}
                 >
-                  <Check size={12} />
+                  <Check size={12} className="text-[var(--color-text-muted)]" />
                   <span>Apply Selected Drafts ({selectedDraftSuggestions.length})</span>
-                </button>
-              )}
-
-              {selectedFileList.length > 0 && onRunSelectedFiles && (
-                <button
-                  type="button"
-                  onClick={() => onRunSelectedFiles(selectedFileList)}
-                  disabled={isRunning}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  <Play size={11} fill="currentColor" />
-                  <span>Run Selected Files ({selectedFileList.length})</span>
                 </button>
               )}
 
@@ -450,16 +623,35 @@ export default function UnitFileMatrixTable({
                   type="button"
                   onClick={() => onRunSelectedTests(selectedTestCasesList)}
                   disabled={isRunning}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
+                  className={TEST_UI.btnPrimary}
                 >
                   <Play size={11} fill="currentColor" />
                   <span>Run Selected Tests ({selectedTestCasesList.length})</span>
                 </button>
               )}
 
+              {selectedTestCasesList.length > 0 && onBulkDeleteTestCases && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPendingDelete({
+                      kind: "bulk",
+                      items: selectedTestCasesList,
+                    })
+                  }
+                  disabled={isRunning || isApplying}
+                  className={TEST_UI.btnDangerSubtle}
+                  title="Delete all selected unit test cases"
+                >
+                  <Trash2 size={11} />
+                  <span>Delete ({selectedTestCasesList.length})</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => {
+                  setPendingDelete(null);
                   setSelectedFiles(new Set());
                   setSelectedTestIds(new Set());
                 }}
@@ -497,7 +689,7 @@ export default function UnitFileMatrixTable({
                       type="checkbox"
                       checked={allVisibleSelected}
                       onChange={toggleSelectAllFiles}
-                      className="rounded border-[var(--color-border)] accent-[var(--color-primary)] cursor-pointer"
+                      className="rounded border-[var(--color-border)] accent-[var(--color-text)] cursor-pointer"
                       aria-label="Select all source files"
                     />
                   </th>
@@ -516,9 +708,17 @@ export default function UnitFileMatrixTable({
                   const testCount = (entry.testCases || []).length;
                   const fnCov = entry.caseCov?.functionCoverage;
                   const fnList = fnCov?.functions?.length ? fnCov.functions : (entry.functions || []);
-                  const fnCount = fnCov?.totalFunctions ?? (fnList.length || Number(entry.funcsTotal || 0));
-                  const coveredFnCount = fnCov?.coveredFunctions ?? fnList.filter((f) => Boolean(f.covered) || Number(f.hit || 0) > 0).length;
+                  const fnCount = fnCov?.functions?.length
+                    ? fnCov.totalFunctions
+                    : fnList.length || Number(entry.funcsTotal || 0);
+                  const coveredFnCount = fnCov?.functions?.length
+                    ? fnCov.coveredFunctions
+                    : fnList.filter((f) => Boolean(f.covered) || Number(f.hit || 0) > 0).length;
                   const uncoveredFns = fnCov?.uncoveredFunctions ?? fnList.filter((f) => Number(f.hit || 0) === 0);
+                  const displayFuncsPct =
+                    fnCov?.functions?.length && fnCount > 0
+                      ? (coveredFnCount / fnCount) * 100
+                      : Number(entry.funcsPct ?? 0);
 
                   return (
                     <React.Fragment key={entry.filePath}>
@@ -539,7 +739,7 @@ export default function UnitFileMatrixTable({
                               type="checkbox"
                               checked={isSelected}
                               onChange={() => toggleSelectFile(entry.filePath)}
-                              className="rounded border-[var(--color-border)] accent-[var(--color-primary)] cursor-pointer"
+                              className="rounded border-[var(--color-border)] accent-[var(--color-text)] cursor-pointer"
                               aria-label={`Select ${entry.filePath}`}
                             />
                             <button
@@ -567,7 +767,7 @@ export default function UnitFileMatrixTable({
                           <div className="mt-1 pl-[52px] flex flex-wrap items-center gap-3 text-[11px] font-mono text-[var(--color-text-muted)] tabular-nums">
                             <span>{fnCount} {fnCount === 1 ? "fn" : "fns"}</span>
                             {uncoveredFns.length > 0 && (
-                              <span className="text-amber-400/90">
+                              <span className="text-[var(--color-text-muted)]">
                                 {uncoveredFns.length} uncovered fn
                               </span>
                             )}
@@ -588,8 +788,8 @@ export default function UnitFileMatrixTable({
                             <span title="Branch coverage" className={pctColorClass(entry.branchesPct)}>
                               B {Number(entry.branchesPct ?? 0).toFixed(0)}%
                             </span>
-                            <span title="Function coverage" className={pctColorClass(entry.funcsPct)}>
-                              F {Number(entry.funcsPct ?? 0).toFixed(0)}%
+                            <span title="Function coverage" className={pctColorClass(displayFuncsPct)}>
+                              F {Number(displayFuncsPct ?? 0).toFixed(0)}%
                             </span>
                             <span
                               title="Line coverage"
@@ -600,37 +800,33 @@ export default function UnitFileMatrixTable({
                           </div>
                         </td>
 
-                        {/* Status */}
+                        {/* Status (aligned with Integration Test: Covered / Partial (X/Y) / Failed / Uncovered) */}
                         <td className="py-3 px-3 align-top">
                           <div className="pt-0.5">
                             {entry.status === "PASS" ? (
                               <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-secondary)]">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/75" />
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/65" />
                                 Covered
                               </span>
                             ) : entry.status === "PARTIAL" ? (
                               <span
                                 className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-muted)] font-mono tabular-nums"
-                                title={`Business functions covered: ${entry.funcsCovered ?? (fnCount - uncoveredFns.length)}/${entry.funcsTotal || fnCount}`}
+                                title={`Unit Functions verified: ${coveredFnCount}/${fnCount} · Lines: ${Number(entry.linesPct ?? 0).toFixed(1)}%`}
                               >
-                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500/75" />
-                                {(entry.funcsTotal || fnCount) > 0
-                                  ? `Partial (${entry.funcsCovered ?? Math.max(0, fnCount - uncoveredFns.length)}/${entry.funcsTotal || fnCount} fns)`
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500/60" />
+                                {fnCount > 0
+                                  ? `Partial (${coveredFnCount}/${fnCount})`
                                   : `Partial (${Number(entry.linesPct ?? 0).toFixed(0)}%)`}
                               </span>
                             ) : entry.status === "FAIL" ? (
-                              <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-rose-400">
-                                <span className="w-1.5 h-1.5 rounded-full bg-rose-400/80" />
+                              <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-rose-300/85">
+                                <span className="w-1.5 h-1.5 rounded-full bg-rose-400/75" />
                                 Failed
                               </span>
                             ) : (
                               <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
                                 <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-border-strong)]" />
-                                {testCount > 0
-                                  ? "Draft ready (0%)"
-                                  : hasExecuted
-                                    ? "Uncovered"
-                                    : "Not run"}
+                                Uncovered
                               </span>
                             )}
                           </div>
@@ -638,9 +834,13 @@ export default function UnitFileMatrixTable({
 
                         {/* Tests Count */}
                         <td className="py-3 px-3 text-right font-mono tabular-nums text-[11px] align-top">
-                          <span className="text-[var(--color-text-secondary)]">
-                            {testCount} {testCount === 1 ? "test" : "tests"}
-                          </span>
+                          {testCount === 0 ? (
+                            <span className="text-[var(--color-text-muted)]">—</span>
+                          ) : (
+                            <span className="text-[var(--color-text-secondary)]">
+                              {testCount} {testCount === 1 ? "test" : "tests"}
+                            </span>
+                          )}
                         </td>
 
                         {/* Quiet Row Actions (No Generate button per row - matches Integration UX) */}
@@ -670,22 +870,6 @@ export default function UnitFileMatrixTable({
                               >
                                 <Plus size={12} />
                                 <span>Add</span>
-                              </button>
-                            )}
-                            {onRunFile && (
-                              <button
-                                type="button"
-                                onClick={() => onRunFile(entry)}
-                                disabled={isRunning}
-                                title="Run unit tests targeting this file"
-                                className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer disabled:opacity-50"
-                              >
-                                {runningTargetKey === entry.filePath ? (
-                                  <Loader2 size={11} className="animate-spin" />
-                                ) : (
-                                  <Play size={11} fill="currentColor" />
-                                )}
-                                <span>Run</span>
                               </button>
                             )}
                           </div>
@@ -719,7 +903,7 @@ export default function UnitFileMatrixTable({
                                   <span>
                                     Functions:{" "}
                                     <span className="text-[var(--color-text-secondary)]">
-                                      {coveredFnCount}/{fnCount} ({Number(entry.funcsPct ?? 0).toFixed(1)}%)
+                                      {coveredFnCount}/{fnCount} ({Number(displayFuncsPct ?? 0).toFixed(1)}%)
                                     </span>
                                   </span>
                                   <span>
@@ -733,42 +917,122 @@ export default function UnitFileMatrixTable({
                                 </div>
 
                                 <div className="flex items-center gap-2">
-                                  {onOpenSourceFile && (
-                                    <button
-                                      type="button"
-                                      onClick={() => onOpenSourceFile(entry.filePath, 1)}
-                                      className="inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] text-[11px] text-[var(--color-text-secondary)] cursor-pointer"
-                                    >
-                                      <FileCode size={11} />
-                                      <span>Source Code</span>
-                                    </button>
-                                  )}
-                                  {onOpenFileAnalysis && (
-                                    <button
-                                      type="button"
-                                      onClick={() => onOpenFileAnalysis(entry)}
-                                      className="inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] text-[11px] text-[var(--color-text-secondary)] cursor-pointer"
-                                    >
-                                      <GitBranch size={11} />
-                                      <span>CFG & Simulation</span>
-                                    </button>
-                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleSourceCodePreview(entry.filePath)}
+                                    className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-[11px] transition-colors cursor-pointer ${
+                                      expandedSourcePaths.has(entry.filePath)
+                                        ? "border-[var(--color-primary)]/40 bg-[var(--color-primary)]/15 text-[var(--color-primary)] font-medium"
+                                        : "border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)]"
+                                    }`}
+                                    title="View source code inline without leaving Unit Test"
+                                  >
+                                    <FileCode size={11} />
+                                    <span>{expandedSourcePaths.has(entry.filePath) ? "Hide Source Code" : "Source Code"}</span>
+                                  </button>
                                 </div>
                               </div>
+
+                              {/* Inline Source Code Viewer */}
+                              {expandedSourcePaths.has(entry.filePath) && (() => {
+                                const srcData = fetchedSourceByPath[entry.filePath];
+                                const srcCode = srcData?.code || "";
+                                const uncoveredSet = srcData?.uncoveredLines;
+                                const isSrcLoading = loadingSourcePaths.has(entry.filePath);
+                                const srcError = sourceErrorByPath[entry.filePath];
+                                const srcLines = srcCode ? srcCode.split(/\r?\n/) : [];
+                                const srcCopyKey = `src::${entry.filePath}`;
+                                return (
+                                  <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] overflow-hidden">
+                                    <div className="px-3 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)]/70 flex flex-wrap items-center justify-between gap-2 text-[10px] font-mono text-[var(--color-text-muted)]">
+                                      <div className="flex items-center gap-2 min-w-0">
+                                        <FileCode size={11} className="text-[var(--color-primary)] shrink-0" />
+                                        <span className="truncate text-[var(--color-text-secondary)]">
+                                          {entry.filePath}
+                                        </span>
+                                        {srcLines.length > 0 && (
+                                          <span className="px-1.5 py-0.2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-[9px] tabular-nums">
+                                            {srcLines.length} lines
+                                          </span>
+                                        )}
+                                        {uncoveredSet && uncoveredSet.size > 0 && (
+                                          <span className="px-1.5 py-0.2 rounded bg-rose-500/10 border border-rose-500/25 text-rose-300 text-[9px] tabular-nums">
+                                            {uncoveredSet.size} uncovered lines
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-1.5 shrink-0">
+                                        {srcCode && (
+                                          <button
+                                            type="button"
+                                            onClick={() => handleCopyCode(srcCopyKey, srcCode)}
+                                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer"
+                                          >
+                                            <Copy size={10} />
+                                            <span>{copiedCodeKey === srcCopyKey ? "Copied" : "Copy"}</span>
+                                          </button>
+                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleSourceCodePreview(entry.filePath)}
+                                          className="p-0.5 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] cursor-pointer"
+                                          title="Close inline source viewer"
+                                        >
+                                          <X size={12} />
+                                        </button>
+                                      </div>
+                                    </div>
+                                    {isSrcLoading ? (
+                                      <div className="p-3 flex items-center gap-2 text-[11px] font-mono text-[var(--color-text-muted)]">
+                                        <Loader2 size={12} className="animate-spin" />
+                                        <span>Loading source file...</span>
+                                      </div>
+                                    ) : srcError ? (
+                                      <div className="p-3 text-[11px] font-mono text-rose-400">
+                                        {srcError}
+                                      </div>
+                                    ) : srcLines.length > 0 ? (
+                                      <div className="overflow-auto max-h-96 font-mono text-[11px] leading-5">
+                                        {srcLines.map((lineText, idx) => {
+                                          const lineNo = idx + 1;
+                                          const isJumped =
+                                            highlightedSourceLine?.filePath === entry.filePath &&
+                                            highlightedSourceLine?.line === lineNo;
+                                          const isUncovered = uncoveredSet?.has(lineNo);
+                                          return (
+                                            <div
+                                              key={lineNo}
+                                              id={`covai-src-${entry.filePath}-L${lineNo}`}
+                                              className={`flex items-start px-3 ${
+                                                isJumped
+                                                  ? "bg-[var(--color-primary)]/20 text-[var(--color-text)]"
+                                                  : isUncovered
+                                                    ? "bg-rose-500/10 text-[var(--color-text-secondary)]"
+                                                    : "hover:bg-[var(--color-surface-secondary)]/40 text-[var(--color-text-secondary)]"
+                                              }`}
+                                            >
+                                              <span className="w-10 shrink-0 select-none text-right pr-3 text-[10px] text-[var(--color-text-muted)] tabular-nums">
+                                                {lineNo}
+                                              </span>
+                                              <span className="whitespace-pre">{lineText || " "}</span>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    ) : (
+                                      <div className="p-3 text-[11px] font-mono text-[var(--color-text-muted)]">
+                                        Source file content is empty or unavailable.
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
 
                               {/* Business Logic Functions Coverage Strip */}
                               <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
                                 <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
                                   <span className="font-mono text-[var(--color-text-muted)] mr-1">
-                                    Unit Functions (
-                                    {entry.funcsCovered ??
-                                      entry.caseCov.functionCoverage?.coveredFunctions ??
-                                      Math.max(0, fnCount - uncoveredFns.length)}
-                                    /
-                                    {entry.funcsTotal ||
-                                      entry.caseCov.functionCoverage?.totalFunctions ||
-                                      fnCount}
-                                    ):
+                                    Unit Functions ({coveredFnCount}/{fnCount}):
                                   </span>
                                   {(entry.caseCov.functionCoverage?.functions || []).length > 0 ? (
                                     entry.caseCov.functionCoverage.functions.map((fn) => (
@@ -776,21 +1040,27 @@ export default function UnitFileMatrixTable({
                                         key={fn.key}
                                         type="button"
                                         onClick={() =>
-                                          onOpenSourceFile &&
-                                          onOpenSourceFile(entry.filePath, fn.startLine || 1)
+                                          toggleSourceCodePreview(
+                                            entry.filePath,
+                                            fn.startLine || 1,
+                                          )
                                         }
-                                        title={`Jump to ${fn.name}() at line ${fn.startLine || 1} (${fn.hit || 0} hits)`}
+                                        title={`Inspect ${fn.name}() inline at line ${fn.startLine || 1} (${fn.hit || 0} hits)`}
                                         className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border font-mono text-[10px] cursor-pointer transition-colors ${
-                                          fn.passed
-                                            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25 hover:bg-emerald-500/20"
-                                            : fn.failed
-                                              ? "bg-rose-500/10 text-rose-400 border-rose-500/25 hover:bg-rose-500/20"
-                                              : fn.hasDraftTest
-                                                ? "bg-sky-500/10 text-sky-400 border-sky-500/25 hover:bg-sky-500/20"
-                                                : "bg-amber-500/10 text-amber-300 border-amber-500/20 hover:bg-amber-500/20"
+                                          fn.failed
+                                            ? "bg-rose-500/[0.07] text-rose-400/90 border-rose-500/20 hover:bg-rose-500/15"
+                                            : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"
                                         }`}
                                       >
-                                        <span>
+                                        <span
+                                          className={
+                                            fn.passed
+                                              ? "text-emerald-400/80"
+                                              : fn.failed
+                                                ? "text-rose-400/85"
+                                                : "text-[var(--color-text-muted)]"
+                                          }
+                                        >
                                           {fn.passed
                                             ? "✓"
                                             : fn.failed
@@ -813,7 +1083,20 @@ export default function UnitFileMatrixTable({
                                   )}
                                 </div>
 
-                                <div className="flex items-center gap-2 text-[10px] font-mono text-[var(--color-text-muted)]">
+                                <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono tabular-nums text-[var(--color-text-muted)]">
+                                  {entry.caseCov.passedCount > 0 && (
+                                    <span className="text-emerald-400">
+                                      {entry.caseCov.passedCount} passed
+                                    </span>
+                                  )}
+                                  {entry.caseCov.failedCount > 0 && (
+                                    <span className="text-rose-400">
+                                      {entry.caseCov.failedCount} failed
+                                    </span>
+                                  )}
+                                  {entry.caseCov.notRunCount > 0 && (
+                                    <span>{entry.caseCov.notRunCount} pending</span>
+                                  )}
                                   {entry.caseCov.redundantCount > 0 && (
                                     <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/25">
                                       {entry.caseCov.redundantCount} duplicate
@@ -849,10 +1132,29 @@ export default function UnitFileMatrixTable({
                                     const passed = isUnitTestPassed(tc);
                                     const failed = isUnitTestFailed(tc);
                                     const isDraft = tc.origin === "AI_DRAFT" && !tc.isApplied;
+                                    const diag = failed ? diagnoseUnitFailure(tc) : null;
                                     const failureSummary = failed
-                                      ? tc.failureSummary || summarizeUnitFailure(tc.failureMessages)
+                                      ? diag?.explanation ||
+                                        tc.failureSummary ||
+                                        summarizeUnitFailure(tc.failureMessages)
                                       : "";
                                     const tcSelKey = getUnitTestSelectionKey(tc, entry);
+                                    const tcCodeKey = `${tcSelKey}::${tcIdx}`;
+                                    const isCodeOpen = expandedCodeIds.has(tcCodeKey);
+                                    const isCodeLoading = loadingCodeKeys.has(tcCodeKey);
+                                    const tcFramework = String(
+                                      tc.framework || tc.suggestionObj?.framework || "",
+                                    )
+                                      .trim()
+                                      .toUpperCase();
+                                    const previewCode =
+                                      tc.code ||
+                                      fetchedCodeByKey[tcCodeKey] ||
+                                      tc.suggestionObj?.fullUpdatedContent ||
+                                      tc.suggestionObj?.suggestedTestCode ||
+                                      tc.suggestionObj?.generatedCode ||
+                                      "";
+                                    const canInspectCode = Boolean(previewCode || tc.testFile);
                                     const rawErr = Array.isArray(tc.failureMessages)
                                       ? tc.failureMessages.join("\n").trim()
                                       : "";
@@ -865,14 +1167,14 @@ export default function UnitFileMatrixTable({
                                               type="checkbox"
                                               checked={isSelected || selectedTestIds.has(tcSelKey) || selectedTestIds.has(tc.id)}
                                               onChange={() => toggleSelectTest(tcSelKey, entry, tc.id)}
-                                              className="rounded border-[var(--color-border)] accent-[var(--color-primary)] cursor-pointer shrink-0"
+                                              className="rounded border-[var(--color-border)] accent-[var(--color-text)] cursor-pointer shrink-0"
                                             />
                                             {passed ? (
-                                              <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
+                                              <CheckCircle2 size={14} className="text-[var(--color-text-secondary)] shrink-0" />
                                             ) : failed ? (
-                                              <XCircle size={14} className="text-rose-400 shrink-0" />
+                                              <XCircle size={14} className="text-[var(--color-text)] shrink-0" />
                                             ) : isDraft ? (
-                                              <Sparkles size={14} className="text-sky-400 shrink-0" />
+                                              <FileCode size={14} className="text-[var(--color-text-muted)] shrink-0" />
                                             ) : (
                                               <Clock size={14} className="text-[var(--color-text-muted)] shrink-0" />
                                             )}
@@ -886,21 +1188,19 @@ export default function UnitFileMatrixTable({
                                                   <span
                                                     title={
                                                       ann.badgeType === "DUPLICATE"
-                                                        ? `Another test already covers "${ann.caseLabel}" — safe to delete if redundant.`
-                                                        : ann.badgeType === "OPTIONAL"
-                                                          ? `Supplementary scenario outside this file's required cases.`
-                                                          : `Assigned to cover required case "${ann.caseLabel}".`
+                                                        ? `Another test already targets "${ann.functionLabel || "this module"}" — safe to delete if redundant.`
+                                                        : ann.functionLabel
+                                                          ? `Tests unit function ${ann.functionLabel}`
+                                                          : "Tests top-level module logic"
                                                     }
                                                     className={`px-1.5 py-0.5 rounded border ${
                                                       ann.badgeType === "DUPLICATE"
-                                                        ? "bg-amber-500/10 text-amber-400 border-amber-500/25"
-                                                        : ann.badgeType === "PRIMARY_PASS"
-                                                          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
-                                                          : ann.badgeType === "PRIMARY_FAIL"
-                                                            ? "bg-rose-500/10 text-rose-400 border-rose-500/25"
-                                                            : ann.badgeType === "OPTIONAL"
-                                                              ? "border-dashed border-[var(--color-border)] bg-transparent text-[var(--color-text-muted)]"
-                                                              : "bg-sky-500/10 text-sky-400 border-sky-500/25"
+                                                        ? "bg-amber-500/[0.08] text-amber-300/85 border-amber-500/20"
+                                                        : ann.badgeType === "PRIMARY_FAIL"
+                                                          ? "bg-rose-500/[0.08] text-rose-400/85 border-rose-500/20"
+                                                          : ann.badgeType === "OPTIONAL"
+                                                            ? "border-dashed border-[var(--color-border)] bg-transparent text-[var(--color-text-muted)]"
+                                                            : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
                                                     }`}
                                                   >
                                                     {ann.badgeLabel}
@@ -909,6 +1209,11 @@ export default function UnitFileMatrixTable({
                                                 <span className="px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text-secondary)]">
                                                   {isDraft ? "AI_DRAFT" : tc.origin || "PROJECT_EXISTING"}
                                                 </span>
+                                                {(tcFramework === "JEST" || tcFramework === "VITEST") && (
+                                                  <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
+                                                    {tcFramework}
+                                                  </span>
+                                                )}
                                                 {tc.testFile && (
                                                   <span className="text-[var(--color-text-muted)] truncate max-w-[220px]">
                                                     {tc.testFile}
@@ -925,46 +1230,20 @@ export default function UnitFileMatrixTable({
 
                                           {/* Scenario Action Buttons */}
                                           <div className="flex items-center gap-1 shrink-0">
-                                            {isDraft && tc.suggestionObj && onApplySingleDraft && (
-                                              <button
-                                                type="button"
-                                                onClick={() => onApplySingleDraft(tc.suggestionObj)}
-                                                disabled={isApplying || isRunning}
-                                                className="inline-flex items-center gap-1 px-2 py-1 rounded bg-emerald-600/90 hover:bg-emerald-500 text-white text-[11px] font-semibold transition-colors cursor-pointer disabled:opacity-50"
-                                                title="Apply this AI draft suite onto disk and verify"
-                                              >
-                                                <Check size={11} />
-                                                <span>Apply</span>
-                                              </button>
-                                            )}
-
                                             {failed && onAIFixTestCase && (
                                               <button
                                                 type="button"
                                                 onClick={() => onAIFixTestCase(tc, entry)}
                                                 disabled={fixingTestId === tc.id || isRunning}
-                                                className="inline-flex items-center gap-1 px-2 py-1 rounded border border-amber-500/35 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-[11px] font-medium transition-colors cursor-pointer disabled:opacity-50"
+                                                className="inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-muted)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] text-[11px] font-medium transition-colors cursor-pointer disabled:opacity-50"
                                                 title="Let AI diagnose & repair this failing unit test case"
                                               >
                                                 {fixingTestId === tc.id ? (
                                                   <Loader2 size={11} className="animate-spin" />
                                                 ) : (
-                                                  <Wand2 size={11} />
+                                                  <Code2 size={11} />
                                                 )}
                                                 <span>AI Fix</span>
-                                              </button>
-                                            )}
-
-                                            {onRunTestCase && (
-                                              <button
-                                                type="button"
-                                                onClick={() => onRunTestCase(tc, entry)}
-                                                disabled={isRunning}
-                                                className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer disabled:opacity-50"
-                                                title="Run only this unit test case"
-                                              >
-                                                <Play size={11} fill="currentColor" />
-                                                <span>Run</span>
                                               </button>
                                             )}
 
@@ -980,12 +1259,16 @@ export default function UnitFileMatrixTable({
                                               </button>
                                             )}
 
-                                            {tc.testFile && onOpenSourceFile && (
+                                            {canInspectCode && (
                                               <button
                                                 type="button"
-                                                onClick={() => onOpenSourceFile(tc.testFile, 1)}
-                                                className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer"
-                                                title="Open test file in IDE editor"
+                                                onClick={() => toggleCodePreview(tcCodeKey, tc)}
+                                                className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] transition-colors cursor-pointer ${
+                                                  isCodeOpen
+                                                    ? "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border-strong)]"
+                                                    : "text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)]"
+                                                }`}
+                                                title="Toggle inline unit test code preview"
                                               >
                                                 <Code2 size={11} />
                                                 <span>Code</span>
@@ -995,7 +1278,13 @@ export default function UnitFileMatrixTable({
                                             {onDeleteTestCase && (
                                               <button
                                                 type="button"
-                                                onClick={() => onDeleteTestCase(tc, entry)}
+                                                onClick={() =>
+                                                  setPendingDelete({
+                                                    kind: "single",
+                                                    tc,
+                                                    entry,
+                                                  })
+                                                }
                                                 disabled={isRunning}
                                                 className="p-1 rounded text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer disabled:opacity-50"
                                                 title="Delete this unit test case"
@@ -1006,19 +1295,93 @@ export default function UnitFileMatrixTable({
                                           </div>
                                         </div>
 
-                                        {/* Concise Summarized Failure Notice */}
-                                        {failed && (
-                                          <div className="ml-6 rounded border border-rose-500/25 bg-rose-500/5 px-3 py-2 text-[11px] space-y-1">
-                                            <div className="flex items-start gap-2 text-rose-300">
-                                              <AlertTriangle size={12} className="shrink-0 mt-0.5 text-rose-400" />
-                                              <span className="font-medium leading-snug">{failureSummary}</span>
+                                        {/* Inline Collapsible Code Preview Drawer (matches Integration Test UX) */}
+                                        {isCodeOpen && (
+                                          <div className="ml-6 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] overflow-hidden">
+                                            <div className="px-3 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)]/70 flex flex-wrap items-center justify-between gap-2 text-[10px] font-mono text-[var(--color-text-muted)]">
+                                              <div className="flex items-center gap-2 min-w-0">
+                                                <span className="truncate text-[var(--color-text-secondary)]">
+                                                  {tc.testFile || `${entry.filePath} (draft)`}
+                                                </span>
+                                                {(tcFramework === "JEST" || tcFramework === "VITEST") && (
+                                                  <span className="px-1.5 py-0.2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-[9px]">
+                                                    {tcFramework}
+                                                  </span>
+                                                )}
+                                              </div>
+                                              <div className="flex items-center gap-2 shrink-0">
+                                                {previewCode && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => handleCopyCode(tcCodeKey, previewCode)}
+                                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer"
+                                                  >
+                                                    <Copy size={10} />
+                                                    <span>{copiedCodeKey === tcCodeKey ? "Copied" : "Copy"}</span>
+                                                  </button>
+                                                )}
+                                                {tc.testFile && onOpenSourceFile && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => onOpenSourceFile(tc.testFile, 1)}
+                                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer"
+                                                  >
+                                                    <ExternalLink size={10} />
+                                                    <span>Open in Editor</span>
+                                                  </button>
+                                                )}
+                                              </div>
                                             </div>
+                                            {isCodeLoading ? (
+                                              <div className="p-3 flex items-center gap-2 text-[11px] font-mono text-[var(--color-text-muted)]">
+                                                <Loader2 size={12} className="animate-spin" />
+                                                <span>Loading test case source...</span>
+                                              </div>
+                                            ) : previewCode ? (
+                                              <pre className="p-3 overflow-x-auto font-mono text-[11px] leading-relaxed text-[var(--color-text-secondary)] whitespace-pre max-h-64">
+                                                {previewCode}
+                                              </pre>
+                                            ) : (
+                                              <div className="p-3 text-[11px] font-mono text-[var(--color-text-muted)]">
+                                                Test code snippet is not available inline. Use Open in Editor to view the full file.
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+
+                                        {/* Structured Failure Diagnosis Panel (mirrors Integration Test) */}
+                                        {failed && (
+                                          <div className="ml-6 rounded border border-rose-500/25 bg-rose-500/5 px-3 py-2 text-[11px] space-y-1.5">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <AlertTriangle size={12} className="shrink-0 text-rose-400" />
+                                              {diag?.label && (
+                                                <span className="px-1.5 py-0.2 rounded bg-rose-500/15 border border-rose-500/30 font-mono text-[10px] text-rose-300">
+                                                  {diag.label}
+                                                </span>
+                                              )}
+                                              {diag?.locationHint && (
+                                                <span className="font-mono text-[10px] text-[var(--color-text-muted)]">
+                                                  @ {diag.locationHint}
+                                                </span>
+                                              )}
+                                            </div>
+                                            <div className="text-rose-300 font-medium leading-snug">
+                                              {failureSummary}
+                                            </div>
+                                            {diag?.suggestedFix && (
+                                              <div className="text-[10px] text-[var(--color-text-secondary)] leading-relaxed">
+                                                <span className="font-mono text-[var(--color-text-muted)] mr-1">
+                                                  Suggested fix:
+                                                </span>
+                                                {diag.suggestedFix}
+                                              </div>
+                                            )}
                                             {rawErr && (
                                               <details className="text-[10px] text-[var(--color-text-muted)]">
                                                 <summary className="cursor-pointer hover:text-[var(--color-text-secondary)] select-none">
                                                   Technical details
                                                 </summary>
-                                                <pre className="mt-1.5 p-2 rounded bg-[#0B0F14] border border-[var(--color-border)] overflow-x-auto font-mono text-[10px] text-[var(--color-text-secondary)] whitespace-pre-wrap break-words max-h-40">
+                                                <pre className="mt-1.5 p-2 rounded bg-[var(--color-bg)] border border-[var(--color-border)] overflow-x-auto font-mono text-[10px] text-[var(--color-text-secondary)] whitespace-pre-wrap break-words max-h-40">
                                                   {rawErr}
                                                 </pre>
                                               </details>
@@ -1042,6 +1405,51 @@ export default function UnitFileMatrixTable({
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        isOpen={Boolean(pendingDelete)}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (!pendingDelete) return;
+          if (pendingDelete.kind === "bulk" && onBulkDeleteTestCases) {
+            onBulkDeleteTestCases(pendingDelete.items);
+            setSelectedFiles(new Set());
+            setSelectedTestIds(new Set());
+          } else if (pendingDelete.kind === "single" && onDeleteTestCase) {
+            onDeleteTestCase(pendingDelete.tc, pendingDelete.entry);
+          }
+          setPendingDelete(null);
+        }}
+        title={
+          pendingDelete?.kind === "bulk"
+            ? `Delete ${pendingDelete.items?.length || 0} Unit Test Cases`
+            : "Delete Unit Test Case"
+        }
+        message={
+          pendingDelete?.kind === "bulk"
+            ? "Are you sure you want to remove the selected unit test cases? Changes take effect when applied to test files."
+            : "Are you sure you want to remove this unit test case?"
+        }
+        confirmText="Delete"
+        variant="danger"
+        icon={Trash2}
+      >
+        {pendingDelete && (
+          <div className="px-3 py-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-xs text-[var(--color-text-secondary)] break-all">
+            {pendingDelete.kind === "bulk"
+              ? pendingDelete.items
+                  .slice(0, 3)
+                  .map((item) => item.title || item.testName)
+                  .join("\n") +
+                (pendingDelete.items.length > 3
+                  ? `\n+${pendingDelete.items.length - 3} more...`
+                  : "")
+              : pendingDelete.tc?.title || pendingDelete.tc?.testName}
+          </div>
+        )}
+      </ConfirmDialog>
     </div>
   );
-}
+});
+
+export default UnitFileMatrixTable;

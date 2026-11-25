@@ -1,10 +1,10 @@
 import PDFDocument from 'pdfkit';
 import { fileURLToPath } from 'node:url';
 import { runFor, must } from './management.service.js';
-import { hash, TERMINAL, fail } from './common.js';
+import { hash, TERMINAL, fail, isBehaviorOnly } from './common.js';
 import { readEvidencePayload } from './artifactStore.service.js';
 import { aggregationInputs } from './evaluator.service.js';
-import { aggregateTrustProfile, computeCohensKappa, computeWilsonInterval } from './scoring.service.js';
+import { aggregateTrustProfile, computeCohensKappa, computeWilsonInterval, representativeScore } from './scoring.service.js';
 import { binaryAgreement, calibrationByCriterion, correctedPassRate, judgeVersionOf } from './calibrationStats.js';
 import { KEY_FACTS_CRITERION } from './keyFacts.js';
 
@@ -95,12 +95,18 @@ export async function getRunReport(db, projectId, runId) {
             evidence: { orderBy: { createdAt: 'asc' } },
         },
     });
+    const profileVersion = run.profileVersionId && await db.aiEvaluationProfileVersion?.findUnique?.({
+        where: { id: run.profileVersionId },
+        select: { sourceManifest: true },
+    });
+    const groundingMode = isBehaviorOnly(profileVersion?.sourceManifest) ? 'BEHAVIOR' : 'DOCUMENTS';
     const { leaseToken, leaseUntil, ...report } = run;
     report.evidence = await Promise.all(
         report.evidence.map(async e => ({ ...e, payload: await readEvidencePayload(projectId, runId, e.payload) })),
     );
     const knowledgeProbeSkipped = Boolean(
-        report.manifest?.skipKnowledgeProbe || report.summary?.knowledgeProbe?.status === 'SKIPPED_BY_USER',
+        report.summary?.knowledgeProbe?.status !== 'NOT_APPLICABLE'
+        && (report.manifest?.skipKnowledgeProbe || report.summary?.knowledgeProbe?.status === 'SKIPPED_BY_USER'),
     );
     const unverifiedReferenceCount = report.cases.filter(c => c.testCase?.definition?.referenceUnverified === true).length;
     const errorCriteriaCount = report.cases.flatMap(c => c.criteria).filter(r => r.status === 'ERROR').length;
@@ -133,8 +139,11 @@ export async function getRunReport(db, projectId, runId) {
         ...(errorCriteriaCount > 0
             ? [`${errorCriteriaCount} evaluation criterion/criteria encountered an execution or Judge error (status: ERROR); overall verdict cannot be PASSED and is marked INCOMPLETE unless a blocking safety gate failed.`]
             : []),
-        ...(unverifiedReferenceCount > 0
+        ...(groundingMode === 'DOCUMENTS' && unverifiedReferenceCount > 0
             ? [`${unverifiedReferenceCount} scenario(s) had unverified source quotes cleared (referenceUnverified: true) because the generated excerpt was not found in the loaded knowledge documents.`]
+            : []),
+        ...(groundingMode === 'BEHAVIOR'
+            ? ['This chatbot has no documents: answers were graded by its role and expected behaviour, not by document facts.']
             : []),
         EVALUATION_DISCLAIMER,
         'Results apply to the frozen benchmark and observed target responses.',
@@ -160,6 +169,7 @@ export async function getRunReport(db, projectId, runId) {
     }
     return {
         ...report,
+        groundingMode,
         judgeCorrection,
         oracleAgreement,
         knowledgeProbeSkipped,
@@ -351,7 +361,11 @@ export function renderEvaluationPdf(report) {
         const unverifiedLine = report.unverifiedReferenceCount > 0
             ? `\nUnverified Source Quotes Removed: ${report.unverifiedReferenceCount}`
             : '';
-        doc.moveDown().fontSize(10).text(`Run: ${report.id}\nExecution: ${report.executionStatus}\nVerdict: ${report.verdict}\nScore: ${report.summary?.score ?? 'N/A'}${report.summary?.partial ? ' (partial)' : ''}\nCompleteness: ${report.summary?.completeness?.scored ?? 0}/${report.summary?.completeness?.applicable ?? 0}${passRateLine}${stabilityLine}${latencyLine}${probeLine}${errorLine}${unverifiedLine}`);
+        const score = representativeScore(report.summary);
+        const scoreNote = score.hidden
+            ? ` (only ${score.scored} of ${score.applicable} checks graded)`
+            : report.summary?.partial ? ' (partial)' : '';
+        doc.moveDown().fontSize(10).text(`Run: ${report.id}\nExecution: ${report.executionStatus}\nVerdict: ${report.verdict}\nScore: ${score.value ?? 'N/A'}${scoreNote}\nCompleteness: ${score.scored}/${score.applicable}${passRateLine}${stabilityLine}${latencyLine}${probeLine}${errorLine}${unverifiedLine}`);
         for (const limitation of report.limitations) doc.moveDown().text(limitation);
         for (const c of report.cases) {
             doc.addPage().fontSize(13).text(`${c.testCase.caseKey}: ${c.testCase.definition.title}`);

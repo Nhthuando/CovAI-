@@ -15,7 +15,7 @@ import {
   ChevronRight,
   MoreHorizontal,
   Search,
-  Sparkles,
+  Code2,
   Folder,
   FolderOpen,
   Filter,
@@ -28,7 +28,6 @@ import {
   Clock,
   ArrowRight,
   FileCode,
-  Zap,
   AlertCircle,
 } from "lucide-react";
 
@@ -42,13 +41,16 @@ function getAuthHeaders() {
   };
 }
 
+const NEUTRAL_CHIP =
+  "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]";
+
 const METHOD_STYLES = {
-  GET: "bg-blue-500/10 text-blue-500 dark:text-blue-400 border-blue-500/20",
-  POST: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
-  PUT: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
-  PATCH: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
-  DELETE: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
-  DEFAULT: "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
+  GET: "bg-[var(--color-bg)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
+  POST: "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border-[var(--color-border-strong)]",
+  PUT: NEUTRAL_CHIP,
+  PATCH: NEUTRAL_CHIP,
+  DELETE: "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border-[var(--color-border)]",
+  DEFAULT: NEUTRAL_CHIP,
 };
 
 const METHOD_ORDER = {
@@ -98,7 +100,7 @@ export function getScenarioClassification(scenario) {
       priority: 5,
       category: "resiliency",
       label: "P3 • Resiliency",
-      badgeStyle: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
+      badgeStyle: "bg-rose-500/[0.07] text-rose-400/85 border-rose-500/20",
     };
   }
 
@@ -113,7 +115,7 @@ export function getScenarioClassification(scenario) {
       priority: 4,
       category: "edge_case",
       label: "P2 • Edge Case",
-      badgeStyle: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
+      badgeStyle: NEUTRAL_CHIP,
     };
   }
 
@@ -130,7 +132,7 @@ export function getScenarioClassification(scenario) {
       priority: 2,
       category: "security",
       label: "P1 • Security",
-      badgeStyle: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
+      badgeStyle: NEUTRAL_CHIP,
     };
   }
 
@@ -149,7 +151,7 @@ export function getScenarioClassification(scenario) {
       priority: 3,
       category: "validation",
       label: "P1 • Validation",
-      badgeStyle: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+      badgeStyle: NEUTRAL_CHIP,
     };
   }
 
@@ -165,7 +167,7 @@ export function getScenarioClassification(scenario) {
       priority: 4,
       category: "edge_case",
       label: "P2 • Edge Case",
-      badgeStyle: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
+      badgeStyle: NEUTRAL_CHIP,
     };
   }
 
@@ -180,7 +182,7 @@ export function getScenarioClassification(scenario) {
       priority: 1,
       category: "happy_path",
       label: "P0 • Happy Path",
-      badgeStyle: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+      badgeStyle: NEUTRAL_CHIP,
     };
   }
 
@@ -189,7 +191,7 @@ export function getScenarioClassification(scenario) {
     priority: 10,
     category: "other",
     label: "P2 • Scenario",
-    badgeStyle: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20",
+    badgeStyle: NEUTRAL_CHIP,
   };
 }
 
@@ -199,7 +201,7 @@ export function getScenarioOrigin(scenario) {
       type: "USER_ADDED",
       badge: "A",
       label: "User Added",
-      badgeStyle: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
+      badgeStyle: NEUTRAL_CHIP,
       tooltip: "User Added • Custom scenario created manually",
     };
   }
@@ -209,7 +211,7 @@ export function getScenarioOrigin(scenario) {
       type: "USER_MODIFIED",
       badge: "M",
       label: "User Modified",
-      badgeStyle: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30",
+      badgeStyle: NEUTRAL_CHIP,
       tooltip: `User Modified • Scenario code modified by user${origInfo}`,
     };
   }
@@ -222,7 +224,7 @@ export function getScenarioOrigin(scenario) {
       type: "PROJECT_EXISTING",
       badge: "P",
       label: "Project Existing",
-      badgeStyle: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30",
+      badgeStyle: NEUTRAL_CHIP,
       tooltip: "Project Existing • Discovered from codebase integration test files",
     };
   }
@@ -230,7 +232,7 @@ export function getScenarioOrigin(scenario) {
     type: "AI_GENERATED",
     badge: "AI",
     label: "CovAI Baseline",
-    badgeStyle: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
+    badgeStyle: NEUTRAL_CHIP,
     tooltip: "CovAI Baseline • Generated automatically during initial AI analysis",
   };
 }
@@ -1048,8 +1050,8 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
 
     return (
       <div className="p-8 text-center flex flex-col items-center justify-center min-h-[400px] gap-6 text-[var(--color-text-secondary)] font-sans max-w-2xl mx-auto">
-        <div className="w-12 h-12 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center mb-1">
-          <Sparkles size={22} />
+        <div className="w-11 h-11 rounded-lg bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] flex items-center justify-center mb-1">
+          <FileCode size={20} />
         </div>
         <div className="text-xs max-w-md space-y-2">
           <p className="font-semibold text-sm text-[var(--color-text)]">
@@ -1064,9 +1066,9 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
                 type="button"
                 onClick={onReGenerateSelected}
                 disabled={!canGenerate || isGenerating}
-                className="px-4 py-2 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer inline-flex items-center gap-2 shadow-sm disabled:opacity-50"
+                className="px-4 py-2 rounded-md bg-[var(--color-text)] text-[var(--color-bg)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer inline-flex items-center gap-2 disabled:opacity-50"
               >
-                <Sparkles size={14} />
+                <Plus size={14} />
                 <span>{isGenerating ? "Generating Scenarios..." : "Generate Test Scenarios"}</span>
               </button>
             </div>
@@ -1075,17 +1077,17 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
 
         {/* Generation & Execution History */}
         {recentHistory.length > 0 && (
-          <div className="w-full mt-4 p-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] text-left shadow-xs space-y-3 animate-in fade-in duration-200">
+          <div className="w-full mt-4 p-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-left space-y-3 animate-in fade-in duration-200">
             <div className="flex items-center justify-between pb-2 border-b border-[var(--color-border)]">
               <div className="flex items-center gap-2 text-xs font-semibold text-[var(--color-text)]">
-                <Clock size={14} className="text-[var(--color-primary)]" />
+                <Clock size={14} className="text-[var(--color-text-secondary)]" />
                 <span>Recent Generation & Execution History</span>
               </div>
               {onOpenHistory && (
                 <button
                   type="button"
                   onClick={onOpenHistory}
-                  className="text-[11px] text-[var(--color-primary)] hover:underline flex items-center gap-1 font-medium cursor-pointer"
+                  className="text-[11px] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:underline flex items-center gap-1 font-medium cursor-pointer"
                 >
                   <span>View Full History</span>
                   <ArrowRight size={11} />
@@ -1108,12 +1110,10 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
                   </div>
                   <div className="flex items-center gap-2">
                     <span
-                      className={`text-[10px] px-2 py-0.5 rounded font-mono font-bold border ${
-                        item.status === "SUCCESS" || item.status === "PASSED"
-                          ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                          : item.status === "FAILED"
-                          ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
-                          : "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
+                      className={`text-[10px] px-2 py-0.5 rounded-md font-mono font-medium border ${
+                        item.status === "FAILED"
+                          ? "bg-rose-500/[0.06] text-rose-300/85 border-rose-500/20"
+                          : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
                       }`}
                     >
                       {item.status || "COMPLETED"}
@@ -1322,10 +1322,10 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
             <button
               type="button"
               onClick={() => setActiveTypeFilter("UNCOVERED")}
-              className={`px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
+              className={`px-2 py-0.5 rounded-md text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
                 activeTypeFilter === "UNCOVERED"
-                  ? "bg-amber-600 text-white border-transparent"
-                  : "bg-[var(--color-surface)] text-amber-600 dark:text-amber-400 border-[var(--color-border)] hover:bg-amber-500/10"
+                  ? "bg-[var(--color-text)] text-[var(--color-bg)] border-transparent"
+                  : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-text)]"
               }`}
               title="Endpoints without any test scenarios (Uncovered APIs)"
             >
@@ -1339,10 +1339,10 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
             <button
               type="button"
               onClick={() => setActiveTypeFilter("FAILED")}
-              className={`px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
+              className={`px-2 py-0.5 rounded-md text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
                 activeTypeFilter === "FAILED"
-                  ? "bg-rose-600 text-white border-transparent"
-                  : "bg-[var(--color-surface)] text-rose-600 dark:text-rose-400 border-[var(--color-border)] hover:bg-rose-500/10"
+                  ? "bg-[var(--color-text)] text-[var(--color-bg)] border-transparent"
+                  : "bg-[var(--color-surface)] text-rose-300/85 border-[var(--color-border)] hover:border-rose-500/30"
               }`}
               title="Scenarios that failed during test execution"
             >
@@ -1356,10 +1356,10 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
             <button
               type="button"
               onClick={() => setActiveTypeFilter("PASSED")}
-              className={`px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
+              className={`px-2 py-0.5 rounded-md text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
                 activeTypeFilter === "PASSED"
-                  ? "bg-emerald-600 text-white border-transparent"
-                  : "bg-[var(--color-surface)] text-emerald-600 dark:text-emerald-400 border-[var(--color-border)] hover:bg-emerald-500/10"
+                  ? "bg-[var(--color-text)] text-[var(--color-bg)] border-transparent"
+                  : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-text)]"
               }`}
               title="Scenarios that passed during test execution"
             >
@@ -1373,10 +1373,10 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
             <button
               type="button"
               onClick={() => setActiveTypeFilter("EXISTING")}
-              className={`px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
+              className={`px-2 py-0.5 rounded-md text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
                 activeTypeFilter === "EXISTING"
-                  ? "bg-blue-600 text-white border-transparent"
-                  : "bg-[var(--color-surface)] text-blue-600 dark:text-blue-400 border-[var(--color-border)] hover:bg-blue-500/10"
+                  ? "bg-[var(--color-text)] text-[var(--color-bg)] border-transparent"
+                  : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-text)]"
               }`}
               title="Scenarios discovered from codebase test files"
             >
@@ -1389,14 +1389,14 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
           <button
             type="button"
             onClick={() => setActiveTypeFilter("AI")}
-            className={`px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
+            className={`px-2 py-0.5 rounded-md text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
               activeTypeFilter === "AI"
-                ? "bg-purple-600 text-white border-transparent"
-                : "bg-[var(--color-surface)] text-purple-600 dark:text-purple-400 border-[var(--color-border)] hover:bg-purple-500/10"
+                ? "bg-[var(--color-text)] text-[var(--color-bg)] border-transparent"
+                : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-text)]"
             }`}
             title="Baseline scenarios generated automatically by CovAI"
           >
-            <Sparkles size={11} />
+            <Code2 size={11} />
             <span>AI Baseline</span>
             <span className="font-mono text-[10px] opacity-80">({filterCounts.ai})</span>
           </button>
@@ -1404,10 +1404,10 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
           <button
             type="button"
             onClick={() => setActiveTypeFilter("ADDED")}
-            className={`px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
+            className={`px-2 py-0.5 rounded-md text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
               activeTypeFilter === "ADDED"
-                ? "bg-emerald-600 text-white border-transparent"
-                : "bg-[var(--color-surface)] text-emerald-600 dark:text-emerald-400 border-[var(--color-border)] hover:bg-emerald-500/10"
+                ? "bg-[var(--color-text)] text-[var(--color-bg)] border-transparent"
+                : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-text)]"
             }`}
             title="Custom scenarios created manually by user"
           >
@@ -1419,14 +1419,13 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
           <button
             type="button"
             onClick={() => setActiveTypeFilter("MODIFIED")}
-            className={`px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
+            className={`px-2 py-0.5 rounded-md text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
               activeTypeFilter === "MODIFIED"
-                ? "bg-amber-600 text-white border-transparent"
-                : "bg-[var(--color-surface)] text-amber-600 dark:text-amber-400 border-[var(--color-border)] hover:bg-amber-500/10"
+                ? "bg-[var(--color-text)] text-[var(--color-bg)] border-transparent"
+                : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-text)]"
             }`}
             title="AI scenarios modified by user"
           >
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
             <span>Modified</span>
             <span className="font-mono text-[10px] opacity-80">({filterCounts.modified})</span>
           </button>
@@ -1434,13 +1433,12 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
           <button
             type="button"
             onClick={() => setActiveTypeFilter("HAPPY_PATH")}
-            className={`px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
+            className={`px-2 py-0.5 rounded-md text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
               activeTypeFilter === "HAPPY_PATH"
-                ? "bg-emerald-600 text-white border-transparent"
-                : "bg-[var(--color-surface)] text-emerald-600 dark:text-emerald-400 border-[var(--color-border)] hover:bg-emerald-500/10"
+                ? "bg-[var(--color-text)] text-[var(--color-bg)] border-transparent"
+                : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-text)]"
             }`}
           >
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
             <span>Happy Path</span>
             <span className="font-mono text-[10px] opacity-80">({filterCounts.happy})</span>
           </button>
@@ -1448,13 +1446,12 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
           <button
             type="button"
             onClick={() => setActiveTypeFilter("VALIDATION")}
-            className={`px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
+            className={`px-2 py-0.5 rounded-md text-[11px] font-medium border transition-colors cursor-pointer flex items-center gap-1 ${
               activeTypeFilter === "VALIDATION"
-                ? "bg-amber-600 text-white border-transparent"
-                : "bg-[var(--color-surface)] text-amber-600 dark:text-amber-400 border-[var(--color-border)] hover:bg-amber-500/10"
+                ? "bg-[var(--color-text)] text-[var(--color-bg)] border-transparent"
+                : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-text)]"
             }`}
           >
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
             <span>Edge & Errors</span>
             <span className="font-mono text-[10px] opacity-80">({filterCounts.validation})</span>
           </button>
@@ -1564,12 +1561,12 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
                 type="button"
                 onClick={() => onReGenerateSelected && onReGenerateSelected()}
                 disabled={isGenerating}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs disabled:opacity-50"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-[var(--color-text)] text-[var(--color-bg)] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50"
               >
                 {isGenerating ? (
                   <RefreshCw size={12} className="animate-spin" />
                 ) : (
-                  <Sparkles size={12} />
+                  <Plus size={12} />
                 )}
                 <span>{isGenerating ? "Synthesizing Scenarios..." : "Generate Test Scenarios"}</span>
               </button>
@@ -1716,14 +1713,14 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
                                 {/* Endpoint Coverage / Pass / Fail Badge */}
                                 {isUncoveredEndpoint ? (
                                   <span
-                                    className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 shrink-0"
+                                    className="px-1.5 py-0.5 rounded-md text-[10px] font-mono font-medium bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)] shrink-0"
                                     title="Chưa có testcase cho endpoint này"
                                   >
                                     Uncovered (0 tests)
                                   </span>
                                 ) : epFailedCount > 0 ? (
                                   <span
-                                    className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 shrink-0 flex items-center gap-1"
+                                    className="px-1.5 py-0.5 rounded-md text-[10px] font-mono font-medium bg-[var(--color-surface-secondary)] text-rose-300/85 border border-[var(--color-border)] shrink-0 flex items-center gap-1"
                                     title={`${epFailedCount} kịch bản thất bại`}
                                   >
                                     <XCircle size={10} />
@@ -1733,7 +1730,7 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
                                   </span>
                                 ) : epPassedCount > 0 ? (
                                   <span
-                                    className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shrink-0 flex items-center gap-1"
+                                    className="px-1.5 py-0.5 rounded-md text-[10px] font-mono font-medium bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] shrink-0 flex items-center gap-1"
                                     title={`Tất cả ${epPassedCount} kịch bản đã chạy đều Pass`}
                                   >
                                     <CheckCircle2 size={10} />
@@ -1745,7 +1742,7 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
                               <div className="flex items-center gap-2 shrink-0 text-xs">
                                 {isEpCollapsed && hasEpEmphasized && (
                                   <span
-                                    className="w-2 h-2 rounded-full bg-amber-400 dark:bg-amber-400/90 shrink-0 shadow-xs ring-2 ring-amber-400/20"
+                                    className="w-1.5 h-1.5 rounded-full bg-[var(--color-text-secondary)] shrink-0"
                                     title="Contains emphasized items"
                                   />
                                 )}
@@ -1764,17 +1761,17 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
                                         onGenerateThisEndpoint(epKey);
                                       }}
                                       disabled={!canGenerate || isGenerating}
-                                      className={`px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors cursor-pointer disabled:opacity-50 ${
+                                      className={`px-2 py-0.5 rounded-md text-[10px] font-medium flex items-center gap-1 border transition-colors cursor-pointer disabled:opacity-50 ${
                                         isUncoveredEndpoint
-                                          ? "bg-[var(--color-primary)]/15 text-[var(--color-primary)] border-[var(--color-primary)]/30 hover:bg-[var(--color-primary)] hover:text-white"
-                                          : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)]/30"
+                                          ? "bg-[var(--color-text)] text-[var(--color-bg)] border-transparent hover:opacity-90"
+                                          : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-text)]"
                                       }`}
                                       title={`Sinh kịch bản kiểm thử AI cho ${epKey}`}
                                     >
                                       {isGenerating && generatingEndpointKey === epKey ? (
-                                        <RefreshCw size={11} className="animate-spin text-[var(--color-primary)]" />
+                                        <RefreshCw size={11} className="animate-spin text-[var(--color-text-secondary)]" />
                                       ) : (
-                                        <Zap size={11} className="text-amber-500" />
+                                        <Plus size={11} />
                                       )}
                                       <span>{isUncoveredEndpoint ? "Generate Test" : "Generate AI"}</span>
                                     </button>
@@ -1831,12 +1828,12 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
                                             onGenerateThisEndpoint(epKey);
                                           }}
                                           disabled={!canGenerate || isGenerating}
-                                          className="px-2.5 py-1 rounded text-[11px] font-semibold bg-[var(--color-primary)] text-white hover:opacity-90 transition-opacity flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-2xs"
+                                          className="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-[var(--color-text)] text-[var(--color-bg)] hover:opacity-90 transition-opacity flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                                         >
                                           {isGenerating && generatingEndpointKey === epKey ? (
                                             <RefreshCw size={11} className="animate-spin" />
                                           ) : (
-                                            <Zap size={11} />
+                                            <Plus size={11} />
                                           )}
                                           <span>Generate Testcase</span>
                                         </button>
@@ -1992,13 +1989,12 @@ describe('${scenario.suiteName || scenario.targetEndpoint || ""}', () => {
                                           {/* Telemetry Badge if AI generated */}
                                           {scenario.telemetry && (
                                             <span
-                                              className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shrink-0 inline-flex items-center gap-1"
+                                              className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] shrink-0 inline-flex items-center gap-1 tabular-nums"
                                               title={`AI Generation: ${scenario.telemetry.durationSeconds || "0.0"}s · ${scenario.telemetry.tokens || 0} tokens`}
                                             >
                                               <Clock size={9} />
                                               <span>{scenario.telemetry.durationSeconds}s</span>
                                               <span className="opacity-40">•</span>
-                                              <Zap size={9} className="text-amber-400" />
                                               <span>{scenario.telemetry.tokens} tok</span>
                                             </span>
                                           )}

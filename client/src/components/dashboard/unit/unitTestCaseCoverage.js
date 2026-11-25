@@ -6,10 +6,12 @@ export {
   isUnitTestFailed,
   getTestableUnitFunctions,
   matchUnitTestToFunction,
+  matchUnitTestToFunctions,
   classifyUnitTestCase,
   getRequiredUnitCasesForFile,
   getFileUnitFunctionCoverage,
   annotateFileUnitTests,
   getFileUnitCaseCoverage,
   summarizeUnitFailure,
+  diagnoseUnitFailure,
 } from "../../../../../shared/unitTestCaseCoverage.js";

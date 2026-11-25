@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Check, Loader2, Square } from 'lucide-react';
 import { Button } from '../../ui/button';
 import ConfirmDialog from '../../common/ConfirmDialog';
@@ -12,8 +12,33 @@ const steps = [
   ['Shutting down', ['SHUTTING_DOWN']],
 ];
 
+const secondsUntil = iso => Math.max(0, Math.ceil((Date.parse(iso) - Date.now()) / 1000)) || 0;
+
+function RateLimitCountdown({ until }) {
+  const [seconds, setSeconds] = useState(() => secondsUntil(until));
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const left = secondsUntil(until);
+      setSeconds(left);
+      if (left === 0) clearInterval(interval);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [until]);
+  if (!seconds) return null;
+  return (
+    <p className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
+      <span aria-hidden="true" className="relative flex size-2.5 shrink-0">
+        <span className="absolute inline-flex size-full animate-ping rounded-full bg-sky-400 opacity-70" />
+        <span className="relative inline-flex size-2.5 rounded-full bg-sky-500" />
+      </span>
+      <span>Waiting for your chatbot's AI request limit to reset (about {seconds} s)</span>
+    </p>
+  );
+}
+
 export default function RunProgress({ run, progress, api, act, busy }) {
   const [confirm, setConfirm] = useState(false);
+  const waitingUntil = progress?.waitingReason === 'RATE_LIMIT' ? progress.waitingUntil : undefined;
   const completed = progress?.completed ?? 0;
   const total = progress?.total ?? 0;
   const active = steps.findIndex(([, phases]) => phases.includes(progress?.phase));
@@ -45,6 +70,7 @@ export default function RunProgress({ run, progress, api, act, busy }) {
             <div className="h-full bg-sky-400 transition-all duration-500" style={{ width: `${percent}%` }} />
           </div>
           {current && <p className="truncate text-xs text-[var(--color-text-muted)]">Now: {current}</p>}
+          {waitingUntil && <RateLimitCountdown key={waitingUntil} until={waitingUntil} />}
         </div>
       </div>
       <ol aria-label="Evaluation phases" className="p-5">

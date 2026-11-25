@@ -47,7 +47,7 @@ import {
 /**
  * Ensure project and subproject dependencies (e.g. server/node_modules) are installed.
  */
-const ensureProjectDependencies = async (jobId, rootDir) => {
+export const ensureProjectDependencies = async (jobId, rootDir) => {
   const candidates = [
     rootDir,
     path.join(rootDir, "server"),
@@ -415,8 +415,7 @@ export const prepareExpressEntriesForSupertest = async (rootDir) => {
         if (
           Array.isArray(node.specifiers) &&
           node.specifiers.some(
-            (s) =>
-              s.exported?.name === "app" || s.exported?.name === "default",
+            (s) => s.exported?.name === "app" || s.exported?.name === "default",
           )
         ) {
           if (node.specifiers.some((s) => s.exported?.name === "default")) {
@@ -1379,13 +1378,20 @@ export const processSupertestCoverageJob = async (jobId) => {
       }),
     );
     const coverageReport = JSON.parse(fs.readFileSync(finalPath, "utf8"));
-    await withOperationPublishGuard(() =>
+    // A unit run owns business-logic rows in the shared coverage tables.
+    const unitRun = await prisma.testRun.findFirst({
+      where: { snapshotId, type: { in: ["JEST", "VITEST"] } },
+      select: { id: true },
+    });
+    const preserveUnitRows = Boolean(unitRun);
+    const integrationFiles = await withOperationPublishGuard(() =>
       parseCoverageFilesForSnapshot({
         projectId,
         snapshotId,
         coverageReport,
         userId,
         testType: "INTEGRATION",
+        preserveUnitRows,
       }),
     );
     await withOperationPublishGuard(() =>
@@ -1394,6 +1400,7 @@ export const processSupertestCoverageJob = async (jobId) => {
         snapshotId,
         coverageReport,
         userId,
+        preserveUnitRows,
       }),
     );
 
@@ -1406,7 +1413,58 @@ export const processSupertestCoverageJob = async (jobId) => {
       coverageDir,
     );
 
+    const allSuitesFailedAtLoad =
+      runResult.exitCode !== 0 &&
+      Boolean(
+        supertestResults &&
+          (supertestResults.allSuitesFailedToLoad ||
+            (supertestResults.scenarios?.length > 0 &&
+              supertestResults.scenarios.every((s) => s.isSuiteLevelFailure))),
+      );
+
+    if (allSuitesFailedAtLoad) {
+      const firstFailText =
+        supertestResults.scenarios?.[0]?.failureSummary ||
+        String(supertestResults.scenarios?.[0]?.failureMessages?.[0] || "")
+          .split(/\r?\n/)
+          .find((l) => /Error:|ReferenceError:|SyntaxError:|TypeError:|Cannot find module/i.test(l)) ||
+        "All integration test suites crashed during Jest module loading (0 assertions executed).";
+      const conciseReason = firstFailText.trim().slice(0, 300);
+
+      try {
+        const { invalidateCoverageCache } =
+          await import("../controllers/coverage.controller.js");
+        invalidateCoverageCache(snapshotId);
+        const { invalidateEndpointCache } =
+          await import("./integrationWorkspace.service.js");
+        invalidateEndpointCache(snapshotId, rootDir);
+      } catch (_) {}
+
+      try {
+        import("./dashboardEvents.service.js")
+          .then(({ emitDashboardRunStatus }) => {
+            emitDashboardRunStatus(projectId, {
+              snapshotId,
+              jobId,
+              pillar: "integration",
+              status: "FAILED",
+              message: conciseReason,
+            }).catch(() => {});
+          })
+          .catch(() => {});
+      } catch (_) {}
+
+      throw new ServiceError(
+        `Integration test suites failed to load (${supertestResults.scenarios.length} suite failure(s)): ${conciseReason}`,
+        422,
+      );
+    }
+
     await markJobSuccess(jobId, {
+      fileCoverages: (integrationFiles?.files || []).map(
+        ({ filePath, linesPct, branchesPct, funcsPct, stmtsPct }) =>
+          ({ filePath, linesPct, branchesPct, funcsPct, stmtsPct }),
+      ),
       coverage: {
         lines: summaryResult.total.lines.pct,
         branches: summaryResult.total.branches.pct,

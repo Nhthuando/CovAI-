@@ -171,7 +171,7 @@ describe('Chatbot Evaluation MVP-4 backend', () => {
 
     afterAll(async () => { await harness?.close(); });
 
-    async function createRuleRun(name, count = 1, repetitions = 1, withTools = false) {
+    async function createRuleRun(name, count = 1, repetitions = 1, withTools = false, skipKnowledgeProbe = true) {
         const profile = await management.createProfile(db, project.id, name);
         const versionId = profile.versions[0].id;
         const definition = parse(definitionSchema, {
@@ -197,7 +197,7 @@ describe('Chatbot Evaluation MVP-4 backend', () => {
         });
         const run = await management.createRun(db, project.id, owner.id, {
             targetVersionId: target.versionId, profileVersionId: approved.id,
-            idempotencyKey: name, skipKnowledgeProbe: true,
+            idempotencyKey: name, skipKnowledgeProbe,
         }, { enqueue });
         if (withTools) {
             // These rule cases never invoke tools. The definition flag selects the sequential runner.
@@ -416,6 +416,40 @@ describe('Chatbot Evaluation MVP-4 backend', () => {
             const { payload } = await db.aiEvaluationEvidence.findFirst({ where: { runId: run.id, kind: 'CONVERSATION' } });
             expect(payload.errorCode).toBeNull();
             expect(Math.abs(payload.latencyMs - payload.responses[0].latencyMs)).toBeLessThan(10);
+        }, 60000);
+
+        test.each([
+            ['with the knowledge probe bypassed', 'mvp4-wrapped-rate-limit', true],
+            ['for an external target without sources', 'mvp4-wrapped-rate-limit-no-sources', false],
+        ])('recovers evaluation cases after three chatbot HTTP 500 quota errors %s', async (_scenario, name, skipKnowledgeProbe) => {
+            const { run } = await createRuleRun(name, 3, 1, false, skipKnowledgeProbe);
+            const targetBody = JSON.stringify({
+                success: false,
+                error: '[GoogleGenerativeAI Error]: [429 Too Many Requests] You exceeded your current quota, please check your plan and billing details. [{"quotaId":"GenerateRequestsPerMinutePerProjectPerModel-FreeTier","quotaValue":"15"},{"retryDelay":"37s"}]',
+            });
+            const turnExecutor = jest.fn(async () => ({ answer: 'OK', latencyMs: 0 }));
+            for (let hit = 0; hit < 3; hit++) {
+                turnExecutor.mockImplementationOnce(async () => {
+                    const error = Object.assign(new Error('Your chatbot returned HTTP 500'), {
+                        code: 'TARGET_HTTP_ERROR',
+                        details: { targetStatus: 500 },
+                    });
+                    throw Object.defineProperty(error, 'targetBody', { value: targetBody });
+                });
+            }
+
+            await processEvaluation(run.jobId, { db, turnExecutor });
+
+            expect(turnExecutor).toHaveBeenCalledTimes(6);
+            const cases = await db.aiEvaluationCaseResult.findMany({
+                where: { runId: run.id }, select: { executionStatus: true },
+            });
+            expect(cases.map(result => result.executionStatus)).toEqual(Array(3).fill('COMPLETED'));
+            const { executionStatus, summary } = await db.aiEvaluationRun.findUnique({ where: { id: run.id }, select: { executionStatus: true, summary: true } });
+            expect(executionStatus).toBe('COMPLETED');
+            expect(summary.rateLimit.hits).toBe(3);
+            expect(summary.rateLimit.waitedMs).toBeGreaterThanOrEqual(38_500);
+            expect(summary.rateLimit.dailyQuota).toBe(false);
         }, 60000);
 
         test('does not retry target timeouts', async () => {

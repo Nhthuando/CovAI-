@@ -8,6 +8,7 @@ import { buttonClass, inputClass } from './evaluationTheme';
 export default function KnowledgeSources({ data, api, act, busy }) {
   const [name, setName] = useState('');
   const [content, setContent] = useState('');
+  const [description, setDescription] = useState('');
   const [snapshotId, setSnapshotId] = useState(data.designAudit?.snapshotId || '');
   const [filePath, setFilePath] = useState('');
   const [adding, setAdding] = useState(false);
@@ -15,8 +16,8 @@ export default function KnowledgeSources({ data, api, act, busy }) {
   const inputRef = useRef(null);
   const [selectedFile, setSelectedFile] = useState(null);
   const docs = data.designAudit?.summary?.candidateDocs || [];
-  const openPanel = () => {
-    setMethod('upload');
+  const openPanel = (nextMethod = 'upload') => {
+    setMethod(nextMethod);
     setSelectedFile(null);
     setAdding(true);
   };
@@ -27,15 +28,23 @@ export default function KnowledgeSources({ data, api, act, busy }) {
           const ready = source.status === 'READY';
           const failed = source.status === 'FAILED';
           const size = source.sizeBytes ?? source.size;
+          const isProfile = source.provenance?.type === 'CHATBOT_PROFILE';
+          const files = isProfile ? source.provenance.files || [] : [];
           return (
             <li key={source.id} className="flex flex-wrap items-center gap-3 px-4 py-3 transition-colors duration-150 hover:bg-[var(--color-surface-secondary)]/50">
               <FileText aria-hidden="true" className="size-4 shrink-0 text-[var(--color-text-muted)]" />
               <span className="min-w-0 flex-1">
                 <span className="block break-words text-sm font-medium">{source.name}</span>
+                {files.length > 0 && (
+                  <span className="block break-words text-xs text-[var(--color-text-muted)]">
+                    From {files.slice(0, 3).join(', ')}{files.length > 3 && ` +${files.length - 3}`}
+                  </span>
+                )}
                 <span className="block font-mono text-xs tabular-nums text-[var(--color-text-muted)]">
                   v{source.version}{size != null ? ` · ${size < 1024 ? `${size} B` : `${(size / 1024).toFixed(1)} KB`}` : ''}
                 </span>
               </span>
+              {isProfile && <Badge variant="outline">Profile</Badge>}
               <Badge variant={ready ? 'success' : failed ? 'danger' : 'info'}>
                 {!ready && !failed && <span aria-hidden="true" className="size-1.5 animate-ping rounded-full bg-sky-400" />}
                 {ready ? 'Ready' : failed ? 'Failed' : 'Processing…'}
@@ -50,20 +59,49 @@ export default function KnowledgeSources({ data, api, act, busy }) {
       {!data.sources.length && !adding && (
         <EmptyState icon={FileText} title="Add your first document"
           description="Upload the policies, FAQs or product facts your chatbot should know."
-          action={<Button className={buttonClass} variant="primary" disabled={busy} onClick={openPanel}>Add document</Button>} />
+          action={
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button className={buttonClass} variant="primary" disabled={busy} onClick={() => openPanel()}>Add document</Button>
+              <Button className={buttonClass} variant="secondary" disabled={busy} onClick={() => openPanel('profile')}>My chatbot has no documents</Button>
+            </div>
+          } />
       )}
       {!!data.sources.length && !adding && (
-        <Button className={buttonClass} variant="secondary" disabled={busy} onClick={openPanel}><Plus aria-hidden="true" />Add document</Button>
+        <Button className={buttonClass} variant="secondary" disabled={busy} onClick={() => openPanel()}><Plus aria-hidden="true" />Add document</Button>
       )}
       {adding && <div className="space-y-4 rounded-md border border-[var(--color-border)] p-4">
         <div role="group" aria-label="Add document method" className="flex flex-wrap gap-1 rounded-md border border-[var(--color-border)] p-1">
           {[
             ['upload', 'Upload file'], ['paste', 'Paste text'], ['project', 'From project files'],
+            ['profile', 'No documents'],
           ].map(([value, label]) => (
             <Button key={value} className={buttonClass} variant={method === value ? 'secondary' : 'ghost'}
               aria-pressed={method === value} disabled={busy} onClick={() => setMethod(value)}>{label}</Button>
           ))}
         </div>
+      {method === 'profile' && (
+        <div className="space-y-3">
+          <p className="text-sm text-[var(--color-text-muted)]">
+            CovAI reads your system prompt and README, then tests the chatbot's role, safety and memory instead of document facts.
+          </p>
+          <form className="space-y-3" onSubmit={event => {
+            event.preventDefault();
+            act(async () => {
+              const result = await api('/sources/from-project', 'POST', { description: description.trim() || undefined });
+              setDescription('');
+              setAdding(false);
+              return result;
+            }, 'Chatbot profile created.');
+          }}>
+            <Field label="What does your chatbot do? (optional)">
+              <textarea className={inputClass} rows={4} maxLength={5000} value={description}
+                placeholder="e.g. Helps students plan their study week. Must not give medical advice."
+                onChange={event => setDescription(event.target.value)} />
+            </Field>
+            <Button className={buttonClass} type="submit" variant="primary" loading={busy}>Create profile</Button>
+          </form>
+        </div>
+      )}
       {method === 'paste' && (
       <form className="space-y-3" onSubmit={event => {
         event.preventDefault();

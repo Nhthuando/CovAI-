@@ -1655,3 +1655,203 @@ export const addScenarioService = (id, code, endpoint, options) =>
   mutateScenarioArtifact(id, options, () =>
     addScenarioServiceUnsafe(id, code, endpoint),
   );
+
+/**
+ * Batch-delete multiple selected integration scenarios in a single pass per AiTest
+ * (plus workspace-only tombstones for PROJECT_EXISTING scenarios) without hitting
+ * per-scenario version conflicts.
+ */
+export const bulkDeleteScenariosService = async ({
+  snapshotId,
+  userId,
+  scenarios = [],
+}) => {
+  if (!userId)
+    throw new ServiceError("Authentication required", 401, "AUTH_REQUIRED");
+  if (!snapshotId) throw new ServiceError("snapshotId is required", 400);
+  if (!Array.isArray(scenarios) || scenarios.length === 0) {
+    return {
+      deletedCount: 0,
+      deletedAiTestIds: [],
+      deletedProjectScenariosCount: 0,
+    };
+  }
+
+  const snapshot = await prisma.projectSnapshot.findUnique({
+    where: { id: snapshotId },
+    select: { id: true, projectId: true },
+  });
+  if (!snapshot)
+    throw new ServiceError("Snapshot not found", 404, "RESOURCE_NOT_FOUND");
+
+  await resolveProjectAccess({
+    projectId: snapshot.projectId,
+    userId,
+    capability: "files.write",
+  });
+
+  const dbAiTests = await prisma.aiTest.findMany({ where: { snapshotId } });
+  const dbMap = new Map(dbAiTests.map((t) => [t.id, t]));
+  const aiTargetsByTestId = new Map();
+  const existingTargets = [];
+
+  for (const rawItem of scenarios) {
+    if (!rawItem || typeof rawItem !== "object") continue;
+    const scenarioId = rawItem.scenarioId || rawItem.id || null;
+    const testName = rawItem.testName || rawItem.title || null;
+    const filePath = rawItem.filePath || rawItem.testFile || null;
+    const origin = rawItem.origin || null;
+    const isExistingHint =
+      origin === "PROJECT_EXISTING" ||
+      String(rawItem.aiTestId || "").startsWith("existing_test_") ||
+      rawItem.aiTestId === "existing_test_lookup";
+
+    let matchedRow = !isExistingHint && rawItem.aiTestId ? dbMap.get(rawItem.aiTestId) : null;
+    if (!matchedRow && !isExistingHint) {
+      for (const row of dbAiTests) {
+        let reqs = [];
+        try {
+          const meta = row.metaJson ? JSON.parse(row.metaJson) : {};
+          reqs = Array.isArray(meta.requests) ? meta.requests : [];
+        } catch (_) {}
+        const hit = reqs.find(
+          (r) =>
+            (scenarioId && r.scenarioId === scenarioId) ||
+            (testName && r.testName === testName),
+        );
+        if (hit) {
+          matchedRow = row;
+          break;
+        }
+      }
+    }
+
+    if (matchedRow) {
+      const bucket = aiTargetsByTestId.get(matchedRow.id) || [];
+      bucket.push({ scenarioId, testName });
+      aiTargetsByTestId.set(matchedRow.id, bucket);
+    } else if (scenarioId || testName || filePath) {
+      existingTargets.push({
+        aiTestId: rawItem.aiTestId || null,
+        scenarioId,
+        testName,
+        filePath,
+      });
+    }
+  }
+
+  let deletedCount = 0;
+  const deletedAiTestIds = [];
+
+  for (const [aiTestId, targets] of aiTargetsByTestId.entries()) {
+    const row = dbMap.get(aiTestId);
+    if (!row) continue;
+
+    let meta = {};
+    if (row.metaJson) {
+      try {
+        meta = JSON.parse(row.metaJson);
+      } catch (_) {}
+    }
+    const requests = Array.isArray(meta.requests) ? meta.requests : [];
+    const ast = parseCode(row.content || "");
+    const removedScenarioIds = new Set();
+    const removedTestNames = new Set();
+
+    for (const target of targets) {
+      const lookupKey = target.scenarioId || target.testName;
+      if (!lookupKey) continue;
+      let resolvedName = target.testName;
+      let resolvedIndex = 0;
+      try {
+        const identity = getScenarioIdentity(row, lookupKey);
+        resolvedName = identity.testName || resolvedName;
+        resolvedIndex = identity.nameIndex ?? 0;
+      } catch (_) {}
+
+      const astPath = resolvedName
+        ? findScenarioPath(ast, resolvedName, resolvedIndex) ||
+          findScenarioPath(ast, resolvedName, 0)
+        : null;
+      if (astPath) {
+        astPath.remove();
+        deletedCount++;
+      }
+      if (target.scenarioId) removedScenarioIds.add(target.scenarioId);
+      if (resolvedName) removedTestNames.add(resolvedName);
+      if (target.testName) removedTestNames.add(target.testName);
+    }
+
+    const remainingRequests = requests.filter((r) => {
+      if (r.scenarioId && removedScenarioIds.has(r.scenarioId)) return false;
+      if (!r.scenarioId && r.testName && removedTestNames.has(r.testName))
+        return false;
+      if (r.testName && removedTestNames.has(r.testName) && removedScenarioIds.size === 0)
+        return false;
+      return true;
+    });
+
+    const { code: finalCode } = generate(ast);
+    meta.userModified = true;
+    meta.requests = remainingRequests;
+
+    await prisma.$transaction(async (tx) => {
+      if (remainingRequests.length === 0) {
+        await tx.aiTest.delete({ where: { id: aiTestId } });
+        deletedAiTestIds.push(aiTestId);
+      } else {
+        await tx.aiTest.update({
+          where: { id: aiTestId },
+          data: {
+            content: finalCode,
+            metaJson: JSON.stringify(meta),
+          },
+        });
+      }
+
+      if (removedTestNames.size > 0 && tx.testScenario?.deleteMany) {
+        await tx.testScenario
+          .deleteMany({
+            where: {
+              title: { in: Array.from(removedTestNames) },
+              testRun: { snapshotId, type: "SUPERTEST" },
+            },
+          })
+          .catch(() => {});
+      }
+
+      await tx.project.update({
+        where: { id: snapshot.projectId },
+        data: { workspaceRevision: { increment: 1 } },
+      });
+    });
+  }
+
+  let deletedProjectScenariosCount = 0;
+  for (const item of existingTargets) {
+    try {
+      await deleteProjectScenarioService({
+        snapshotId,
+        userId,
+        aiTestId: item.aiTestId,
+        scenarioId: item.scenarioId,
+        filePath: item.filePath,
+        testName: item.testName,
+      });
+      deletedProjectScenariosCount++;
+      deletedCount++;
+    } catch (err) {
+      console.warn(
+        "[bulkDeleteScenariosService] Project existing scenario delete warning:",
+        err?.message,
+      );
+    }
+  }
+
+  invalidateEndpointCache(snapshotId);
+  return {
+    deletedCount,
+    deletedAiTestIds,
+    deletedProjectScenariosCount,
+  };
+};

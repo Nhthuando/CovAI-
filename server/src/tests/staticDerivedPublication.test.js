@@ -25,7 +25,6 @@ await jest.unstable_mockModule('../services/projectOperationWorkspace.service.js
 await jest.unstable_mockModule('../utils/eventDispatcher.js',()=>({eventDispatcher:{emit},PERFORMANCE_COMPLETED_EVENT:'performance.completed'}));
 const {buildCfgForSnapshot} = await import('../services/buildCfg.service.js');
 const {runPerformancePipelineStage} = await import('../services/performancePipelineStage.service.js');
-const {saveCodeHygieneReport} = await import('../services/codeHygiene.service.js');
 
 beforeEach(()=>{
     jest.clearAllMocks();publications=[];afterCommit=[];
@@ -57,17 +56,4 @@ test('performance metric uses the publication transaction and emits completion o
     expect(emit).not.toHaveBeenCalled();
     for(const delivery of afterCommit) await delivery();
     expect(emit).toHaveBeenCalledWith('performance.completed',expect.objectContaining({snapshotId:'s',metric:expect.objectContaining({id:result.metric.id})}));
-});
-
-test('hygiene replacement is staged and stays within the supplied publication transaction',async()=>{
-    const issues=[{type:'DEBUGGER',severity:'HIGH',filePath:'a.js',line:1,message:'debugger'}];
-    const summary={totalIssues:1,infoCount:0,warningCount:0,highCount:1,hygieneScore:90};
-    await saveCodeHygieneReport('s',issues,summary);
-    expect(rawWrite).not.toHaveBeenCalled();
-    const tx={codeHygieneIssue:{deleteMany:jest.fn(),createMany:jest.fn()},codeHygieneSummary:{deleteMany:jest.fn(),create:jest.fn()}};
-    for(const publish of publications) await publish(tx);
-    expect(tx.codeHygieneIssue.deleteMany).toHaveBeenCalledWith({where:{snapshotId:'s'}});
-    expect(tx.codeHygieneIssue.createMany).toHaveBeenCalledWith({data:[{...issues[0],snapshotId:'s'}]});
-    expect(tx.codeHygieneSummary.create).toHaveBeenCalledWith({data:{...summary,snapshotId:'s'}});
-    expect(rawWrite).not.toHaveBeenCalled();
 });

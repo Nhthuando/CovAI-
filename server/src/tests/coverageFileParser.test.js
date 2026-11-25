@@ -99,6 +99,37 @@ describe("coverageFileParser.service", () => {
     expect(txMock.coverageSummary.upsert).not.toHaveBeenCalled();
   });
 
+  it.each([true, undefined])(
+    "upserts integration files with preserveUnitRows=%s",
+    async (preserveUnitRows) => {
+      const servicePath = "server/services/productService.js";
+      const routePath = "server/routes/cartRoutes.js";
+      const percentages = { linesPct: 50, branchesPct: 50, funcsPct: 50, stmtsPct: 50 };
+      const totals = { total: 2, covered: 1, pct: 50 };
+      const coverage = { lines: totals, branches: totals, functions: totals, statements: totals };
+      const result = await parseCoverageFilesForSnapshot({
+        projectId: "proj-1",
+        snapshotId: "snap-1",
+        coverageReport: { [servicePath]: coverage, [routePath]: coverage },
+        userId: "user-1",
+        testType: "INTEGRATION",
+        ...(preserveUnitRows ? { preserveUnitRows } : {}),
+      });
+
+      expect(txMock.coverageFile.upsert).toHaveBeenCalledWith({
+        where: { snapshotId_filePath: { snapshotId: "snap-1", filePath: servicePath } },
+        create: { snapshotId: "snap-1", filePath: servicePath, ...percentages },
+        update: preserveUnitRows ? {} : percentages,
+      });
+      expect(txMock.coverageFile.upsert).toHaveBeenCalledWith({
+        where: { snapshotId_filePath: { snapshotId: "snap-1", filePath: routePath } },
+        create: { snapshotId: "snap-1", filePath: routePath, ...percentages },
+        update: percentages,
+      });
+      expect(result.files).toContainEqual({ snapshotId: "snap-1", filePath: servicePath, ...percentages });
+    },
+  );
+
   it("filters out API route files when testType defaults to UNIT", async () => {
     const coverageReport = {
       "/app/storage/projects/proj-1/repo/src/routes/student.routes.js": {

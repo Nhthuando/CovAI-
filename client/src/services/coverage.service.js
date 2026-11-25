@@ -535,6 +535,15 @@ export async function getUnitTestSimulationTrace(snapshotId, payload = {}) {
     return handleResponse(res);
 }
 
+export async function getIntegrationSimulationTrace(snapshotId, payload = {}) {
+    const res = await editorAwareFetch(`${BASE_URL}/coverage/${snapshotId}/integration/simulation/trace`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload),
+    });
+    return handleResponse(res);
+}
+
 export async function getUnitTestCaseDetail(snapshotId, { testFile, testName } = {}) {
     const params = new URLSearchParams();
     if (testFile) params.set("testFile", testFile);

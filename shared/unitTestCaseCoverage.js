@@ -90,6 +90,7 @@ export function isTrivialCallbackFunctionName(rawName = "") {
   const clean = String(rawName || "")
     .trim()
     .replace(/\(\)$/, "")
+    .replace(/^\((.*)\)$/, "$1")
     .trim()
     .toLowerCase();
   if (!clean) return true;
@@ -148,56 +149,128 @@ export function getTestableUnitFunctions(file = {}, fileFunctions = []) {
 }
 
 /**
- * Matches a unit test case to a specific business logic function in the file if referenced
- * in `[functionName]` title tags, title words, or test code body.
+ * Matches a unit test case to ALL business logic functions in the file that it
+ * targets or exercises via `[fnName]` tags, `@covers fn1, fn2`, title words,
+ * code calls, and optional intra-file caller->callee relationships.
  */
-export function matchUnitTestToFunction(tc = {}, testableFunctions = []) {
+export function matchUnitTestToFunctions(
+  tc = {},
+  testableFunctions = [],
+  functionCallees = null,
+) {
   if (!tc || !Array.isArray(testableFunctions) || testableFunctions.length === 0) {
-    return null;
+    return [];
   }
 
+  const byLowerName = new Map();
+  for (const fn of testableFunctions) {
+    const key = String(fn?.name || "").trim().toLowerCase();
+    if (key && !byLowerName.has(key)) byLowerName.set(key, fn);
+  }
+
+  const matched = [];
+  const addedKeys = new Set();
+  const addMatch = (fn) => {
+    if (!fn || addedKeys.has(fn.key)) return;
+    addedKeys.add(fn.key);
+    matched.push(fn);
+  };
+
+  const addToken = (rawToken) => {
+    const token = String(rawToken || "")
+      .trim()
+      .replace(/\(\)$/, "")
+      .split(".")
+      .pop()
+      .trim()
+      .toLowerCase();
+    if (!token) return;
+    const hit = byLowerName.get(token);
+    if (hit) addMatch(hit);
+  };
+
+  if (Array.isArray(tc.targetFunctions)) {
+    for (const tf of tc.targetFunctions) addToken(tf);
+  }
   if (tc.targetFunction) {
-    const explicit = testableFunctions.find(
-      (f) => f.name.toLowerCase() === String(tc.targetFunction).trim().toLowerCase(),
-    );
-    if (explicit) return explicit;
+    for (const part of String(tc.targetFunction).split(",")) addToken(part);
   }
 
   const rawTitle = String(tc.title || tc.testName || tc.name || "").trim();
   const rawCode = String(tc.code || "");
 
-  // 1. Check leading bracketed function tag `[fnName]` or leading `fnName`
-  const bracketMatches = [...rawTitle.matchAll(/\[\s*([A-Za-z_$][A-Za-z0-9_$.]*)\s*\]/g)];
+  // 1. Check bracketed tags `[fnName]` or `[fn1, fn2]` in title
+  const bracketMatches = [...rawTitle.matchAll(/\[\s*([^\]]+)\s*\]/g)];
   for (const m of bracketMatches) {
-    const token = String(m[1] || "").split(".").pop().toLowerCase();
-    const found = testableFunctions.find((f) => f.name.toLowerCase() === token);
-    if (found) return found;
+    for (const part of String(m[1] || "").split(/[,+/|&]/)) {
+      addToken(part);
+    }
+  }
+
+  // 2. Check `@covers fn1, fn2` annotations in title or test body comments
+  const coversSource = `${rawTitle}\n${rawCode}`;
+  for (const m of coversSource.matchAll(/@covers\s*[:\-]?\s*([^\n\r*]+)/gi)) {
+    for (const part of String(m[1] || "").split(/[,+/|&\s]+/)) {
+      addToken(part);
+    }
   }
 
   // Sort functions by descending name length so `getArticleStats` matches before `getArticle`
   const sortedFns = [...testableFunctions].sort((a, b) => b.name.length - a.name.length);
 
-  // 2. Check whole-word match in title
+  // 3. Check whole-word matches in title
   for (const fn of sortedFns) {
     if (fn.name.length < 2) continue;
     const escaped = fn.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     if (new RegExp(`\\b${escaped}\\b`, "i").test(rawTitle)) {
-      return fn;
+      addMatch(fn);
     }
   }
 
-  // 3. Check function invocation in test code body
+  // 4. Check function invocations in test code body
   if (rawCode) {
     for (const fn of sortedFns) {
       if (fn.name.length < 2) continue;
       const escaped = fn.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       if (new RegExp(`\\b${escaped}\\s*\\(`, "i").test(rawCode)) {
-        return fn;
+        addMatch(fn);
       }
     }
   }
 
-  return null;
+  // 5. Expand transitive intra-file helper callees (e.g. exportedFn -> internal helperFn)
+  if (matched.length > 0 && functionCallees && typeof functionCallees === "object") {
+    const queue = matched.map((f) => f.name);
+    const visited = new Set(queue.map((n) => n.toLowerCase()));
+    while (queue.length > 0) {
+      const caller = queue.shift();
+      const callees =
+        functionCallees[caller] ||
+        functionCallees[caller.toLowerCase()] ||
+        [];
+      if (!Array.isArray(callees)) continue;
+      for (const calleeName of callees) {
+        const lower = String(calleeName || "").trim().toLowerCase();
+        if (!lower || visited.has(lower)) continue;
+        visited.add(lower);
+        const fnObj = byLowerName.get(lower);
+        if (fnObj) {
+          addMatch(fnObj);
+          queue.push(fnObj.name);
+        }
+      }
+    }
+  }
+
+  return matched;
+}
+
+/**
+ * Matches a unit test case to a primary business logic function in the file if referenced
+ * in `[functionName]` title tags, title words, or test code body.
+ */
+export function matchUnitTestToFunction(tc = {}, testableFunctions = [], functionCallees = null) {
+  return matchUnitTestToFunctions(tc, testableFunctions, functionCallees)[0] || null;
 }
 
 /**
@@ -363,23 +436,28 @@ export function getFileUnitFunctionCoverage(
   const allFunctions = Array.isArray(fileFunctions) ? fileFunctions : [];
   const fileFuncsPct = Number(file?.funcsPct ?? file?.functionsPct ?? 0);
   const fileLinesPct = Number(file?.linesPct ?? 0);
+  const functionCallees = file?.functionCallees || null;
 
   const functions = testableFunctions.map((fn) => {
-    const matchedTests = (testCases || []).filter(
-      (tc) => matchUnitTestToFunction(tc, [fn])?.key === fn.key,
+    const matchedTests = (testCases || []).filter((tc) =>
+      matchUnitTestToFunctions(tc, testableFunctions, functionCallees).some(
+        (m) => m.key === fn.key,
+      ),
     );
     const hasPassedTest = matchedTests.some(isUnitTestPassed);
     const hasFailedTest = matchedTests.some(isUnitTestFailed);
     const hasDraftTest = matchedTests.length > 0;
-    const covered =
+    // A function with any failing assertion MUST NOT count as verified/covered.
+    const rawExecutedHit =
       fn.hit > 0 ||
       fileFuncsPct >= 100 ||
-      (fileLinesPct >= 100 && !hasFailedTest) ||
+      fileLinesPct >= 100 ||
       (hasPassedTest && fileLinesPct > 0);
+    const covered = !hasFailedTest && rawExecutedHit;
     return {
       ...fn,
       covered,
-      passed: covered && !hasFailedTest,
+      passed: covered,
       failed: hasFailedTest,
       hasDraftTest,
       testCount: matchedTests.length,
@@ -405,7 +483,10 @@ export function getFileUnitFunctionCoverage(
     totalFunctions,
     coveredFunctions: Math.min(totalFunctions, coveredFunctions),
     uncoveredFunctions: functions.filter((f) => !f.covered),
-    isAllFunctionsCovered: totalFunctions > 0 ? coveredFunctions >= totalFunctions : fileLinesPct >= 100,
+    isAllFunctionsCovered:
+      totalFunctions > 0
+        ? coveredFunctions >= totalFunctions && !functions.some((f) => f.failed)
+        : fileLinesPct >= 100,
   };
 }
 
@@ -421,7 +502,12 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
 
   const orderedEntries = (testCases || []).map((tc, index) => {
     const def = classifyUnitTestCase(tc);
-    const matchedFn = matchUnitTestToFunction(tc, testableFunctions);
+    const matchedFns = matchUnitTestToFunctions(
+      tc,
+      testableFunctions,
+      file?.functionCallees || null,
+    );
+    const matchedFn = matchedFns[0] || null;
     const passed = isUnitTestPassed(tc);
     const failed = isUnitTestFailed(tc);
     const isProjectExisting = isUserOrExistingUnitTest(tc);
@@ -446,6 +532,7 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
       key: def.key,
       slotKey,
       matchedFn,
+      matchedFns,
       def,
       passed,
       failed,
@@ -476,17 +563,23 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
   for (const entry of orderedEntries) {
     const isFnSlot = entry.slotKey.startsWith("FN::");
     const reqDef = requiredByKey.get(entry.key) || entry.def;
-    const fnPrefix = entry.matchedFn ? `Fn: ${entry.matchedFn.name}()` : null;
+    const matchedNames = (entry.matchedFns || []).map((f) => f.name);
+    const fnLabel =
+      matchedNames.length > 0
+        ? matchedNames.map((n) => `${n}()`).join(", ")
+        : null;
+    const fnPrefix = fnLabel ? `Fn: ${fnLabel}` : null;
 
     if (!isFnSlot && !requiredByKey.has(entry.key)) {
       extraCount++;
       annotations[entry.id] = {
         badgeType: "OPTIONAL",
-        badgeLabel: fnPrefix ? `${fnPrefix} · ${entry.def.label}` : `Optional · ${entry.def.label}`,
+        badgeLabel: fnPrefix || "Module Logic",
         caseKey: entry.key,
-        caseLabel: entry.def.label,
+        caseLabel: fnLabel || "Module Logic",
         targetFunction: entry.matchedFn?.name || null,
-        functionLabel: entry.matchedFn ? `${entry.matchedFn.name}()` : null,
+        targetFunctions: matchedNames,
+        functionLabel: fnLabel,
         isRemovableSuggestion: false,
       };
       continue;
@@ -494,9 +587,7 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
 
     const winner = bestForSlot.get(entry.slotKey);
     const isPrimary = primaryBySlot.get(entry.slotKey) === entry.id;
-    const displayTarget = fnPrefix
-      ? `${fnPrefix} · ${reqDef.label}`
-      : `Case: ${reqDef.label}`;
+    const displayTarget = fnPrefix || "Module Logic";
 
     if (isPrimary) {
       const passed = entry.passed;
@@ -509,9 +600,10 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
             : "PRIMARY_PENDING",
         badgeLabel: displayTarget,
         caseKey: reqDef.key,
-        caseLabel: reqDef.label,
+        caseLabel: fnLabel || "Module Logic",
         targetFunction: entry.matchedFn?.name || null,
-        functionLabel: entry.matchedFn ? `${entry.matchedFn.name}()` : null,
+        targetFunctions: matchedNames,
+        functionLabel: fnLabel,
         isRemovableSuggestion: false,
       };
     } else if (
@@ -523,13 +615,12 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
     ) {
       annotations[entry.id] = {
         badgeType: "PRIMARY_FAIL",
-        badgeLabel: fnPrefix
-          ? `Failed · ${entry.matchedFn.name}() · ${reqDef.label}`
-          : `Failed · ${reqDef.label}`,
+        badgeLabel: fnLabel ? `Failed · ${fnLabel}` : "Failed · Module Logic",
         caseKey: reqDef.key,
-        caseLabel: reqDef.label,
+        caseLabel: fnLabel || "Module Logic",
         targetFunction: entry.matchedFn?.name || null,
-        functionLabel: entry.matchedFn ? `${entry.matchedFn.name}()` : null,
+        targetFunctions: matchedNames,
+        functionLabel: fnLabel,
         isRemovableSuggestion: true,
         supersededByAi: true,
       };
@@ -537,13 +628,12 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
       redundantCount++;
       annotations[entry.id] = {
         badgeType: "DUPLICATE",
-        badgeLabel: fnPrefix
-          ? `Duplicate · ${entry.matchedFn.name}() · ${reqDef.label}`
-          : `Duplicate · ${reqDef.label}`,
+        badgeLabel: fnLabel ? `Duplicate · ${fnLabel}` : "Duplicate · Module Logic",
         caseKey: reqDef.key,
-        caseLabel: reqDef.label,
+        caseLabel: fnLabel || "Module Logic",
         targetFunction: entry.matchedFn?.name || null,
-        functionLabel: entry.matchedFn ? `${entry.matchedFn.name}()` : null,
+        targetFunctions: matchedNames,
+        functionLabel: fnLabel,
         isRemovableSuggestion: true,
       };
     }
@@ -619,4 +709,173 @@ export function getFileUnitCaseCoverage(
  */
 export function summarizeUnitFailure(rawInput, parsedFailure = null) {
   return summarizeIntegrationFailure(rawInput, parsedFailure);
+}
+
+/**
+ * Classifies a failing unit test case (Jest or Vitest) into a structured root-cause diagnosis,
+ * mirroring Integration Test's failure diagnostic panel.
+ * Returns null if no failure is present.
+ */
+export function diagnoseUnitFailure(tc = null) {
+  if (!tc) return null;
+  const rawList = Array.isArray(tc.failureMessages)
+    ? tc.failureMessages
+    : typeof tc === "string"
+      ? [tc]
+      : tc.failureMessage
+        ? [tc.failureMessage]
+        : [];
+  const rawText = rawList
+    .filter(Boolean)
+    .map((m) => String(m))
+    .join("\n")
+    .replace(/\u001b\[[0-9;]*[a-zA-Z]/g, "")
+    .trim();
+
+  const isFailed =
+    typeof tc === "string"
+      ? Boolean(rawText)
+      : isUnitTestFailed(tc) || Boolean(rawText);
+  if (!isFailed) return null;
+
+  const summary =
+    (typeof tc === "object" && tc.failureSummary) ||
+    summarizeUnitFailure(rawList.length > 0 ? rawList : rawText) ||
+    "Unit test failed without detailed output.";
+
+  // Extract first relevant stack location (e.g. src/utils/math.js:42:10)
+  const locMatch = rawText.match(
+    /(?:at\s+.*?\(?|[\s(])([A-Za-z0-9_./\\-]+\.(?:[cm]?[jt]sx?)):(\d+)(?::(\d+))?/,
+  );
+  const locationHint = locMatch
+    ? `${locMatch[1].replace(/\\/g, "/")}:${locMatch[2]}${locMatch[3] ? `:${locMatch[3]}` : ""}`
+    : null;
+
+  const rawExcerpt = rawText
+    ? rawText.split(/\r?\n/).slice(0, 18).join("\n").slice(0, 1800)
+    : "";
+
+  // 1. Missing module / package resolution failure
+  const missingMod =
+    rawText.match(/Cannot find module ['"]([^'"]+)['"]/i) ||
+    rawText.match(/Cannot find package ['"]([^'"]+)['"]/i) ||
+    rawText.match(/Failed to resolve import ['"]([^'"]+)['"]/i) ||
+    rawText.match(/ERR_MODULE_NOT_FOUND.*?['"]([^'"]+)['"]/i);
+  if (missingMod) {
+    const target = missingMod[1];
+    const isRelative = target.startsWith(".") || target.startsWith("/");
+    return {
+      failureLayer: "MODULE_NOT_FOUND",
+      label: "Module / Import Error",
+      explanation: isRelative
+        ? `Test could not resolve relative import "${target}". The file path or ESM extension may be incorrect.`
+        : `Package "${target}" is missing or cannot be resolved by the test runner.`,
+      suggestedFix: isRelative
+        ? "Verify the relative import path and file extension (.js/.ts), or regenerate this test case."
+        : `Install "${target}" via Test Setup or mock it in the unit test file.`,
+      summary,
+      locationHint,
+      rawExcerpt,
+    };
+  }
+
+  // 2. Syntax / ESM-vs-CJS / Transform failure
+  if (
+    /SyntaxError:|Unexpected token|Cannot use import statement outside a module|Must use import to load ES Module|ERR_REQUIRE_ESM|Transform failed/i.test(
+      rawText,
+    )
+  ) {
+    return {
+      failureLayer: "SYNTAX_ERROR",
+      label: "Syntax / ESM Transform Error",
+      explanation:
+        "The test runner failed to parse or transform the test or source module (often an ESM/CJS or JSX mismatch).",
+      suggestedFix:
+        "Switch between Vitest (native ESM/Vite) and Jest in Test Setup, or inspect the syntax around the indicated line.",
+      summary,
+      locationHint,
+      rawExcerpt,
+    };
+  }
+
+  // 3. Mock hoisting / mock setup errors
+  if (
+    /out-of-scope variables|Invalid variable access|jest\.mock|vi\.mock|mockResolvedValue|mockImplementation|is not a mock function|Cannot spy/i.test(
+      rawText,
+    )
+  ) {
+    return {
+      failureLayer: "MOCK_ERROR",
+      label: "Mock / Spy Setup Error",
+      explanation:
+        "A dependency mock or spy failed during hoisting or invocation.",
+      suggestedFix:
+        "Ensure mocked variables use `vi.hoisted(...)` (Vitest) or `mock*` prefixed / global references (Jest) and return the expected method shapes.",
+      summary,
+      locationHint,
+      rawExcerpt,
+    };
+  }
+
+  // 4. Timeout
+  if (
+    /Exceeded timeout|Test timed out|Async callback was not invoked|Timeout - Async/i.test(
+      rawText,
+    )
+  ) {
+    return {
+      failureLayer: "TIMEOUT",
+      label: "Async Timeout",
+      explanation:
+        "The test exceeded the execution timeout waiting for an async operation, timer, or unresolved Promise.",
+      suggestedFix:
+        "Mock external network/DB calls, ensure Promises resolve/reject, or restore real timers (`vi.useRealTimers()` / `jest.useRealTimers()`).",
+      summary,
+      locationHint,
+      rawExcerpt,
+    };
+  }
+
+  // 5. Assertion failure (Expected vs Received)
+  const expectedMatch = rawText.match(/Expected(?:\s+value)?:\s*([^\r\n]+)/i);
+  const receivedMatch = rawText.match(/Received(?:\s+value)?:\s*([^\r\n]+)/i);
+  if (
+    expectedMatch ||
+    receivedMatch ||
+    /AssertionError|expect\(|toBe|toEqual|toStrictEqual|toMatch|toThrow|toHaveBeenCalled/i.test(
+      rawText,
+    )
+  ) {
+    const diffHint =
+      expectedMatch && receivedMatch
+        ? `Expected ${expectedMatch[1].trim()} but received ${receivedMatch[1].trim()}.`
+        : "The actual return value, side effect, or thrown error did not match the assertion.";
+    return {
+      failureLayer: "ASSERTION_FAILED",
+      label: "Assertion Mismatch",
+      explanation: diffHint,
+      suggestedFix:
+        "Check whether the source function has a real bug or if the test assertion/mock setup needs updating.",
+      summary,
+      locationHint,
+      rawExcerpt,
+    };
+  }
+
+  // 6. Generic runtime exception (TypeError, ReferenceError, etc.)
+  const errTypeMatch = rawText.match(
+    /\b(TypeError|ReferenceError|RangeError|URIError|Error):\s*([^\r\n]+)/,
+  );
+  return {
+    failureLayer: "RUNTIME_ERROR",
+    label: errTypeMatch ? errTypeMatch[1] : "Runtime Error",
+    explanation: errTypeMatch
+      ? `${errTypeMatch[1]}: ${errTypeMatch[2].trim()}`
+      : summary,
+    suggestedFix:
+      "Inspect null/undefined inputs, required environment variables, or unmocked dependencies at the reported line.",
+    summary,
+    locationHint,
+    rawExcerpt,
+  };
 }

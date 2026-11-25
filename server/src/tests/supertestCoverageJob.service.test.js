@@ -25,6 +25,7 @@ const mockPrisma = {
     },
     testRun: {
         create: jest.fn().mockResolvedValue({}),
+        findFirst: jest.fn(),
     },
 };
 
@@ -86,6 +87,7 @@ describe('supertestCoverageJob.service', () => {
             { filePath: 'api.test.js', metaJson: JSON.stringify({ framework: 'SUPERTEST', status: 'APPROVED' }) }
         ]);
         mockPrisma.testRun.create.mockResolvedValue({});
+        mockPrisma.testRun.findFirst.mockResolvedValue(null);
     });
 
     afterEach(() => fs.rmSync(rootDir, { recursive: true, force: true }));
@@ -102,5 +104,24 @@ describe('supertestCoverageJob.service', () => {
         expect(markJobFailed).not.toHaveBeenCalled();
     });
 
+    test('preserves unit rows and publishes integration file coverage when a unit run exists', async () => {
+        const fileCoverage = { filePath: 'a.js', linesPct: 1, branchesPct: 2, funcsPct: 3, stmtsPct: 4 };
+        mockPrisma.testRun.findFirst.mockResolvedValue({ id: 'r' });
+        parseCoverageFilesForSnapshot.mockResolvedValue({
+            files: [{ snapshotId: 's', ...fileCoverage }],
+        });
+
+        await processSupertestCoverageJob('job123');
+
+        expect(parseCoverageFilesForSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+            preserveUnitRows: true,
+        }));
+        expect(parseCoverageFunctionsForSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+            preserveUnitRows: true,
+        }));
+        expect(markJobSuccess).toHaveBeenCalledWith('job123', expect.objectContaining({
+            fileCoverages: [fileCoverage],
+        }));
+    });
 
 });

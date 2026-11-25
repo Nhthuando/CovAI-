@@ -15,6 +15,7 @@ export const extractTestRequests = (sourceCode, filePath) => {
     try {
         const parsed = babelParse(sourceCode, {
             sourceType: "unambiguous",
+            ranges: true,
             plugins: [
                 "estree",
                 "jsx",
@@ -304,6 +305,11 @@ export const extractTestRequests = (sourceCode, filePath) => {
                                     } catch (_) {}
                                 }
 
+                                const codeRange = Array.isArray(node.range)
+                                    ? node.range
+                                    : typeof node.start === "number" && typeof node.end === "number"
+                                      ? [node.start, node.end]
+                                      : null;
                                 testRequests.push({
                                     suiteName: currentSuite,
                                     testName: currentTest,
@@ -314,7 +320,7 @@ export const extractTestRequests = (sourceCode, filePath) => {
                                     queryParams: qParams,
                                     expectedStatus: testExpectedStatus,
                                     ...(testExpectedStatuses ? { expectedStatuses: testExpectedStatuses } : {}),
-                                    code: node.range ? sourceCode.slice(node.range[0], node.range[1]) : undefined,
+                                    code: codeRange ? sourceCode.slice(codeRange[0], codeRange[1]) : undefined,
                                 });
                             }
                         }
@@ -412,5 +418,185 @@ export const extractTestRequests = (sourceCode, filePath) => {
     };
 
     walk(ast);
+    return results;
+};
+
+/**
+ * Extracts static describe / it / test blocks from a Unit test file (Jest or Vitest)
+ * so existing repository test scenarios can be displayed and inspected before running tests.
+ *
+ * @param {string} sourceCode
+ * @param {string} filePath
+ * @returns {Array<{title: string, ancestorTitles: string[], suiteName: string, status: string, startLine: number|null, line: number|null, code: string|null}>}
+ */
+export const extractStaticUnitTestAssertions = (sourceCode = "", filePath = "") => {
+    const results = [];
+    if (!sourceCode || typeof sourceCode !== "string") return results;
+
+    let ast = null;
+    try {
+        const parsed = babelParse(sourceCode, {
+            sourceType: "unambiguous",
+            ranges: true,
+            plugins: [
+                "estree",
+                "jsx",
+                "typescript",
+                "decorators-legacy",
+                "classProperties",
+                "classPrivateProperties",
+                "classPrivateMethods",
+                "optionalChaining",
+                "nullishCoalescingOperator",
+                "dynamicImport",
+                "objectRestSpread",
+                "topLevelAwait",
+                "asyncGenerators",
+            ],
+            errorRecovery: true,
+        });
+        ast = parsed.program || parsed;
+    } catch (_) {
+        try {
+            ast = esprima.parseModule(sourceCode, { jsx: true, tolerant: true, range: true, loc: true });
+        } catch {
+            try {
+                ast = esprima.parseScript(sourceCode, { tolerant: true, range: true, loc: true });
+            } catch (err) {
+                console.warn(`[TestSourceParser] Static unit AST parse fallback for ${filePath}:`, err.message);
+                ast = null;
+            }
+        }
+    }
+
+    const resolveStaticString = (node) => {
+        if (!node) return "";
+        if (node.type === "Literal" || node.type === "StringLiteral") {
+            return String(node.value ?? "");
+        }
+        if (node.type === "TemplateLiteral") {
+            return (node.quasis || []).map((q) => q.value?.raw ?? q.value?.cooked ?? "").join("${...}");
+        }
+        return "";
+    };
+
+    const resolveCalleeChain = (callee) => {
+        if (!callee) return { rootName: "", modifiers: [] };
+        if (callee.type === "Identifier") {
+            return { rootName: callee.name, modifiers: [] };
+        }
+        if (callee.type === "MemberExpression") {
+            const inner = resolveCalleeChain(callee.object);
+            const propName = callee.property?.name || callee.property?.value || "";
+            return {
+                rootName: inner.rootName,
+                modifiers: propName ? [...inner.modifiers, propName] : inner.modifiers,
+            };
+        }
+        if (callee.type === "CallExpression") {
+            return resolveCalleeChain(callee.callee);
+        }
+        return { rootName: "", modifiers: [] };
+    };
+
+    const suiteStack = [];
+
+    if (ast) {
+        const walk = (node) => {
+            if (!node || typeof node !== "object") return;
+
+            if (node.type === "CallExpression") {
+                const { rootName, modifiers } = resolveCalleeChain(node.callee);
+                const isDescribe = ["describe", "context", "suite"].includes(rootName);
+                const isTest = ["it", "test"].includes(rootName);
+
+                if (isDescribe && node.arguments?.length >= 2) {
+                    const title = resolveStaticString(node.arguments[0]);
+                    if (title) suiteStack.push(title);
+                    for (let i = 1; i < node.arguments.length; i++) {
+                        walk(node.arguments[i]);
+                    }
+                    if (title) suiteStack.pop();
+                    return;
+                }
+
+                if (isTest && node.arguments?.length >= 2) {
+                    const title = resolveStaticString(node.arguments[0]);
+                    if (title) {
+                        const isSkipped = modifiers.some((m) => ["skip", "todo", "fixme"].includes(m));
+                        const codeRange = Array.isArray(node.range)
+                            ? node.range
+                            : typeof node.start === "number" && typeof node.end === "number"
+                              ? [node.start, node.end]
+                              : null;
+                        const startLine = node.loc?.start?.line ?? null;
+                        const codeSnippet = codeRange ? sourceCode.slice(codeRange[0], codeRange[1]) : null;
+                        const leadingChunk =
+                            codeRange && codeRange[0] > 0
+                                ? sourceCode.slice(Math.max(0, codeRange[0] - 240), codeRange[0])
+                                : "";
+                        const coversMatches = [
+                            ...`${leadingChunk}\n${title}\n${codeSnippet || ""}`.matchAll(
+                                /@covers\s*[:\-]?\s*([^\n\r*]+)/gi,
+                            ),
+                        ];
+                        const targetFunctions = [
+                            ...new Set(
+                                coversMatches
+                                    .flatMap((m) => String(m[1] || "").split(/[,+/|&\s]+/))
+                                    .map((s) => s.trim().replace(/\(\)$/, ""))
+                                    .filter((s) => /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(s)),
+                            ),
+                        ];
+                        results.push({
+                            title,
+                            ancestorTitles: [...suiteStack],
+                            suiteName: suiteStack.join(" > "),
+                            status: isSkipped ? "pending" : "not_run",
+                            startLine,
+                            line: startLine,
+                            code: codeSnippet,
+                            ...(targetFunctions.length > 0 ? { targetFunctions } : {}),
+                        });
+                    }
+                    return;
+                }
+            }
+
+            for (const key in node) {
+                if (key === "loc" || key === "range" || key === "tokens" || key === "comments") continue;
+                const val = node[key];
+                if (!val || typeof val !== "object") continue;
+                if (Array.isArray(val)) {
+                    for (const child of val) walk(child);
+                } else {
+                    walk(val);
+                }
+            }
+        };
+
+        walk(ast);
+    }
+
+    if (results.length === 0) {
+        // Regex fallback for edge files that failed AST parsing
+        const testRegex = /(?:^|\n)\s*(?:it|test)(?:\.(?:skip|only|todo))?\s*\(\s*(['"`])((?:\\.|(?!\1).)+)\1/g;
+        let match;
+        while ((match = testRegex.exec(sourceCode)) !== null) {
+            const title = match[2]?.trim();
+            if (!title) continue;
+            const line = sourceCode.slice(0, match.index).split("\n").length;
+            results.push({
+                title,
+                ancestorTitles: [],
+                suiteName: "",
+                status: /\.skip|\.todo/.test(match[0]) ? "pending" : "not_run",
+                startLine: line,
+                line,
+                code: null,
+            });
+        }
+    }
+
     return results;
 };

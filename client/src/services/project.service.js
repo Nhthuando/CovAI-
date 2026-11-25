@@ -49,7 +49,7 @@ export async function getProjectsApi() {
 
 export async function deleteProjectApi(projectId) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 60000);
+  const timeoutId = setTimeout(() => controller.abort(), 185000);
   try {
     const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}`, {
       method: "DELETE",

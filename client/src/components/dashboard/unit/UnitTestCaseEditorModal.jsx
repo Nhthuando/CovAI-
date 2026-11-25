@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { X, Code2, Save, Loader2, Play, Sparkles, AlertCircle } from "lucide-react";
+import { X, Code2, Save, Loader2, Play, AlertCircle } from "lucide-react";
 import {
   getUnitTestCaseDetail,
   addUnitTestCaseApi,
   updateUnitTestCaseApi,
 } from "../../../services/coverage.service.js";
+import ConfirmDialog from "../../common/ConfirmDialog.jsx";
 
 const DEFAULT_TEMPLATE = `it('handles valid input correctly', () => {\n  // Arrange\n  const input = {};\n\n  // Act & Assert\n  expect(input).toBeDefined();\n});\n`;
 
@@ -24,6 +25,7 @@ export default function UnitTestCaseEditorModal({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [confirmSaveAndRun, setConfirmSaveAndRun] = useState(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -87,7 +89,7 @@ export default function UnitTestCaseEditorModal({
 
   if (!isOpen) return null;
 
-  const handleSave = async (andRun = false) => {
+  const executeSave = async (andRun = false) => {
     setError("");
     if (!code.trim()) {
       setError("Test code cannot be empty.");
@@ -149,13 +151,26 @@ export default function UnitTestCaseEditorModal({
     }
   };
 
+  const handleSave = (andRun = false) => {
+    setError("");
+    if (!code.trim()) {
+      setError("Test code cannot be empty.");
+      return;
+    }
+    if (mode === "edit") {
+      setConfirmSaveAndRun(andRun);
+      return;
+    }
+    executeSave(andRun);
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 font-sans">
-      <div className="w-full max-w-3xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] overflow-hidden flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-[2px] p-4 font-sans">
+      <div className="w-full max-w-3xl rounded-lg border border-[var(--color-border-strong)] ring-1 ring-white/[0.04] bg-[var(--color-surface)] text-[var(--color-text)] shadow-[0_24px_64px_-12px_rgba(0,0,0,0.9)] overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-7 h-7 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-primary)] shrink-0">
+            <div className="w-7 h-7 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-text-secondary)] shrink-0">
               <Code2 size={15} />
             </div>
             <div className="min-w-0">
@@ -179,7 +194,7 @@ export default function UnitTestCaseEditorModal({
         {/* Body */}
         <div className="p-5 space-y-4 overflow-y-auto flex-1">
           {error && (
-            <div className="p-3 rounded-md bg-rose-500/10 border border-rose-500/25 text-xs text-rose-400 flex items-start gap-2">
+            <div className="p-3 rounded-md bg-[var(--color-surface-secondary)] border border-rose-500/25 text-xs text-rose-300/90 flex items-start gap-2">
               <AlertCircle size={14} className="shrink-0 mt-0.5" />
               <span>{error}</span>
             </div>
@@ -233,19 +248,19 @@ export default function UnitTestCaseEditorModal({
                 onChange={(e) => setCode(e.target.value)}
                 rows={13}
                 spellCheck={false}
-                className="w-full p-3 rounded-md bg-[#0B0F14] border border-[var(--color-border)] text-xs font-mono leading-relaxed text-[#E2E8F0] focus:outline-none focus:border-[var(--color-primary)] resize-y"
+                className="w-full p-3 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs font-mono leading-relaxed text-[var(--color-text)] focus:outline-none focus:border-[var(--color-border-strong)] resize-y"
               />
             )}
           </div>
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-secondary)]/40 flex items-center justify-end gap-2">
+        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-bg)] flex items-center justify-end gap-2">
           <button
             type="button"
             onClick={onClose}
             disabled={saving}
-            className="px-3 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] text-xs font-medium text-[var(--color-text-secondary)] transition-colors cursor-pointer"
+            className="px-3 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-muted)] text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
           >
             Cancel
           </button>
@@ -253,7 +268,7 @@ export default function UnitTestCaseEditorModal({
             type="button"
             onClick={() => handleSave(false)}
             disabled={saving || loading}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-xs font-semibold text-[var(--color-text)] transition-colors cursor-pointer disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-muted)] text-xs font-medium text-[var(--color-text)] transition-colors cursor-pointer disabled:opacity-50"
           >
             {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
             <span>Save Changes</span>
@@ -262,13 +277,37 @@ export default function UnitTestCaseEditorModal({
             type="button"
             onClick={() => handleSave(true)}
             disabled={saving || loading}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-[var(--color-text)] text-[var(--color-bg)] hover:opacity-90 text-xs font-semibold transition-all duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
           >
             {saving ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} fill="currentColor" />}
             <span>Save & Run Test</span>
           </button>
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={confirmSaveAndRun !== null}
+        onClose={() => setConfirmSaveAndRun(null)}
+        onConfirm={() => {
+          const andRun = Boolean(confirmSaveAndRun);
+          setConfirmSaveAndRun(null);
+          executeSave(andRun);
+        }}
+        title="Confirm Test Case Update"
+        message={
+          confirmSaveAndRun
+            ? "Save your edits to this unit test case and run it immediately?"
+            : "Save your edits to this unit test case?"
+        }
+        confirmText={confirmSaveAndRun ? "Save & Run Test" : "Save Changes"}
+        variant="primary"
+        icon={Save}
+        loading={saving}
+      >
+        <div className="px-3 py-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-xs text-[var(--color-text-secondary)] break-all">
+          {title.trim() || testCase?.title || testCase?.testName || testFile}
+        </div>
+      </ConfirmDialog>
     </div>
   );
 }

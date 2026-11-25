@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X, GitBranch, MessageSquare, Plus, Pin, Trash2, Loader2 } from "lucide-react";
 import Button from "../common/Button";
+import ConfirmDialog from "../common/ConfirmDialog.jsx";
 import "./portfolio/portfolio.css";
 import { getAiContext, saveAiContext, getAiMemories, addAiMemory, editAiMemory, forgetAiMemory, clearAiMemories, previewAiContext, branchAiConversation } from "../../services/aiContext.service";
 import { getChatSessionsApi } from "../../services/project.service";
@@ -34,6 +35,7 @@ export default function AIContextDialog({ projectId, snapshotId, sessionId, useM
   const [reload, setReload] = useState(0);
   const [clearConfirm, setClearConfirm] = useState(false);
   const [discardConfirm, setDiscardConfirm] = useState(false);
+  const [forgetTarget, setForgetTarget] = useState(null);
   const dirty = saved && settings && (saved.guidance !== settings.guidance || saved.automaticMemory !== settings.automaticMemory);
   const settingsDirty = useRef(false);
   useEffect(() => { settingsDirty.current = !!dirty; }, [dirty]);
@@ -170,9 +172,9 @@ export default function AIContextDialog({ projectId, snapshotId, sessionId, useM
                 <p className="text-sm whitespace-pre-wrap break-words">{row.pinned && <Pin size={12} className="inline mr-1" />}{row.content}</p>
                 {row.status === 'REVIEW' && <p className="mt-2 text-xs text-[var(--color-primary)]">Potential conflict. Review and save before using this memory.</p>}
                 {row.evidence && <button type="button" className="mt-2 text-xs underline text-[var(--color-text-muted)]" disabled={busy} onClick={() => run(() => chooseSession(row.evidence.sessionId))}>From: {row.evidence.title}</button>}
-                <div className="flex gap-2 mt-2"><Button variant="ghost" size="sm" disabled={busy} onClick={() => { setEditing(row); setNote(row.content); setPinned(row.pinned); }}>Edit</Button><Button variant="ghost" size="sm" icon={Trash2} disabled={busy} onClick={() => run(async () => { await forgetAiMemory(projectId, row.id, row.revision); await refreshNotes(); if (editing?.id === row.id) resetEditor(); })}>Forget</Button></div>
+                <div className="flex gap-2 mt-2"><Button variant="ghost" size="sm" disabled={busy} onClick={() => { setEditing(row); setNote(row.content); setPinned(row.pinned); }}>Edit</Button><Button variant="ghost" size="sm" icon={Trash2} disabled={busy} onClick={() => setForgetTarget(row)}>Forget</Button></div>
               </article>)}</div>
-              {notes.length > 0 && <div className="mt-4"><Button variant="danger" size="sm" disabled={busy || !access.can("chat.delete")} onClick={() => setClearConfirm(true)}>Clear all memory</Button>{clearConfirm && <div className="mt-3 text-xs"><p>Remove all saved notes? Conversation transcripts and project rules will remain.</p><div className="flex gap-2 mt-2"><Button size="sm" variant="danger" disabled={busy || !access.can("chat.delete")} onClick={() => run(async () => { await clearAiMemories(projectId); await refreshNotes(); setClearConfirm(false); resetEditor(); })}>Confirm clear memory</Button><Button size="sm" variant="ghost" disabled={busy} onClick={() => setClearConfirm(false)}>Keep memory</Button></div></div>}</div>}
+              {notes.length > 0 && <div className="mt-4"><Button variant="danger" size="sm" disabled={busy || !access.can("chat.delete")} onClick={() => setClearConfirm(true)}>Clear all memory</Button></div>}
             </div>
           </fieldset></section>}
           {tab === "context" && <section role="tabpanel" id="context-panel-context" aria-labelledby="context-tab-context" className="pt-5 space-y-4">
@@ -197,9 +199,65 @@ export default function AIContextDialog({ projectId, snapshotId, sessionId, useM
             </details>
           </section>}
         </>}
-        {discardConfirm && <div className="mt-5 text-xs border-t border-[var(--color-border)] pt-4"><p>Discard your unsaved changes?</p><div className="flex gap-2 mt-2"><Button size="sm" variant="danger" onClick={onClose}>Discard and close</Button><Button size="sm" variant="secondary" onClick={() => setDiscardConfirm(false)}>Keep editing</Button></div></div>}
         <div role="status" aria-live="polite" className="mt-4 text-xs text-[var(--color-text-muted)]">{busy && 'Saving or loading context...'}</div>
       </div>
+
+      <ConfirmDialog
+        isOpen={Boolean(forgetTarget)}
+        onClose={() => setForgetTarget(null)}
+        onConfirm={() => {
+          const target = forgetTarget;
+          setForgetTarget(null);
+          if (!target) return;
+          run(async () => {
+            await forgetAiMemory(projectId, target.id, target.revision);
+            await refreshNotes();
+            if (editing?.id === target.id) resetEditor();
+          });
+        }}
+        title="Forget Saved Memory"
+        message="Remove this saved note from project AI memory? Conversation transcripts will remain."
+        confirmText="Forget Note"
+        variant="danger"
+        icon={Trash2}
+        loading={busy}
+      >
+        {forgetTarget && (
+          <div className="px-3 py-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs text-[var(--color-text-secondary)] break-words">
+            {forgetTarget.content}
+          </div>
+        )}
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        isOpen={clearConfirm}
+        onClose={() => setClearConfirm(false)}
+        onConfirm={() =>
+          run(async () => {
+            await clearAiMemories(projectId);
+            await refreshNotes();
+            setClearConfirm(false);
+            resetEditor();
+          })
+        }
+        title="Clear All Saved Memory"
+        message="Remove all saved notes? Conversation transcripts and project rules will remain."
+        confirmText="Clear All Memory"
+        variant="danger"
+        icon={Trash2}
+        loading={busy}
+      />
+
+      <ConfirmDialog
+        isOpen={discardConfirm}
+        onClose={() => setDiscardConfirm(false)}
+        onConfirm={onClose}
+        title="Discard Unsaved Changes"
+        message="Discard your unsaved changes and close AI context settings?"
+        confirmText="Discard & Close"
+        cancelText="Keep Editing"
+        variant="warning"
+      />
     </dialog>, document.body,
   );
 }

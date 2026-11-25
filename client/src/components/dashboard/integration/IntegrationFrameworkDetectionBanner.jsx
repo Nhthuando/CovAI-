@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import {
-  Sparkles,
+  Terminal,
   DownloadCloud,
   AlertTriangle,
   CheckCircle2,
@@ -9,7 +9,7 @@ import {
   ArrowRight,
   Info,
   Layers,
-  Zap,
+  Play,
 } from "lucide-react";
 
 export default function IntegrationFrameworkDetectionBanner({
@@ -19,11 +19,7 @@ export default function IntegrationFrameworkDetectionBanner({
   isInstalling = false,
   isGenerating = false,
 }) {
-  const [selectedFramework, setSelectedFramework] = useState(
-    detectionInfo?.targetFramework ||
-      detectionInfo?.suggestedFrameworks?.[0] ||
-      "supertest"
-  );
+  const selectedFramework = "supertest";
   const [showInstallModal, setShowInstallModal] = useState(false);
 
   if (!detectionInfo) return null;
@@ -36,24 +32,24 @@ export default function IntegrationFrameworkDetectionBanner({
   } = detectionInfo;
 
   const missingPackages = permutationDetails?.missingPackages || [
-    selectedFramework === "playwright" ? "@playwright/test" : "supertest",
-    selectedFramework === "playwright" ? "playwright" : "jest",
+    "supertest",
+    "jest",
   ];
 
   return (
     <div className="flex flex-col gap-3">
       {/* 1. Missing Dependencies Alert Modal / Banner */}
       {needsDependencyInstall && (
-        <div className="rounded-[var(--radius-md)] border border-amber-500/30 bg-amber-500/10 p-4 text-[var(--color-text)] shadow-xs">
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-[var(--color-text)]">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-start gap-3">
-              <div className="mt-0.5 rounded-full bg-amber-500/20 p-1.5 text-amber-500">
-                <AlertTriangle size={18} />
+              <div className="mt-0.5 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)] p-1.5 text-[var(--color-text-secondary)]">
+                <AlertTriangle size={16} />
               </div>
               <div>
-                <h4 className="text-sm font-bold text-amber-500 m-0 flex items-center gap-2">
+                <h4 className="text-sm font-semibold text-[var(--color-text)] m-0 flex items-center gap-2">
                   <span>Test Files Detected Missing Dependencies</span>
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/30 font-semibold uppercase">
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-muted)] uppercase">
                     Scenario D
                   </span>
                 </h4>
@@ -62,7 +58,7 @@ export default function IntegrationFrameworkDetectionBanner({
                   <strong className="text-[var(--color-text)] font-semibold font-mono">
                     {framework?.toUpperCase() || "SUPERTEST"}
                   </strong>
-                  ), but required runner packages are missing from <code className="text-amber-400 font-mono">package.json</code>.
+                  ), but required runner packages are missing from <code className="text-[var(--color-text)] font-mono">package.json</code>.
                 </p>
 
                 {/* List missing packages */}
@@ -71,9 +67,9 @@ export default function IntegrationFrameworkDetectionBanner({
                   {missingPackages.map((pkg) => (
                     <span
                       key={pkg}
-                      className="px-2 py-0.5 rounded bg-[var(--color-surface)] border border-amber-500/30 font-mono text-[11px] font-semibold text-amber-400 flex items-center gap-1 shadow-xs"
+                      className="px-2 py-0.5 rounded bg-[var(--color-surface-secondary)] border border-[var(--color-border)] font-mono text-[11px] font-medium text-[var(--color-text-secondary)] flex items-center gap-1"
                     >
-                      <PackageOpen size={12} />
+                      <PackageOpen size={12} className="text-[var(--color-text-muted)]" />
                       {pkg}
                     </span>
                   ))}
@@ -86,7 +82,7 @@ export default function IntegrationFrameworkDetectionBanner({
                 type="button"
                 onClick={() => onInstallDependencies && onInstallDependencies()}
                 disabled={isInstalling}
-                className="flex items-center gap-2 px-3.5 py-2 rounded-[var(--radius-md)] bg-amber-500 hover:bg-amber-600 text-black text-xs font-bold transition-all shadow-xs cursor-pointer disabled:opacity-50"
+                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md bg-[var(--color-text)] text-[var(--color-bg)] hover:opacity-90 text-xs font-semibold transition-all duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
               >
                 <DownloadCloud size={14} className={isInstalling ? "animate-bounce" : ""} />
                 <span>{isInstalling ? "Installing packages..." : "Install Packages & Continue Analysis"}</span>
@@ -98,102 +94,57 @@ export default function IntegrationFrameworkDetectionBanner({
 
       {/* 2. Zero-Test Project Banner (No test files in repository) */}
       {isZeroTestProject && (
-        <div className="rounded-[var(--radius-md)] border border-[var(--color-primary)]/30 bg-[var(--color-primary)]/5 p-4 text-[var(--color-text)] shadow-xs">
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-[var(--color-text)]">
           <div className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-[var(--color-border)]/60">
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-2.5 border-b border-[var(--color-border)]">
               <div className="flex items-start gap-3">
-                <div className="mt-0.5 rounded-full bg-[var(--color-primary)]/20 p-1.5 text-[var(--color-primary)]">
-                  <Sparkles size={18} />
+                <div className="mt-0.5 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)] p-1.5 text-[var(--color-text-secondary)]">
+                  <Terminal size={16} />
                 </div>
                 <div>
-                  <h4 className="text-sm font-bold text-[var(--color-primary)] m-0 flex items-center gap-2">
+                  <h4 className="text-sm font-semibold text-[var(--color-text)] m-0 flex items-center gap-2">
                     <span>Zero Integration Tests Found</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--color-primary)]/20 border border-[var(--color-primary)]/30 font-semibold uppercase">
-                      Cold-Start AI
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] font-medium uppercase">
+                      Cold-Start
                     </span>
                   </h4>
                   <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                    No API test files found in repository. Select your preferred testing framework to let AI analyze AST router/controller endpoints and synthesize full coverage scenarios.
+                    No API test files found in repository. Analyze AST router/controller endpoints and synthesize Supertest + Jest coverage scenarios.
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* Framework Selector & AI CTA */}
+            {/* Framework Info & CTA */}
             <div className="flex flex-wrap items-center justify-between gap-4 pt-1">
-              {/* Radio Selector Cards */}
               <div className="flex flex-wrap items-center gap-3">
-                <label
-                  onClick={() => setSelectedFramework("supertest")}
-                  className={`flex items-center gap-2.5 px-3.5 py-2 rounded-[var(--radius-md)] border cursor-pointer transition-all select-none ${
-                    selectedFramework === "supertest"
-                      ? "border-[var(--color-primary)] bg-[var(--color-primary)]/15 text-[var(--color-text)] shadow-xs font-semibold"
-                      : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="integrationFramework"
-                    value="supertest"
-                    checked={selectedFramework === "supertest"}
-                    onChange={() => setSelectedFramework("supertest")}
-                    className="accent-[var(--color-primary)]"
-                  />
+                <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface-secondary)] text-[var(--color-text)] font-semibold select-none">
                   <div>
-                    <div className="text-xs font-bold flex items-center gap-1.5">
+                    <div className="text-xs font-semibold flex items-center gap-1.5">
                       <span>Supertest + Jest</span>
-                      <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 font-mono">
-                        Recommended for Express
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-[var(--color-bg)] text-[var(--color-text-secondary)] border border-[var(--color-border)] font-mono">
+                        Active Runner
                       </span>
                     </div>
-                    <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-                      In-memory Express HTTP server verification
+                    <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5 font-normal">
+                      In-memory Express HTTP server verification &amp; Istanbul coverage
                     </div>
                   </div>
-                </label>
-
-                <label
-                  onClick={() => setSelectedFramework("playwright")}
-                  className={`flex items-center gap-2.5 px-3.5 py-2 rounded-[var(--radius-md)] border cursor-pointer transition-all select-none ${
-                    selectedFramework === "playwright"
-                      ? "border-[var(--color-primary)] bg-[var(--color-primary)]/15 text-[var(--color-text)] shadow-xs font-semibold"
-                      : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="integrationFramework"
-                    value="playwright"
-                    checked={selectedFramework === "playwright"}
-                    onChange={() => setSelectedFramework("playwright")}
-                    className="accent-[var(--color-primary)]"
-                  />
-                  <div>
-                    <div className="text-xs font-bold flex items-center gap-1.5">
-                      <span>Playwright API Testing</span>
-                      <span className="text-[9px] px-1 py-0.2 rounded bg-sky-500/10 text-sky-500 border border-sky-500/20 font-mono">
-                        Playwright Runner
-                      </span>
-                    </div>
-                    <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-                      HTTP API verification via Playwright request context
-                    </div>
-                  </div>
-                </label>
+                </div>
               </div>
 
-              {/* Generate AI CTA Button */}
+              {/* Generate CTA Button */}
               <button
                 type="button"
                 onClick={() => onGenerateTests && onGenerateTests(selectedFramework)}
                 disabled={isGenerating}
-                className="flex items-center gap-2 px-4 py-2 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-bold hover:opacity-90 transition-all shadow-md cursor-pointer disabled:opacity-50"
+                className="flex items-center gap-2 px-4 py-2 rounded-md bg-[var(--color-text)] text-[var(--color-bg)] text-xs font-semibold hover:opacity-90 transition-all duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
               >
-                <Sparkles size={14} className={isGenerating ? "animate-spin text-amber-300" : ""} />
+                <Play size={12} fill="currentColor" className={isGenerating ? "animate-pulse" : ""} />
                 <span>
                   {isGenerating
                     ? "Analyzing AST & Generating Tests..."
-                    : "✨ Auto-generate API Test Scenarios with AI"}
+                    : "Auto-generate API Test Scenarios"}
                 </span>
               </button>
             </div>

@@ -63,6 +63,7 @@ import SystemTestVersionHistory from "./SystemTestVersionHistory.jsx";
 import SystemTestErrorNotice from "./SystemTestErrorNotice.jsx";
 import { systemTestEntryState } from "./systemTestEntryModel.js";
 import { getSystemGroupCaseCoverage } from "./systemCaseCoverage.js";
+import ConfirmDialog from "../../common/ConfirmDialog.jsx";
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
 
@@ -107,6 +108,7 @@ export default function SystemTestWorkspace({
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [pendingConfirmAction, setPendingConfirmAction] = useState(null);
 
   const [summaryData, setSummaryData] = useState(null);
   const [executedTestFiles, setExecutedTestFiles] = useState([]);
@@ -1471,19 +1473,18 @@ export default function SystemTestWorkspace({
                 scenario: sc,
               })
             }
-            onDeleteScenario={handleDeleteScenario}
+            onDeleteScenario={(sc, group) =>
+              setPendingConfirmAction({ kind: "delete", sc, group })
+            }
             onAIFixScenario={handleAIFixScenario}
             onInspectScenario={(sc) => setInspectedScenario(sc)}
             onOpenSpecFile={(filePath) => onOpenFile?.(filePath)}
             pendingOpsCount={pendingOpsCount}
             isApplyingPending={isApplyingPending}
             onApplyPendingChanges={() => flushPendingSystemOps({ reload: true })}
-            onDiscardPendingChanges={() => {
-              const cleared = { deletes: [], updates: [], adds: [] };
-              setPendingSystemOps(cleared);
-              saveStagedOps("system", snapshotId, cleared);
-              setNotice("Discarded temporary system test edits.");
-            }}
+            onDiscardPendingChanges={() =>
+              setPendingConfirmAction({ kind: "discard" })
+            }
           />
         )}
 
@@ -1677,6 +1678,42 @@ export default function SystemTestWorkspace({
           }}
         />
       )}
+      <ConfirmDialog
+        isOpen={Boolean(pendingConfirmAction)}
+        onClose={() => setPendingConfirmAction(null)}
+        onConfirm={() => {
+          if (!pendingConfirmAction) return;
+          if (pendingConfirmAction.kind === "delete") {
+            handleDeleteScenario(pendingConfirmAction.sc, pendingConfirmAction.group);
+          } else if (pendingConfirmAction.kind === "discard") {
+            const cleared = { deletes: [], updates: [], adds: [] };
+            setPendingSystemOps(cleared);
+            saveStagedOps("system", snapshotId, cleared);
+            setNotice("Discarded temporary system test edits.");
+          }
+          setPendingConfirmAction(null);
+        }}
+        title={
+          pendingConfirmAction?.kind === "discard"
+            ? "Discard Pending System Test Changes"
+            : "Delete System Test Scenario"
+        }
+        message={
+          pendingConfirmAction?.kind === "discard"
+            ? `Discard ${pendingOpsCount} staged system test ${pendingOpsCount === 1 ? "change" : "changes"}? This cannot be undone.`
+            : "Remove this system test scenario? Changes will be staged until you click Apply Changes."
+        }
+        confirmText={
+          pendingConfirmAction?.kind === "discard" ? "Discard Changes" : "Delete"
+        }
+        variant="danger"
+      >
+        {pendingConfirmAction?.kind === "delete" && pendingConfirmAction.sc && (
+          <div className="px-3 py-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-xs text-[var(--color-text-secondary)] break-all">
+            {pendingConfirmAction.sc.title || pendingConfirmAction.sc.testName}
+          </div>
+        )}
+      </ConfirmDialog>
     </div>
   );
 }

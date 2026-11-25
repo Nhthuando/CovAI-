@@ -7,7 +7,6 @@ import {
   XCircle,
   RefreshCw,
   Search,
-  Zap,
   PlayCircle,
   ArrowRight,
   Filter,
@@ -43,7 +42,7 @@ const STATUS_BADGE = {
 
 const OP_ICONS = {
   ANALYZE: Search,
-  GENERATE: Zap,
+  GENERATE: Terminal,
   RUN_TESTS: PlayCircle
 };
 
@@ -335,7 +334,7 @@ export default function IntegrationHistoryPane({ snapshotId, onOpenComparison })
             <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-md)] p-3.5 flex flex-col justify-between">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
-                  <Zap size={14} className="text-[var(--color-text)]" />
+                  <Terminal size={14} className="text-[var(--color-text-secondary)]" />
                   <span className="text-xs font-bold text-[var(--color-text)]">Generate</span>
                 </div>
                 <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)]">

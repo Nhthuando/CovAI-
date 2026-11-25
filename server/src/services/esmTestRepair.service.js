@@ -529,6 +529,32 @@ export const convertJestMocksAndStaticImportsToEsm = (code, { testFilePath = "te
             if (!hasExplicitAliasMapper(aliasPrefix)) return true;
             return false;
         }
+        // Check bare npm package specifiers: Jest ESM throws ERR_MODULE_NOT_FOUND when
+        // calling jest.unstable_mockModule(pkg, ...) if the package is not installed on disk
+        // (unlike CJS virtual mocks). If rootDir is known and the package cannot be resolved
+        // in pkgSub, rootDir, or CovAI's runtime node_modules (and isn't a Node builtin),
+        // drop unresolvable virtual mocks so the suite does not crash before running.
+        if (rootDir && !specVal.startsWith("node:") && !specVal.startsWith("@jest/")) {
+            const pkgName = specVal.startsWith("@")
+                ? specVal.split("/").slice(0, 2).join("/")
+                : specVal.split("/")[0];
+            const pkgSub = String(testFilePath || "").includes("/") ? String(testFilePath).split("/")[0] : "";
+            const searchRoots = [
+                pkgSub ? path.join(rootDir, pkgSub) : null,
+                rootDir,
+                process.cwd(),
+            ].filter(Boolean);
+            const existsInNodeModules = searchRoots.some((baseDir) => {
+                try {
+                    return fs.existsSync(path.join(baseDir, "node_modules", pkgName));
+                } catch {
+                    return false;
+                }
+            });
+            if (!existsInNodeModules) {
+                return true;
+            }
+        }
         return false;
     };
 
@@ -657,13 +683,42 @@ export const convertJestMocksAndStaticImportsToEsm = (code, { testFilePath = "te
         checkCall(stmt);
     }
 
-    // Also collect identifiers referenced inside unstable_mockModule calls so we can hoist their declarations before those calls
+    // Also collect identifiers referenced inside unstable_mockModule calls (and transitively inside
+    // any helper declarations they depend on, e.g. mockCreateUniversalStub -> _createStubMaker)
+    // so we can hoist all required declarations before unstable_mockModule calls.
     const mockReferencedIds = new Set();
+    const topLevelDeclRefs = new Map();
     for (const stmt of body) {
         const stmtSrc = out.slice(stmt.start, stmt.end);
         if (stmtSrc.includes("jest.unstable_mockModule")) {
             const idMatches = stmtSrc.matchAll(/\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b/g);
             for (const m of idMatches) mockReferencedIds.add(m[1]);
+        }
+        if (stmt.type === "VariableDeclaration" || stmt.type === "FunctionDeclaration") {
+            const declaredNames = stmt.type === "FunctionDeclaration"
+                ? [stmt.id?.name].filter(Boolean)
+                : (stmt.declarations || []).map((d) => d.id?.name).filter(Boolean);
+            const refs = new Set();
+            for (const m of stmtSrc.matchAll(/\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b/g)) {
+                refs.add(m[1]);
+            }
+            for (const dn of declaredNames) {
+                if (!topLevelDeclRefs.has(dn)) topLevelDeclRefs.set(dn, new Set());
+                for (const r of refs) topLevelDeclRefs.get(dn).add(r);
+            }
+        }
+    }
+    let addedTransitive = true;
+    while (addedTransitive) {
+        addedTransitive = false;
+        for (const [declName, refs] of topLevelDeclRefs.entries()) {
+            if (!mockReferencedIds.has(declName)) continue;
+            for (const r of refs) {
+                if (!mockReferencedIds.has(r)) {
+                    mockReferencedIds.add(r);
+                    addedTransitive = true;
+                }
+            }
         }
     }
 
@@ -783,15 +838,72 @@ export const convertJestMocksAndStaticImportsToEsm = (code, { testFilePath = "te
 
     let result = sections.join("\n\n") + "\n";
 
-    // Declare `let req, res, next;` if assigned without declaration inside describe/beforeEach (strict ESM protection)
-    const undeclared = [];
-    for (const v of ["req", "res", "next"]) {
-        const assigns = new RegExp(`(?:^|\\n)\\s*${v}\\s*=\\s*`, "m").test(result);
-        const declares = new RegExp(`\\b(?:let|var|const|function)\\b[^;\\n]*\\b${v}\\b|\\(\\s*[^)]*\\b${v}\\b`).test(result);
-        if (assigns && !declares) undeclared.push(v);
-    }
-    if (undeclared.length > 0) {
-        result = result.replace(/(describe\s*\([^{]*\{\s*\r?\n)/, `$1  let ${undeclared.join(", ")};\n`);
+    // Declare `let req, res, next;` at describe scope when beforeEach assigns them without a direct declaration
+    const astAfter = parseJavaScriptCode(result, { filePath: testFilePath });
+    if (astAfter.success && astAfter.ast?.program?.body) {
+        const topDeclared = new Set();
+        for (const st of astAfter.ast.program.body) {
+            if (st.type === "VariableDeclaration") {
+                for (const d of st.declarations || []) {
+                    if (d.id?.name) topDeclared.add(d.id.name);
+                }
+            }
+        }
+        const descInsertions = [];
+        traverse(astAfter.ast, {
+            CallExpression(dPath) {
+                if (dPath.node.callee?.name !== "describe") return;
+                const dBody = dPath.node.arguments?.[1]?.body;
+                if (!dBody || dBody.type !== "BlockStatement") return;
+                const directDecls = new Set(topDeclared);
+                const assigned = new Set();
+                for (const st of dBody.body || []) {
+                    if (st.type === "VariableDeclaration") {
+                        for (const d of st.declarations || []) {
+                            if (d.id?.name) directDecls.add(d.id.name);
+                        }
+                    } else if (
+                        st.type === "ExpressionStatement" &&
+                        st.expression?.type === "CallExpression" &&
+                        st.expression.callee?.name === "beforeEach"
+                    ) {
+                        const beFn = st.expression.arguments?.[0]?.body;
+                        if (beFn?.type === "BlockStatement") {
+                            for (const beStmt of beFn.body || []) {
+                                if (
+                                    beStmt.type === "ExpressionStatement" &&
+                                    beStmt.expression?.type === "AssignmentExpression" &&
+                                    beStmt.expression.left?.type === "Identifier" &&
+                                    ["req", "res", "next"].includes(beStmt.expression.left.name)
+                                ) {
+                                    assigned.add(beStmt.expression.left.name);
+                                }
+                            }
+                        }
+                    }
+                }
+                const missing = ["req", "res", "next"].filter((v) => assigned.has(v) && !directDecls.has(v));
+                if (missing.length > 0) {
+                    descInsertions.push({ pos: dBody.start + 1, text: `\n  let ${missing.join(", ")};` });
+                }
+            },
+        });
+        if (descInsertions.length > 0) {
+            descInsertions.sort((a, b) => b.pos - a.pos);
+            for (const ins of descInsertions) {
+                result = result.slice(0, ins.pos) + ins.text + result.slice(ins.pos);
+            }
+        }
+    } else {
+        const undeclared = [];
+        for (const v of ["req", "res", "next"]) {
+            const assigns = new RegExp(`(?:^|\\n)\\s*${v}\\s*=\\s*`, "m").test(result);
+            const declares = new RegExp(`(?:^|\\n)\\s*(?:let|var|const)\\s+[^;\\n]*\\b${v}\\b`, "m").test(result);
+            if (assigns && !declares) undeclared.push(v);
+        }
+        if (undeclared.length > 0) {
+            result = result.replace(/(describe\s*\([^{]*\{\s*\r?\n)/, `$1  let ${undeclared.join(", ")};\n`);
+        }
     }
 
     return result;

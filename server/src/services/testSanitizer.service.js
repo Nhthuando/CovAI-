@@ -1823,6 +1823,16 @@ export const healControllerFixturesWithAst = (code, filePath = "") => {
           let hasReqUsage = false;
           let foundBeforeEach = null;
           let hasReqAssignInBeforeEach = false;
+          const declaredInDescribe = new Set();
+          for (const stmt of describeFn.body.body || []) {
+            if (stmt.type === "VariableDeclaration") {
+              for (const decl of stmt.declarations || []) {
+                if (decl.id?.name) declaredInDescribe.add(decl.id.name);
+              }
+            } else if (stmt.type === "FunctionDeclaration" && stmt.id?.name) {
+              declaredInDescribe.add(stmt.id.name);
+            }
+          }
 
           path.traverse({
             MemberExpression(mPath) {
@@ -1907,16 +1917,29 @@ export const healControllerFixturesWithAst = (code, filePath = "") => {
           }
 
           if (hasReqUsage && !hasReqAssignInBeforeEach && !ancestorHasReq) {
+            const missingDescribeVars = ["req", "res", "next"].filter(
+              (v) => !declaredInDescribe.has(v),
+            );
+            const missingDeclPrefix =
+              missingDescribeVars.length > 0
+                ? `\n  let ${missingDescribeVars.join(", ")};`
+                : "";
             if (
               foundBeforeEach &&
               foundBeforeEach.arguments[0] &&
               foundBeforeEach.arguments[0].body
             ) {
+              if (missingDeclPrefix) {
+                insertions.push({
+                  pos: describeFn.body.start + 1,
+                  text: missingDeclPrefix,
+                });
+              }
               const bodyNode = foundBeforeEach.arguments[0].body;
               insertions.push({ pos: bodyNode.start + 1, text: fixture });
             } else {
               const describeBody = describeFn.body;
-              const newBeforeEach = `
+              const newBeforeEach = `${missingDeclPrefix}
   beforeEach(() => {${fixture}
   });`;
               insertions.push({

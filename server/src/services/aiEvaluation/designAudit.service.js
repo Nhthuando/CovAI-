@@ -7,6 +7,7 @@ import { extractValidEndpoints } from '../apiEndpointParser.service.js';
 import { referencedEnvironment, requiredStartupEnvironment } from '../fullSystemEnvironment.service.js';
 import { snapshotWorkspaceRoot, normalizeDiskPath } from '../../utils/snapshotWorkspace.js';
 import { DEFAULT_EVALUATION_CONFIG, fail, hash, VERSIONS } from './common.js';
+import { inferChatContract, resolveFunction, resolveModuleFunction, resolveRelativeSource, resolveValue } from './chatContractInference.js';
 
 const traverse = _traverse.default || _traverse;
 
@@ -64,6 +65,10 @@ const HARDCODED_KEY_PATTERNS = [
 const GROUNDING_REFUSAL_RE = /(?:only\s+(?:use|answer|rely)|based\s+(?:solely\s+|strictly\s+|only\s+)?on|provided\s+(?:context|document|knowledge|information)|do\s+not\s+(?:invent|make\s+up|hallucinate|fabricate|guess|assume)|if\s+.*\bnot\b.*(?:know|in\s+the\s+context|found|provided)|refuse|out[\s-]of[\s-]scope|cannot\s+answer|chỉ\s+(?:dựa\s+trên|sử\s+dụng|trả\s+lời\s+theo)|tài\s+liệu\s+(?:được\s+)?cung\s+cấp|không\s+(?:được\s+)?(?:bịa|tự\s+ý\s+suy\s+diễn|đoán)|từ\s+chối|ngoài\s+phạm\s+vi|không\s+(?:có|tìm\s+thấy)\s+thông\s+tin)/i;
 
 const CHAT_ROUTE_HINT_RE = /(?:^|\/)(?:chat|chatbot|bot|ask|assistant|completions|converse|message|messages|qa|rag|ai)(?:\/|$|-|_)/i;
+const QUESTION_FIELDS = ['message', 'question', 'prompt', 'query', 'input', 'text', 'userMessage', 'user_message', 'userInput', 'msg', 'content', 'q', 'chatInput', 'userQuery', 'user_input', 'userPrompt', 'ask'];
+const LEGACY_QUESTION_FIELDS = QUESTION_FIELDS.slice(0, 13);
+const HISTORY_FIELDS = ['history', 'conversationHistory', 'chatHistory', 'chat_history', 'previousMessages', 'pastMessages', 'conversation'];
+const SESSION_FIELDS = ['sessionId', 'session_id', 'conversationId', 'conversation_id', 'threadId', 'thread_id', 'chatId', 'chat_id'];
 const DOC_SKIP_NAMES = /^(?:package(?:-lock)?\.json|tsconfig(?:\..+)?\.json|jsconfig\.json|composer\.json|manifest\.json|vercel\.json|railway\.json|nodemon\.json|renovate\.json|\.eslintrc.*|pnpm-lock\.yaml|docker-compose.*\.ya?ml)$/i;
 const SEVERITY_WEIGHT = { CRITICAL: 30, HIGH: 18, MEDIUM: 10, LOW: 5 };
 
@@ -81,7 +86,10 @@ export function maskSecretsInSnippet(line = '', explicitSecrets = [], { maxLengt
     const rawLine = String(line ?? '');
     const firstNonWs = rawLine.search(/\S/);
     if (firstNonWs === -1) return '';
-    let masked = rawLine.slice(firstNonWs, firstNonWs + MASK_INPUT_WINDOW);
+    return maskSecretValues(rawLine.slice(firstNonWs, firstNonWs + MASK_INPUT_WINDOW), explicitSecrets).trim().slice(0, maxLength);
+}
+
+function maskSecretValues(masked, explicitSecrets) {
     for (const raw of explicitSecrets) {
         if (typeof raw === 'string' && raw.trim().length > 0) {
             masked = masked.split(raw).join('[REDACTED]');
@@ -96,7 +104,32 @@ export function maskSecretsInSnippet(line = '', explicitSecrets = [], { maxLengt
     masked = masked.replace(ESCAPED_QUOTED_SECRET_RE, '$1[REDACTED]$3');
     masked = masked.replace(QUOTED_SECRET_RE, '$1[REDACTED]$3');
     masked = masked.replace(UNQUOTED_SECRET_RE, '$1[REDACTED]');
-    return masked.trim().slice(0, maxLength);
+    return masked;
+}
+
+export function maskSecretsInText(text, explicitSecrets = [], maxLength = 6000) {
+    let input = String(text ?? '');
+    for (const secret of explicitSecrets) {
+        if (typeof secret === 'string' && secret.trim() && /[\r\n]/.test(secret)) {
+            const replacement = secret.split(/(\r\n|\r|\n)/)
+                .map((part, index) => index % 2 === 0 && part ? '[REDACTED]' : part)
+                .join('');
+            input = input.split(secret).join(replacement);
+        }
+    }
+    return input.split(/(\r\n|\r|\n)/).map((line, index) => {
+        if (index % 2 === 1) return line;
+        // Mask across chunk boundaries before passing long lines to the snippet masker.
+        const chunks = line.length > MASK_INPUT_WINDOW
+            ? maskSecretValues(line, explicitSecrets).match(/.{1,1000}/gs) || []
+            : [line];
+        return chunks.map(chunk => {
+            if (!chunk.trim()) return chunk;
+            return chunk.match(/^\s*/)[0]
+                + maskSecretsInSnippet(chunk, explicitSecrets, { maxLength: MASK_INPUT_WINDOW })
+                + chunk.match(/\s*$/)[0];
+        }).join('');
+    }).join('').slice(0, maxLength);
 }
 
 function safeWarnMessage(err) {
@@ -457,7 +490,7 @@ function collectModuleImports(ast) {
     traverse(ast, {
         ImportDeclaration(p) {
             for (const spec of p.node.specifiers) {
-                imports.set(spec.local.name, { source: p.node.source.value, imported: spec.imported?.name || spec.imported?.value || 'default' });
+                imports.set(spec.local.name, { source: p.node.source.value, imported: spec.type === 'ImportNamespaceSpecifier' ? '*' : spec.imported?.name || spec.imported?.value || 'default' });
             }
         },
         VariableDeclarator(p) {
@@ -475,87 +508,6 @@ function collectModuleImports(ast) {
         },
     });
     return imports;
-}
-
-function resolveRelativeSource(filePath, source, files) {
-    if (!source?.startsWith('.')) return null;
-    const base = path.posix.normalize(path.posix.join(path.posix.dirname(filePath), source));
-    return [base, ...['.js', '.mjs', '.cjs', '.ts', '/index.js'].map(ext => base + ext)].find(candidate => files.has(candidate)) || null;
-}
-
-function localHandler(handlerPath) {
-    if (handlerPath?.isFunction()) return handlerPath;
-    if (!handlerPath?.isIdentifier()) return null;
-    const binding = handlerPath.scope.getBinding(handlerPath.node.name)?.path;
-    if (binding?.isFunctionDeclaration()) return binding;
-    if (binding?.isVariableDeclarator() && binding.get('init').isFunction()) return binding.get('init');
-    return null;
-}
-
-function resolveRouteHandler(handlerPath, file, modules) {
-    const local = localHandler(handlerPath);
-    if (local || !handlerPath?.isIdentifier()) return local;
-    const imported = file.imports.get(handlerPath.node.name);
-    const source = modules.get(resolveRelativeSource(file.path, imported?.source, modules));
-    if (!source?.ast) return null;
-    let handler = null;
-    traverse(source.ast, {
-        ExportDefaultDeclaration(p) {
-            if (imported.imported === 'default') handler = localHandler(p.get('declaration'));
-        },
-        ExportNamedDeclaration(p) {
-            const declaration = p.get('declaration');
-            if (declaration?.node?.id?.name === imported.imported) handler = localHandler(declaration);
-            if (declaration?.isVariableDeclaration()) {
-                for (const item of declaration.get('declarations')) {
-                    if (item.node.id.name === imported.imported && item.get('init').isFunction()) handler = item.get('init');
-                }
-            }
-            for (const spec of p.get('specifiers')) {
-                if (spec.node.exported?.name === imported.imported) handler = localHandler(spec.get('local'));
-            }
-        },
-        AssignmentExpression(p) {
-            const name = extractExpressionHint(p.node.left);
-            if (name === `exports.${imported.imported}` || name === `module.exports.${imported.imported}` || (name === 'module.exports' && imported.imported === 'default')) {
-                handler = localHandler(p.get('right'));
-            } else if (name === 'module.exports' && p.node.right.type === 'ObjectExpression') {
-                for (const prop of p.get('right.properties')) {
-                    if ((prop.node.key?.name || prop.node.key?.value) === imported.imported) handler = localHandler(prop.get('value'));
-                }
-            }
-        },
-    });
-    return handler;
-}
-
-function collectRequiredBodyFields(handler, fields) {
-    const aliases = new Map([...fields].map(field => [field, field]));
-    handler.traverse({
-        VariableDeclarator(p) {
-            if (p.node.id.type !== 'ObjectPattern' || extractExpressionHint(p.node.init) !== 'req.body') return;
-            for (const prop of p.node.id.properties) {
-                if (prop.type === 'ObjectProperty' && prop.value.type === 'Identifier') aliases.set(prop.value.name, prop.key.name || prop.key.value);
-            }
-        },
-    });
-    const required = new Set();
-    handler.traverse({
-        IfStatement(p) {
-            const test = p.node.test;
-            if (test.type !== 'UnaryExpression' || test.operator !== '!') return;
-            const hint = extractExpressionHint(test.argument);
-            const field = aliases.get(hint) || (hint.startsWith('req.body.') ? hint.slice(9) : null);
-            if (!fields.has(field)) return;
-            p.get('consequent').traverse({
-                CallExpression(call) {
-                    if (call.node.callee?.type === 'MemberExpression' && call.node.callee.property?.name === 'status'
-                        && call.node.arguments[0]?.value === 400 && call.findParent(parent => parent.isReturnStatement())) required.add(field);
-                },
-            });
-        },
-    });
-    return [...required];
 }
 
 function collectRequestBodyFields(ast) {
@@ -623,26 +575,63 @@ function inferResponseJsonPointerFromAst(ast) {
 
 function detectDirectExpressRoutes(jsFiles, aiCallingFiles, routeContracts) {
     const routes = [];
+    const nextRoutes = [];
     const modules = new Map(jsFiles.map(file => {
         const parsed = parseJavaScriptCode(file.content);
-        return [file.path, { ...file, ast: parsed.success ? parsed.ast : null, imports: parsed.success ? collectModuleImports(parsed.ast) : new Map(), mounts: new Map() }];
+        return [file.path, { ...file, ast: parsed.success ? parsed.ast : null, imports: parsed.success ? collectModuleImports(parsed.ast) : new Map() }];
     }));
-    const importedMounts = new Map();
+    const mounts = new Map();
+    const routerKey = (p, file) => {
+        if (p.isIdentifier()) {
+            const imported = file.imports.get(p.node.name);
+            if (imported?.source.startsWith('.') && !resolveRelativeSource(file.path, imported.source, modules)) return null;
+        }
+        const resolved = resolveValue(p, file, modules);
+        return resolved?.path.node || (p.isIdentifier() ? p.scope.getBinding(p.node.name)?.identifier : null);
+    };
+    const prefixesFor = (router, seen = new Set(), depth = 0) => {
+        if (seen.has(router)) return [];
+        const parents = mounts.get(router);
+        if (!parents || depth >= 5) return [''];
+        const visited = new Set([...seen, router]);
+        return parents.flatMap(({ parent, prefix }) => prefixesFor(parent, visited, depth + 1).map(base => `${base}/${prefix}`));
+    };
+    const followsAiCall = contract => contract && QUESTION_FIELDS.some(field => contract.fields.has(field))
+        && [...contract.visitedFiles].some(file => aiCallingFiles.has(file));
     for (const file of modules.values()) {
         if (!file.ast) continue;
         traverse(file.ast, {
             CallExpression(p) {
                 if (p.node.callee?.type !== 'MemberExpression' || p.node.callee.property?.name !== 'use') return;
-                const [prefix, router] = p.node.arguments;
-                if (prefix?.type !== 'StringLiteral' || router?.type !== 'Identifier') return;
-                file.mounts.set(router.name, prefix.value);
-                const source = resolveRelativeSource(file.path, file.imports.get(router.name)?.source, modules);
-                if (source) importedMounts.set(source, [...(importedMounts.get(source) || []), prefix.value]);
+                const [prefix, ...routers] = p.get('arguments');
+                if (!prefix?.isStringLiteral()) return;
+                const parent = routerKey(p.get('callee.object'), file);
+                for (const router of routers) {
+                    if (!router.isIdentifier() && !router.isMemberExpression()) continue;
+                    const key = routerKey(router, file);
+                    if (key) mounts.set(key, [...(mounts.get(key) || []), { parent, prefix: prefix.node.value }]);
+                }
             },
         });
     }
     for (const file of modules.values()) {
         if (!file.ast) continue;
+
+        const appRoute = file.path.match(/^(?:src\/)?app\/(.*\/)?route\.(?:js|ts|mjs|jsx|tsx)$/);
+        const pagesRoute = file.path.match(/^(?:src\/)?pages\/api\/(.+)\.(?:js|ts|mjs|jsx|tsx)$/);
+        const nextHandler = appRoute || pagesRoute ? resolveModuleFunction(file, appRoute ? 'POST' : 'default', modules) : null;
+        if (nextHandler) {
+            const nextPath = appRoute
+                ? '/' + (appRoute[1] || '').split('/').filter(segment => segment && !/^\(.*\)$/.test(segment)).join('/')
+                : '/api/' + pagesRoute[1].replace(/(?:^|\/)index$/, '');
+            const endpointPath = nextPath.replace(/\/$/, '') || '/';
+            const contract = inferChatContract(nextHandler, modules);
+            if (aiCallingFiles.has(file.path) || CHAT_ROUTE_HINT_RE.test(file.path) || followsAiCall(contract)) {
+                routeContracts.set(`POST:${endpointPath}`, contract);
+                nextRoutes.push({ method: 'POST', endpointPath, sourceFile: file.path,
+                    line: nextHandler.file === file ? nextHandler.path.node.loc?.start?.line || 1 : 1, requiresRouteAuth: false, hasRateLimitMiddleware: false });
+            }
+        }
 
         traverse(file.ast, {
             CallExpression(p) {
@@ -653,29 +642,26 @@ function detectDirectExpressRoutes(jsFiles, aiCallingFiles, routeContracts) {
                 const firstArg = p.node.arguments[0];
                 if (firstArg?.type !== 'StringLiteral') return;
                 const routePath = firstArg.value;
-                const handler = resolveRouteHandler(p.get('arguments').at(-1), file, modules);
-                const prefixes = importedMounts.get(file.path) || [''];
-                const sameFilePrefix = file.mounts.get(callee.object?.name) || '';
-                const endpointPaths = prefixes.map(prefix => `${prefix}${sameFilePrefix}/${routePath}`.replace(/\/+/g, '/').replace(/\/$/, '') || '/');
+                const handler = method === 'post' ? resolveFunction(p.get('arguments').at(-1), file, modules) : null;
+                const contract = handler ? inferChatContract(handler, modules) : null;
+                const prefixes = prefixesFor(routerKey(p.get('callee.object'), file));
+                const endpointPaths = new Set((prefixes.length ? prefixes : ['']).map(prefix => `${prefix}/${routePath}`.replace(/\/+/g, '/').replace(/\/$/, '') || '/'));
                 const isAiFile = aiCallingFiles.has(file.path);
-                if (!endpointPaths.some(endpoint => CHAT_ROUTE_HINT_RE.test(endpoint)) && !isAiFile) return;
+                if (![...endpointPaths].some(endpoint => CHAT_ROUTE_HINT_RE.test(endpoint)) && !isAiFile && !followsAiCall(contract)) return;
 
                 const argNames = p.node.arguments.slice(1).map(arg => extractExpressionHint(arg)).filter(Boolean);
                 const hasAuthMiddleware = argNames.some(name => /(?:auth|token|jwt|protect|guard|session)/i.test(name));
                 const hasRateLimitMiddleware = argNames.some(name => /(?:limit|rate|throttle)/i.test(name));
                 for (const endpointPath of endpointPaths) {
-                    if (method === 'post' && handler) {
-                        const fields = collectRequestBodyFields(handler);
-                        routeContracts.set(`POST:${endpointPath}`, { fields, required: collectRequiredBodyFields(handler, fields), responsePointer: inferResponseJsonPointerFromAst(handler) });
-                    }
+                    if (contract) routeContracts.set(`POST:${endpointPath}`, contract);
                     routes.push({
-                    method: method.toUpperCase(),
-                    endpointPath,
-                    sourceFile: file.path,
-                    line: p.node.loc?.start?.line || 1,
-                    requiresRouteAuth: hasAuthMiddleware,
-                    hasRateLimitMiddleware,
-                });
+                        method: method.toUpperCase(),
+                        endpointPath,
+                        sourceFile: file.path,
+                        line: p.node.loc?.start?.line || 1,
+                        requiresRouteAuth: hasAuthMiddleware,
+                        hasRateLimitMiddleware,
+                    });
                 }
             },
             BinaryExpression(p) {
@@ -700,7 +686,7 @@ function detectDirectExpressRoutes(jsFiles, aiCallingFiles, routeContracts) {
             },
         });
     }
-    return routes;
+    return [...routes, ...nextRoutes];
 }
 
 export async function analyzeChatbotWorkspace(workspaceRoot, options = {}) {
@@ -731,6 +717,7 @@ export async function analyzeChatbotWorkspace(workspaceRoot, options = {}) {
 
     const aiCallingFiles = new Set();
     const systemPrompts = [];
+    const systemPromptTexts = [];
     const findings = [];
     const highTemperatureConfigs = [];
     let appHasGlobalRateLimit = false;
@@ -755,6 +742,9 @@ export async function analyzeChatbotWorkspace(workspaceRoot, options = {}) {
         const contentHash = hash(extracted.text);
         const secretScan = detectSensitiveLiteralsInSystemPrompt(extracted.text);
         if (!systemPrompts.some(sp => sp.file === file.path && sp.contentHash === contentHash)) {
+            if (systemPromptTexts.length < 5) {
+                systemPromptTexts.push({ file: file.path, text: maskSecretsInText(extracted.text, secretScan.secrets) });
+            }
             systemPrompts.push({
                 file: file.path,
                 line: baseLine,
@@ -1189,6 +1179,7 @@ export async function analyzeChatbotWorkspace(workspaceRoot, options = {}) {
         return {
             detected: false,
             designScore: null,
+            systemPromptTexts: [],
             summary: {
                 analyzerVersion: VERSIONS.designAudit,
                 ecosystem: pythonSourceFiles.length && !jsFiles.length ? 'python' : 'node',
@@ -1266,26 +1257,27 @@ export async function analyzeChatbotWorkspace(workspaceRoot, options = {}) {
 
     const routeContracts = new Map();
     const directRoutes = detectDirectExpressRoutes(jsFiles, aiCallingFiles, routeContracts);
-    for (const file of jsFiles) {
-        if (!aiCallingFiles.has(file.path) && !CHAT_ROUTE_HINT_RE.test(file.path)) continue;
-        const appRoute = file.path.match(/^(?:src\/)?app\/(.+)\/route\.(?:js|ts|mjs)$/);
-        const pagesRoute = file.path.match(/^(?:src\/)?pages\/api\/(.+)\.(?:js|ts)$/);
-        const exported = appRoute ? /export\s+(?:(?:async\s+)?function\s+POST\b|const\s+POST\b)/.exec(file.content)
-            : pagesRoute ? /export\s+default\b/.exec(file.content) : null;
-        if (!exported) continue;
-        const endpointPath = appRoute
-            ? '/' + appRoute[1].split('/').filter(segment => !/^\(.*\)$/.test(segment)).join('/')
-            : '/api/' + pagesRoute[1].replace(/(?:^|\/)index$/, '');
-        directRoutes.push({ method: 'POST', endpointPath: endpointPath.replace(/\/$/, '') || '/', sourceFile: file.path,
-            line: file.content.slice(0, exported.index).split('\n').length, requiresRouteAuth: false, hasRateLimitMiddleware: false });
-    }
+    const contractKey = ep => `${ep.method}:${ep.endpointPath.replace(/\/$/, '') || '/'}`;
+    const directKeys = new Set(directRoutes.map(contractKey));
     const allChatEndpoints = [...mappedEndpoints];
     for (const route of directRoutes) {
-        const unmountedIndex = allChatEndpoints.findIndex(existing => existing.method === route.method && existing.sourceFile === route.sourceFile
+        const unmountedIndex = allChatEndpoints.findIndex(existing => mappedEndpoints.includes(existing)
+            && !directKeys.has(contractKey(existing))
+            && existing.method === route.method && existing.sourceFile === route.sourceFile
             && existing.endpointPath !== route.endpointPath && route.endpointPath.endsWith(existing.endpointPath));
-        if (unmountedIndex !== -1) allChatEndpoints.splice(unmountedIndex, 1, route);
-        if (!allChatEndpoints.some(existing => existing.method === route.method && (existing.endpointPath === route.endpointPath || existing.endpointPath.endsWith(route.endpointPath)))) {
+        if (unmountedIndex !== -1) allChatEndpoints.splice(unmountedIndex, 1);
+        if (allChatEndpoints.some(existing => contractKey(existing) === contractKey(route))) continue;
+        const mounted = allChatEndpoints.find(existing => mappedEndpoints.includes(existing)
+            && !directKeys.has(contractKey(existing))
+            && existing.method === route.method && existing.sourceFile === route.sourceFile
+            && existing.line === route.line && existing.endpointPath.endsWith(route.endpointPath));
+        if (mounted) {
+            const contract = routeContracts.get(contractKey(route));
+            if (contract && !routeContracts.has(contractKey(mounted))) routeContracts.set(contractKey(mounted), contract);
+        } else if (unmountedIndex === -1) {
             allChatEndpoints.push(route);
+        } else {
+            allChatEndpoints.splice(unmountedIndex, 0, route);
         }
     }
 
@@ -1442,16 +1434,47 @@ export async function analyzeChatbotWorkspace(workspaceRoot, options = {}) {
     const penalty = sanitizedFindings.reduce((sum, item) => sum + (SEVERITY_WEIGHT[item.severity] || 5), 0);
     const designScore = Math.max(0, Math.min(100, 100 - penalty));
 
-    const primaryEndpoint = allChatEndpoints.find(ep => ep.method === 'POST') || allChatEndpoints[0] || null;
-    const contract = primaryEndpoint ? routeContracts.get(`${primaryEndpoint.method}:${primaryEndpoint.endpointPath}`) : null;
-    const selectedLatest = ['message', 'question', 'prompt', 'query', 'input', 'text', 'content', 'userMessage', 'msg'].find(field => contract?.fields.has(field));
-    const latest = ['message', 'question', 'prompt', 'query', 'input', 'text', 'userMessage', 'user_message', 'userInput', 'msg', 'content', 'q', 'chatInput'].find(field => requestBodyFields.has(field));
-    const history = ['history', 'conversationHistory', 'chatHistory', 'chat_history', 'previousMessages', 'pastMessages', 'conversation'].find(field => requestBodyFields.has(field));
-    const session = ['sessionId', 'session_id', 'conversationId', 'conversation_id', 'threadId', 'thread_id', 'chatId', 'chat_id'].find(field => requestBodyFields.has(field));
+    let primaryEndpoint = null;
+    let bestScore = -Infinity;
+    for (const endpoint of allChatEndpoints) {
+        if (endpoint.method !== 'POST') continue;
+        const candidate = routeContracts.get(contractKey(endpoint));
+        const lastSegment = endpoint.endpointPath.split('/').filter(Boolean).at(-1) || '';
+        const score = (candidate && (candidate.fields.has('messages') || QUESTION_FIELDS.some(field => candidate.fields.has(field))) ? 8 : 0)
+            + (candidate?.responsePointer ? 4 : 0)
+            + (CHAT_ROUTE_HINT_RE.test(lastSegment) ? 2 : 0)
+            - (/[:*]/.test(endpoint.endpointPath) ? 6 : 0)
+            - (/history|session|delete|clear|feedback|upload|title|rename|webhook|login|register|payment|checkout|intent/i.test(lastSegment) ? 4 : 0);
+        if (score > bestScore) {
+            bestScore = score;
+            primaryEndpoint = endpoint;
+        }
+    }
+    primaryEndpoint ||= allChatEndpoints[0] || null;
+    const contract = primaryEndpoint ? routeContracts.get(contractKey(primaryEndpoint)) : null;
+    const selectedLatest = QUESTION_FIELDS.find(field => contract?.fields.has(field));
     let conversationMode = 'messages';
     let bindings = { '/messages': 'messages' };
     let responseConversationIdPointer;
-    if (!detectedMessagesArray) {
+    if (selectedLatest || contract?.fields.has('messages')) {
+        const requiredLatest = QUESTION_FIELDS.find(field => contract.required.includes(field));
+        if (!contract.fields.has('messages') || requiredLatest) {
+            const latest = requiredLatest || selectedLatest;
+            const history = [...HISTORY_FIELDS, 'pastConversation', 'chatLog', 'prevMessages'].find(field => contract.fields.has(field));
+            const session = SESSION_FIELDS.find(field => contract.fields.has(field));
+            bindings = { [`/${latest}`]: 'latestUserMessage' };
+            if (history) bindings[`/${history}`] = 'history';
+            else if (session && contract.required.includes(session)) bindings[`/${session}`] = 'generatedConversationId';
+            else if (session) {
+                bindings[`/${session}`] = 'conversationId';
+                conversationMode = 'session';
+                responseConversationIdPointer = `/${session}`;
+            }
+        }
+    } else if (!detectedMessagesArray) {
+        const latest = LEGACY_QUESTION_FIELDS.find(field => requestBodyFields.has(field));
+        const history = HISTORY_FIELDS.find(field => requestBodyFields.has(field));
+        const session = SESSION_FIELDS.find(field => requestBodyFields.has(field));
         if (latest) {
             bindings = { [`/${latest}`]: 'latestUserMessage' };
             if (history) bindings[`/${history}`] = 'history';
@@ -1466,12 +1489,6 @@ export async function analyzeChatbotWorkspace(workspaceRoot, options = {}) {
             responseConversationIdPointer = '/sessionId';
         }
     }
-    if (selectedLatest && !latest && !detectedSessionId && !detectedMessagesArray) {
-        bindings = { [`/${selectedLatest}`]: 'latestUserMessage' };
-        if (contract.fields.has('history')) bindings['/history'] = 'history';
-        conversationMode = 'messages';
-        responseConversationIdPointer = undefined;
-    }
     const requiredBodyFields = (contract?.required || []).filter(field => !Object.hasOwn(bindings, `/${field}`));
     const responsePointer = contract?.responsePointer || inferredJsonPointer || '/answer';
 
@@ -1483,6 +1500,7 @@ export async function analyzeChatbotWorkspace(workspaceRoot, options = {}) {
         requestTemplate: conversationMode === 'session' ? { message: '' } : {},
         bindings,
         requiredBodyFields,
+        historyFormat: contract?.historyFormat || 'chat',
         responsePointer,
         ...(conversationMode === 'session' ? { responseConversationIdPointer } : {}),
         llmEnvVars: [...requiredLlmEnvVars],
@@ -1495,6 +1513,7 @@ export async function analyzeChatbotWorkspace(workspaceRoot, options = {}) {
     return {
         detected: true,
         designScore,
+        systemPromptTexts,
         summary: {
             analyzerVersion: VERSIONS.designAudit,
             ecosystem: hasOnlyPython ? 'python' : pythonManifests.length ? 'mixed' : 'node',
@@ -1523,7 +1542,7 @@ export async function analyzeChatbotWorkspace(workspaceRoot, options = {}) {
     };
 }
 
-async function resolveProjectSnapshot(db, projectId, snapshotId) {
+export async function resolveProjectSnapshot(db, projectId, snapshotId) {
     if (snapshotId) {
         const snap = await db.projectSnapshot.findFirst({
             where: { id: snapshotId, projectId },

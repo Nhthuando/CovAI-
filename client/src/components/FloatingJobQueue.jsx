@@ -44,32 +44,37 @@ const DRAG_THRESHOLD_PX = 5;
 const STATUS_BADGE = {
   QUEUED: {
     label: "Queued",
-    textClass: "text-amber-400",
-    bgClass: "bg-amber-500/10 border-amber-500/30",
+    textClass: "text-[var(--color-text-muted)]",
+    dotClass: "bg-[var(--color-text-muted)]",
+    iconClass: "text-[var(--color-text-muted)]",
     icon: Clock,
   },
   RUNNING: {
     label: "Running",
-    textClass: "text-sky-400",
-    bgClass: "bg-sky-500/10 border-sky-500/30",
+    textClass: "text-[var(--color-text)]",
+    dotClass: "bg-[var(--color-text)]",
+    iconClass: "text-[var(--color-text)]",
     icon: Loader2,
   },
   SUCCESS: {
     label: "Completed",
-    textClass: "text-emerald-400",
-    bgClass: "bg-emerald-500/10 border-emerald-500/30",
+    textClass: "text-[var(--color-text-secondary)]",
+    dotClass: "bg-emerald-500/70",
+    iconClass: "text-[var(--color-text-secondary)]",
     icon: CheckCircle2,
   },
   FAILED: {
     label: "Failed",
-    textClass: "text-rose-400",
-    bgClass: "bg-rose-500/10 border-rose-500/30",
+    textClass: "text-rose-300/90",
+    dotClass: "bg-rose-400/80",
+    iconClass: "text-rose-400/85",
     icon: XCircle,
   },
   CANCELED: {
     label: "Canceled",
     textClass: "text-[var(--color-text-muted)]",
-    bgClass: "bg-[var(--color-surface-secondary)] border-[var(--color-border)]",
+    dotClass: "bg-[var(--color-border-strong)]",
+    iconClass: "text-[var(--color-text-muted)]",
     icon: Ban,
   },
 };
@@ -416,7 +421,7 @@ export default function FloatingJobQueue() {
             }
           }}
           className={`fixed z-[70] flex items-center gap-2 rounded-lg border px-2.5 py-2 select-none shadow-lg transition-colors duration-150 ${
-            isDragging ? "cursor-grabbing border-[var(--color-primary)]" : "cursor-grab border-[var(--color-border-strong)] hover:border-[var(--color-primary)]"
+            isDragging ? "cursor-grabbing border-[var(--color-border-strong)]" : "cursor-grab border-[var(--color-border-strong)] hover:border-[var(--color-text-muted)]"
           } bg-[var(--color-surface)] text-[var(--color-text)]`}
           title="Drag to move · Click to open Job Queue"
         >
@@ -424,11 +429,11 @@ export default function FloatingJobQueue() {
 
           {activeCount > 0 ? (
             <span className="relative flex h-2.5 w-2.5 shrink-0 items-center justify-center">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-sky-400" />
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--color-text)] opacity-60" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[var(--color-text)]" />
             </span>
           ) : (
-            <ListOrdered size={14} className="shrink-0 text-[var(--color-primary)]" aria-hidden="true" />
+            <ListOrdered size={14} className="shrink-0 text-[var(--color-text-secondary)]" aria-hidden="true" />
           )}
 
           <span className="text-xs font-semibold whitespace-nowrap">
@@ -436,9 +441,9 @@ export default function FloatingJobQueue() {
           </span>
 
           <span
-            className={`rounded px-1.5 py-0.5 text-[11px] font-mono font-semibold tabular-nums ${
+            className={`rounded-md px-1.5 py-0.5 text-[11px] font-mono font-semibold tabular-nums ${
               activeCount > 0
-                ? "bg-sky-500/15 text-sky-400 border border-sky-500/30"
+                ? "bg-[var(--color-text)] text-[var(--color-bg)] border border-transparent"
                 : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]"
             }`}
           >
@@ -461,7 +466,7 @@ export default function FloatingJobQueue() {
 
       {isOpen && (
         <div
-          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/65 p-3 sm:p-5"
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/75 p-3 sm:p-6"
           onClick={(e) => {
             if (e.target === e.currentTarget) setIsOpen(false);
           }}
@@ -470,30 +475,32 @@ export default function FloatingJobQueue() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="unified-job-queue-title"
-            className="flex h-[min(86vh,760px)] w-[min(96vw,1040px)] flex-col overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] shadow-2xl"
+            className="flex h-[min(86vh,740px)] w-[min(96vw,980px)] flex-col overflow-hidden rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg)] text-[var(--color-text)] shadow-2xl"
           >
             {/* Header */}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-3.5">
+            <div className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-3.5">
               <div className="flex items-center gap-2.5 min-w-0">
-                <ListOrdered size={18} className="shrink-0 text-[var(--color-primary)]" />
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)]">
+                  <ListOrdered size={14} />
+                </div>
                 <div className="min-w-0">
-                  <h2 id="unified-job-queue-title" className="text-sm font-semibold truncate">
-                    {currentProjectId ? "Unified Project Job Queue" : "All Projects Job Queue"}
+                  <h2 id="unified-job-queue-title" className="text-[13px] font-semibold leading-tight truncate">
+                    {currentProjectId ? "Project Job Queue" : "All Projects Job Queue"}
                   </h2>
-                  <p className="text-[11px] text-[var(--color-text-muted)]">
-                    Import, Unit, Integration, System Testing, and AI Chatbot Evaluation tasks
+                  <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5 truncate">
+                    Background execution history across Import, Unit, Integration, System, and AI Evaluation
                   </p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   type="button"
                   onClick={() => fetchJobs(false)}
                   disabled={loading}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-2.5 py-1.5 text-xs font-medium text-[var(--color-text)] hover:border-[var(--color-text-muted)] cursor-pointer transition-colors duration-150 active:scale-[0.98]"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1 text-xs font-medium text-[var(--color-text-secondary)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text)] cursor-pointer transition-colors duration-150 active:scale-[0.98] disabled:opacity-50"
                 >
-                  <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
+                  <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
                   <span>Refresh</span>
                 </button>
                 <button
@@ -502,107 +509,108 @@ export default function FloatingJobQueue() {
                   aria-label="Close Job Queue"
                   className="rounded-md p-1.5 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-text)] cursor-pointer transition-colors duration-150"
                 >
-                  <X size={16} />
+                  <X size={15} />
                 </button>
               </div>
             </div>
 
-            {/* Summary KPI Strip */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-3">
-              <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-3 py-2">
-                <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Running / Queued</div>
-                <div className="mt-0.5 text-base font-bold font-mono tabular-nums text-sky-400">{stats.active}</div>
+            {/* Compact Flush Stat Strip */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-[var(--color-border)] border-b border-[var(--color-border)] bg-[var(--color-bg)]">
+              <div className="flex items-center justify-between px-5 py-2">
+                <span className="text-[11px] text-[var(--color-text-muted)]">Running / Queued</span>
+                <span className="text-xs font-semibold font-mono tabular-nums text-[var(--color-text)]">{stats.active}</span>
               </div>
-              <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-3 py-2">
-                <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Completed</div>
-                <div className="mt-0.5 text-base font-bold font-mono tabular-nums text-emerald-400">{stats.completed}</div>
+              <div className="flex items-center justify-between px-5 py-2">
+                <span className="text-[11px] text-[var(--color-text-muted)]">Completed</span>
+                <span className="text-xs font-semibold font-mono tabular-nums text-[var(--color-text)]">{stats.completed}</span>
               </div>
-              <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-3 py-2">
-                <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Failed</div>
-                <div className="mt-0.5 text-base font-bold font-mono tabular-nums text-rose-400">{stats.failed}</div>
+              <div className="flex items-center justify-between px-5 py-2">
+                <span className="text-[11px] text-[var(--color-text-muted)]">Failed</span>
+                <span className={`text-xs font-semibold font-mono tabular-nums ${stats.failed > 0 ? "text-rose-300/90" : "text-[var(--color-text-secondary)]"}`}>
+                  {stats.failed}
+                </span>
               </div>
-              <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-3 py-2">
-                <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Total Listed</div>
-                <div className="mt-0.5 text-base font-bold font-mono tabular-nums text-[var(--color-text)]">{jobs.length}</div>
-              </div>
-            </div>
-
-            {/* Domain Category Filter Tabs + Status + Search */}
-            <div className="flex flex-col gap-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-3">
-              <div className="flex flex-wrap items-center gap-1.5">
-                {JOB_DOMAIN_TABS.map((tab) => {
-                  const count = stats.domainCounts[tab.id] ?? 0;
-                  const isActive = domainFilter === tab.id;
-                  return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      onClick={() => setDomainFilter(tab.id)}
-                      className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium cursor-pointer transition-colors duration-150 ${
-                        isActive
-                          ? "border-[var(--color-primary)] bg-[var(--color-surface-secondary)] text-[var(--color-text)]"
-                          : "border-transparent text-[var(--color-text-muted)] hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-text)]"
-                      }`}
-                    >
-                      <span>{tab.label}</span>
-                      <span className="rounded bg-[var(--color-bg)] px-1.5 py-0.2 text-[10px] font-mono tabular-nums text-[var(--color-text-secondary)]">
-                        {count}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="flex flex-wrap items-center justify-between gap-2.5">
-                <div className="flex items-center gap-1">
-                  {[
-                    { id: "ALL", label: "All Status" },
-                    { id: "ACTIVE", label: "Active" },
-                    { id: "COMPLETED", label: "Completed" },
-                    { id: "FAILED", label: "Failed" },
-                  ].map((st) => (
-                    <button
-                      key={st.id}
-                      type="button"
-                      onClick={() => setStatusFilter(st.id)}
-                      className={`rounded-md border px-2.5 py-1 text-[11px] font-medium cursor-pointer transition-colors duration-150 ${
-                        statusFilter === st.id
-                          ? "border-[var(--color-border-strong)] bg-[var(--color-surface-secondary)] text-[var(--color-text)]"
-                          : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                      }`}
-                    >
-                      {st.label}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 w-full sm:w-64">
-                  <Search size={13} className="shrink-0 text-[var(--color-text-muted)]" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Filter by task, type, ID..."
-                    className="w-full bg-transparent text-xs text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:outline-none"
-                  />
-                  {searchQuery && (
-                    <button
-                      type="button"
-                      onClick={() => setSearchQuery("")}
-                      className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
-                      aria-label="Clear search"
-                    >
-                      <X size={12} />
-                    </button>
-                  )}
-                </div>
+              <div className="flex items-center justify-between px-5 py-2">
+                <span className="text-[11px] text-[var(--color-text-muted)]">Total</span>
+                <span className="text-xs font-semibold font-mono tabular-nums text-[var(--color-text)]">{jobs.length}</span>
               </div>
             </div>
 
-            {/* Jobs List Body */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-2.5">
+            {/* Domain Underline Tabs */}
+            <div className="flex items-center gap-5 overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-surface)] px-5">
+              {JOB_DOMAIN_TABS.map((tab) => {
+                const count = stats.domainCounts[tab.id] ?? 0;
+                const isActive = domainFilter === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setDomainFilter(tab.id)}
+                    className={`inline-flex items-center gap-1.5 border-b-2 py-2.5 text-xs font-medium whitespace-nowrap cursor-pointer transition-colors duration-150 ${
+                      isActive
+                        ? "border-[var(--color-text)] text-[var(--color-text)]"
+                        : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
+                    }`}
+                  >
+                    <span>{tab.label}</span>
+                    <span className={`text-[11px] font-mono tabular-nums ${isActive ? "text-[var(--color-text-secondary)]" : "text-[var(--color-text-muted)]/70"}`}>
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Secondary Filter Toolbar: Status Segmented Control + Search */}
+            <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-[var(--color-border)] bg-[var(--color-bg)] px-5 py-2.5">
+              <div className="inline-flex items-center rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5">
+                {[
+                  { id: "ALL", label: "All" },
+                  { id: "ACTIVE", label: "Active" },
+                  { id: "COMPLETED", label: "Completed" },
+                  { id: "FAILED", label: "Failed" },
+                ].map((st) => (
+                  <button
+                    key={st.id}
+                    type="button"
+                    onClick={() => setStatusFilter(st.id)}
+                    className={`rounded px-2.5 py-1 text-[11px] font-medium cursor-pointer transition-colors duration-150 ${
+                      statusFilter === st.id
+                        ? "bg-[var(--color-surface-secondary)] text-[var(--color-text)]"
+                        : "text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
+                    }`}
+                  >
+                    {st.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 h-7 w-full sm:w-64 focus-within:border-[var(--color-border-strong)]">
+                <Search size={12} className="shrink-0 text-[var(--color-text-muted)]" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Filter by task, type, ID..."
+                  className="w-full bg-transparent text-xs text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:outline-none"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery("")}
+                    className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
+                    aria-label="Clear search"
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Jobs List Body — Flat Divided Rows */}
+            <div className="flex-1 overflow-y-auto bg-[var(--color-bg)] divide-y divide-[var(--color-border)]">
               {error && (
-                <div className="flex items-center gap-2 rounded-md border border-rose-500/30 bg-rose-500/10 px-3.5 py-2.5 text-xs text-rose-300">
+                <div className="m-4 flex items-center gap-2 rounded-md border border-rose-500/20 bg-rose-500/[0.04] px-3.5 py-2.5 text-xs text-rose-300/85">
                   <AlertCircle size={14} className="shrink-0" />
                   <span>{error}</span>
                 </div>
@@ -610,12 +618,12 @@ export default function FloatingJobQueue() {
 
               {loading && jobs.length === 0 ? (
                 <div className="flex items-center justify-center py-16 text-xs text-[var(--color-text-muted)] gap-2">
-                  <Loader2 size={15} className="animate-spin text-[var(--color-primary)]" />
-                  <span>Loading project job queue...</span>
+                  <Loader2 size={15} className="animate-spin text-[var(--color-text-secondary)]" />
+                  <span>Loading job queue...</span>
                 </div>
               ) : filteredJobs.length === 0 ? (
-                <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] py-14 text-center">
-                  <ListOrdered size={24} className="mb-2 text-[var(--color-text-muted)]" />
+                <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
+                  <ListOrdered size={22} className="mb-2 text-[var(--color-text-muted)]" />
                   <p className="text-xs font-medium text-[var(--color-text-secondary)]">
                     No tasks match the current filter
                   </p>
@@ -641,34 +649,53 @@ export default function FloatingJobQueue() {
                   return (
                     <div
                       key={job.id}
-                      className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5 transition-colors duration-150 hover:border-[var(--color-border-strong)]"
+                      className={`px-5 py-3.5 transition-colors duration-150 ${
+                        isExpanded ? "bg-[var(--color-surface)]" : "bg-[var(--color-bg)] hover:bg-[var(--color-surface)]"
+                      }`}
                     >
-                      <div className="flex flex-wrap items-start justify-between gap-2.5">
-                        <div className="min-w-0 flex-1 space-y-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${domainBadge.bgClass} ${domainBadge.textClass}`}>
-                              {domainBadge.label}
-                            </span>
-                            <span className="text-xs font-semibold text-[var(--color-text)]">
-                              {meta.label}
-                            </span>
-                            {job.project?.name && !currentProjectId && (
-                              <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-1.5 py-0.5 text-[10px] font-mono text-[var(--color-text-secondary)]">
-                                {job.project.name}
-                              </span>
-                            )}
-                            <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
-                              #{String(job.id).slice(0, 8)}
-                            </span>
+                      <div className="flex items-start justify-between gap-4">
+                        {/* Left: Status icon + Title + Meta */}
+                        <div className="flex items-start gap-3 min-w-0 flex-1">
+                          <div className="mt-0.5 shrink-0">
+                            <StatusIcon
+                              size={15}
+                              className={`${statusCfg.iconClass} ${job.status === "RUNNING" ? "animate-spin" : ""}`}
+                            />
                           </div>
-                          <p className="text-[11px] text-[var(--color-text-secondary)]">
-                            {meta.description}
-                          </p>
+
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-[13px] font-medium text-[var(--color-text)]">
+                                {meta.label}
+                              </span>
+                              <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-1.5 py-0.2 text-[10px] font-medium text-[var(--color-text-secondary)]">
+                                {domainBadge.label}
+                              </span>
+                              <span className="text-[11px] font-mono text-[var(--color-text-muted)]">
+                                #{String(job.id).slice(0, 8)}
+                              </span>
+                              {job.project?.name && !currentProjectId && (
+                                <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-0.2 text-[10px] font-mono text-[var(--color-text-secondary)]">
+                                  {job.project.name}
+                                </span>
+                              )}
+                            </div>
+                            <p className="mt-0.5 text-xs text-[var(--color-text-muted)] truncate">
+                              {meta.description}
+                            </p>
+                          </div>
                         </div>
 
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] font-medium ${statusCfg.bgClass} ${statusCfg.textClass}`}>
-                            <StatusIcon size={12} className={job.status === "RUNNING" ? "animate-spin" : ""} />
+                        {/* Right: Timing + Status + Actions */}
+                        <div className="flex items-center gap-3 shrink-0">
+                          <div className="hidden sm:flex items-center gap-2 text-[11px] font-mono tabular-nums text-[var(--color-text-muted)]">
+                            <span>{formatTimeAgo(job.createdAt)}</span>
+                            <span className="opacity-40">·</span>
+                            <span>{formatDuration(job)}</span>
+                          </div>
+
+                          <span className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${statusCfg.textClass}`}>
+                            <span className={`h-1.5 w-1.5 rounded-full ${statusCfg.dotClass}`} />
                             <span>{statusCfg.label}</span>
                           </span>
 
@@ -677,7 +704,7 @@ export default function FloatingJobQueue() {
                               type="button"
                               onClick={() => handleCancelJob(job.id)}
                               disabled={cancelingId === job.id}
-                              className="rounded border border-rose-500/35 bg-rose-500/10 px-2 py-0.5 text-[11px] font-medium text-rose-300 hover:bg-rose-500/20 disabled:opacity-50 cursor-pointer transition-colors duration-150"
+                              className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[11px] font-medium text-rose-400/85 hover:bg-rose-500/10 hover:border-rose-500/25 disabled:opacity-50 cursor-pointer transition-colors duration-150"
                             >
                               {cancelingId === job.id ? "Canceling..." : "Cancel"}
                             </button>
@@ -686,7 +713,11 @@ export default function FloatingJobQueue() {
                           <button
                             type="button"
                             onClick={() => handleToggleDetails(job)}
-                            className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer transition-colors duration-150"
+                            className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium cursor-pointer transition-colors duration-150 ${
+                              isExpanded
+                                ? "border-[var(--color-border-strong)] bg-[var(--color-surface-secondary)] text-[var(--color-text)]"
+                                : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"
+                            }`}
                           >
                             <Terminal size={11} />
                             <span>Logs</span>
@@ -695,11 +726,18 @@ export default function FloatingJobQueue() {
                         </div>
                       </div>
 
+                      {/* Mobile timing line */}
+                      <div className="mt-1.5 pl-7 flex sm:hidden items-center gap-2 text-[11px] font-mono tabular-nums text-[var(--color-text-muted)]">
+                        <span>{formatTimeAgo(job.createdAt)}</span>
+                        <span className="opacity-40">·</span>
+                        <span>{formatDuration(job)}</span>
+                      </div>
+
                       {isActive && (
-                        <div className="mt-2.5 flex items-center gap-2.5">
-                          <div className="h-1.5 flex-1 overflow-hidden rounded bg-[var(--color-surface-secondary)]">
+                        <div className="mt-2.5 pl-7 flex items-center gap-2.5">
+                          <div className="h-1 flex-1 overflow-hidden rounded-full bg-[var(--color-surface-secondary)]">
                             <div
-                              className="h-full bg-sky-400 transition-all duration-300"
+                              className="h-full bg-[var(--color-text)] transition-all duration-300"
                               style={{ width: `${progressPct}%` }}
                             />
                           </div>
@@ -709,48 +747,45 @@ export default function FloatingJobQueue() {
                         </div>
                       )}
 
-                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono tabular-nums text-[var(--color-text-muted)]">
-                        <span>Queued {formatTimeAgo(job.createdAt)}</span>
-                        <span>Duration: {formatDuration(job)}</span>
-                      </div>
-
                       {errText && !isExpanded && (
-                        <div className="mt-2 rounded border border-rose-500/25 bg-rose-500/10 px-2.5 py-1.5 text-[11px] text-rose-300 truncate">
+                        <div className="mt-2 ml-7 rounded-md border border-rose-500/20 bg-rose-500/[0.04] px-2.5 py-1.5 text-[11px] text-rose-300/85 truncate">
                           {errText}
                         </div>
                       )}
 
                       {isExpanded && (
-                        <div className="mt-3 border-t border-[var(--color-border)] pt-3 space-y-2">
+                        <div className="mt-3 ml-7 space-y-2">
                           {errText && (
-                            <div className="rounded border border-rose-500/30 bg-rose-500/10 p-2.5 text-[11px] font-mono text-rose-300 whitespace-pre-wrap break-words">
+                            <div className="rounded-md border border-rose-500/20 bg-rose-500/[0.04] px-3 py-2 text-[11px] font-mono text-rose-300/85 whitespace-pre-wrap break-words">
                               {errText}
                             </div>
                           )}
-                          <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-2.5">
-                            <div className="mb-1.5 flex items-center justify-between text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
-                              <span>Execution Logs</span>
-                              {loadingDetailId === job.id && (
-                                <span className="inline-flex items-center gap-1 text-sky-400">
-                                  <Loader2 size={10} className="animate-spin" /> Loading...
-                                </span>
-                              )}
+                          <div className="overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]">
+                            <div className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-3 py-1.5 text-[11px] text-[var(--color-text-muted)]">
+                              <span className="font-medium text-[var(--color-text-secondary)]">Execution Logs</span>
+                              <div className="flex items-center gap-2 font-mono tabular-nums">
+                                {loadingDetailId === job.id ? (
+                                  <span className="inline-flex items-center gap-1 text-[var(--color-text-secondary)]">
+                                    <Loader2 size={10} className="animate-spin" /> Loading...
+                                  </span>
+                                ) : (
+                                  <span>{detail?.logs?.length || 0} lines</span>
+                                )}
+                              </div>
                             </div>
                             {detail?.logs?.length ? (
-                              <div className="max-h-44 overflow-y-auto space-y-1 font-mono text-[11px]">
+                              <div className="max-h-52 overflow-y-auto px-3 py-2 space-y-1 font-mono text-[11px] leading-relaxed">
                                 {[...detail.logs].reverse().map((entry) => (
-                                  <div key={entry.id} className="flex items-start gap-2">
-                                    <span className="shrink-0 text-[var(--color-text-muted)]">
+                                  <div key={entry.id} className="flex items-start gap-3">
+                                    <span className="w-20 shrink-0 text-[var(--color-text-muted)] tabular-nums select-none">
                                       {new Date(entry.createdAt).toLocaleTimeString()}
                                     </span>
                                     <span
-                                      className={
+                                      className={`min-w-0 flex-1 break-words ${
                                         entry.level === "ERROR"
-                                          ? "text-rose-400"
-                                          : entry.level === "WARN"
-                                            ? "text-amber-400"
-                                            : "text-[var(--color-text-secondary)]"
-                                      }
+                                          ? "text-rose-400/85"
+                                          : "text-[var(--color-text-secondary)]"
+                                      }`}
                                     >
                                       {entry.message}
                                     </span>
@@ -758,7 +793,7 @@ export default function FloatingJobQueue() {
                                 ))}
                               </div>
                             ) : (
-                              <p className="text-[11px] text-[var(--color-text-muted)] font-mono">
+                              <p className="px-3 py-2.5 text-[11px] text-[var(--color-text-muted)] font-mono">
                                 {loadingDetailId === job.id
                                   ? "Fetching logs..."
                                   : "No recorded execution log lines for this job."}

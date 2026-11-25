@@ -20,3 +20,14 @@ export function mutateIntegrationScenarioApi({ snapshotId, aiTestId, scenarioId,
     method, headers: getAIModelHeaders(), body: { expectedVersion, code, endpoint, enable, filePath, testName, origin },
   });
 }
+
+export function bulkDeleteIntegrationScenariosApi(snapshotId, scenarios = []) {
+  return collaborationRequest(
+    `/coverage/${encodeURIComponent(snapshotId)}/integration/scenarios/bulk-delete`,
+    {
+      method: "POST",
+      headers: getAIModelHeaders(),
+      body: { scenarios },
+    },
+  );
+}

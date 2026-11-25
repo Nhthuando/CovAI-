@@ -681,7 +681,7 @@ export default function DiffReviewModal({
                 type="button"
                 disabled={isAnyBusy}
                 onClick={handleApplyAllClick}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 transition-colors duration-150 cursor-pointer disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-[var(--color-text)] text-[var(--color-bg)] hover:opacity-90 transition-opacity duration-150 cursor-pointer disabled:opacity-50"
                 title="Apply all pending candidate test files to project"
               >
                 {isApplyingAllCombined ? (

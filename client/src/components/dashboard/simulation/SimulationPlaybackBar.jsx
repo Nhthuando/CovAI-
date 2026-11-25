@@ -87,18 +87,17 @@ export default function SimulationPlaybackBar({
               left: 0,
               height: "100%",
               width: `${progressPct}%`,
-              background: "linear-gradient(90deg, #6366f1 0%, #10b981 100%)",
+              background: isLight ? "#0f172a" : "#f8fafc",
               borderRadius: 999,
               transition: isPlaying ? "width 0.15s ease-out" : "width 0.08s ease",
             }}
           />
 
-          {/* Color-coded Step Badges / Nodes along timeline */}
+          {/* Step Nodes along timeline */}
           {(steps || []).map((step, idx) => {
             const stepPosPct = totalSteps > 1 ? (idx / (totalSteps - 1)) * 100 : 50;
             const isActive = idx === currentStepIndex;
             const isPassed = idx < currentStepIndex;
-            const phaseColor = getPhaseColor(step?.phase);
 
             return (
               <div
@@ -114,14 +113,18 @@ export default function SimulationPlaybackBar({
                   top: "50%",
                   left: `${stepPosPct}%`,
                   transform: "translate(-50%, -50%)",
-                  width: isActive ? 16 : 10,
-                  height: isActive ? 16 : 10,
+                  width: isActive ? 14 : 8,
+                  height: isActive ? 14 : 8,
                   borderRadius: "50%",
-                  background: isActive ? phaseColor : isPassed ? phaseColor : isLight ? "#cbd5e1" : "#4b5563",
+                  background: isActive
+                    ? isLight ? "#0f172a" : "#f8fafc"
+                    : isPassed
+                      ? isLight ? "#475569" : "#94a3b8"
+                      : isLight ? "#cbd5e1" : "#374151",
                   border: isActive
-                    ? `3px solid ${isLight ? "#ffffff" : "#0d1117"}`
-                    : `2px solid ${isLight ? "#ffffff" : "#161b22"}`,
-                  boxShadow: isActive ? `0 0 10px ${phaseColor}` : "none",
+                    ? `2px solid ${isLight ? "#ffffff" : "#0b0f14"}`
+                    : `1.5px solid ${isLight ? "#ffffff" : "#11161d"}`,
+                  boxShadow: "none",
                   cursor: "pointer",
                   transition: "all 0.15s ease",
                   zIndex: isActive ? 10 : 5,
@@ -240,23 +243,25 @@ export default function SimulationPlaybackBar({
               padding: "5px 14px",
               borderRadius: 6,
               background: isPlaying
-                ? "#f59e0b"
-                : "linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)",
-              border: "none",
-              color: "#ffffff",
+                ? isLight ? "#334155" : "#262d38"
+                : isLight ? "#0f172a" : "#f8fafc",
+              border: isPlaying
+                ? `1px solid ${isLight ? "#475569" : "#374151"}`
+                : "1px solid transparent",
+              color: isPlaying
+                ? "#f8fafc"
+                : isLight ? "#ffffff" : "#0b0f14",
               cursor: totalSteps === 0 ? "not-allowed" : "pointer",
               display: "flex",
               alignItems: "center",
               gap: 6,
               fontSize: 12.5,
-              fontWeight: 700,
-              boxShadow: isPlaying
-                ? "0 4px 10px rgba(245, 158, 11, 0.35)"
-                : "0 4px 10px rgba(99, 102, 241, 0.35)",
+              fontWeight: 600,
+              boxShadow: "none",
             }}
             title={isPlaying ? "Pause Simulation (Space)" : "Play Simulation (Space)"}
           >
-            {isPlaying ? <Pause size={14} /> : <Play size={14} fill="#ffffff" />}
+            {isPlaying ? <Pause size={14} /> : <Play size={14} fill="currentColor" />}
             <span>{isPlaying ? "Pause" : "Play"}</span>
           </button>
 

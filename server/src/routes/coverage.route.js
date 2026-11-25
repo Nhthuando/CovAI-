@@ -61,6 +61,8 @@ import {
     updateSystemTestCaseController,
     deleteSystemTestCaseController,
     aiFixSystemTestCaseController,
+    getIntegrationSimulationTraceController,
+    bulkDeleteIntegrationScenarios,
 } from "../controllers/coverage.controller.js";
 
 const router = express.Router();
@@ -157,9 +159,11 @@ router.get("/:snapshotId/integration/frameworks", authMiddleware, getIntegration
 router.post("/:snapshotId/integration/run", authMiddleware, runSupertestCoverage);
 router.post("/:snapshotId/integration/generate-tests", authMiddleware, generateIntegrationTestsController);
 router.post("/:snapshotId/integration/regenerate-scenario", authMiddleware, regenerateIntegrationScenarioController);
+router.post("/:snapshotId/integration/scenarios/bulk-delete", authMiddleware, bulkDeleteIntegrationScenarios);
 router.put("/:snapshotId/integration/scenarios/:scenarioId", authMiddleware, updateIntegrationScenarioController);
 router.post("/:snapshotId/integration/apply-tests", authMiddleware, applyIntegrationTestsController);
 router.post("/:snapshotId/integration/install-dependencies", authMiddleware, installIntegrationDependenciesController);
+router.post("/:snapshotId/integration/simulation/trace", authMiddleware, getIntegrationSimulationTraceController);
 router.get("/:snapshotId/integration/workspace", authMiddleware, getIntegrationWorkspace);
 router.post("/:snapshotId/integration/approve", authMiddleware, approveIntegrationTests);
 router.get("/:snapshotId/test-suites", authMiddleware, getCoverageTestSuites);

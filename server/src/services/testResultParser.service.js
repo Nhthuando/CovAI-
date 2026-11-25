@@ -170,10 +170,15 @@ export const parseJestResults = (coverageDir, options = {}) => {
                     }
 
                     // 2. Fallback: Parse test file directly from disk if not yet recovered
-                    if (registeredScenarios.length === 0 && cleanedSuiteFile && fs.existsSync(cleanedSuiteFile)) {
+                    const diskSuitePath = cleanedSuiteFile
+                        ? (fs.existsSync(cleanedSuiteFile)
+                            ? cleanedSuiteFile
+                            : (options.rootDir ? path.resolve(options.rootDir, cleanedSuiteFile) : cleanedSuiteFile))
+                        : null;
+                    if (registeredScenarios.length === 0 && diskSuitePath && fs.existsSync(diskSuitePath)) {
                         try {
-                            const fileContent = fs.readFileSync(cleanedSuiteFile, 'utf8');
-                            const reqs = extractTestRequests(fileContent, cleanedSuiteFile);
+                            const fileContent = fs.readFileSync(diskSuitePath, 'utf8');
+                            const reqs = extractTestRequests(fileContent, cleanedSuiteFile || diskSuitePath);
                             if (Array.isArray(reqs) && reqs.length > 0) {
                                 registeredScenarios = reqs.map(r => ({
                                     title: r.testName,
@@ -218,6 +223,12 @@ export const parseJestResults = (coverageDir, options = {}) => {
 
         const totalTests = Math.max(raw.numTotalTests || 0, scenarios.length);
         const failedTests = Math.max(raw.numFailedTests || 0, scenarios.filter(s => s.status === 'failed').length);
+        const allSuitesFailedToLoad =
+            (raw.numTotalTests || 0) === 0 &&
+            (
+                (raw.numRuntimeErrorTestSuites || 0) > 0 ||
+                (scenarios.length > 0 && scenarios.every(s => s.isSuiteLevelFailure))
+            );
 
         const results = {
             totalTests,
@@ -226,6 +237,7 @@ export const parseJestResults = (coverageDir, options = {}) => {
             skippedTests: Math.max(raw.numPendingTests || 0, scenarios.filter(s => ['pending', 'skipped', 'todo'].includes(s.status)).length),
             durationMs: duration,
             status: failedTests > 0 || raw.numRuntimeErrorTestSuites > 0 || raw.success === false ? "FAILED" : "PASSED",
+            allSuitesFailedToLoad,
             scenarios
         };
 
@@ -301,6 +313,32 @@ export const formatScenariosForPrisma = (scenarios) => {
             isFaultyExistingTest: Boolean(s.isFaultyExistingTest)
         }))
     };
+};
+
+/**
+ * Explicitly constructs a Prisma-safe TestRun.create payload from parsed Jest/Vitest results.
+ * Strips non-schema fields (such as `allSuitesFailedToLoad`) so Prisma validation never fails.
+ */
+export const buildPrismaTestRunData = (snapshotId, type, parsedResults, timestamps = {}) => {
+    if (!parsedResults || typeof parsedResults !== "object") return null;
+    const formattedScenarios = formatScenariosForPrisma(parsedResults.scenarios);
+    const now = new Date();
+    const dataPayload = {
+        snapshotId,
+        type,
+        totalTests: Number(parsedResults.totalTests || 0),
+        passedTests: Number(parsedResults.passedTests || 0),
+        failedTests: Number(parsedResults.failedTests || 0),
+        skippedTests: Number(parsedResults.skippedTests || 0),
+        durationMs: Number(parsedResults.durationMs || 0),
+        status: parsedResults.status || "FAILED",
+        startedAt: timestamps.startedAt || now,
+        finishedAt: timestamps.finishedAt || now,
+    };
+    if (formattedScenarios) {
+        dataPayload.scenarios = formattedScenarios;
+    }
+    return dataPayload;
 };
 
 /**
@@ -418,10 +456,15 @@ export const parseVitestResults = (coverageDir, options = {}) => {
                     }
 
                     // 2. Fallback: Parse test file directly from disk if not yet recovered
-                    if (registeredScenarios.length === 0 && cleanedSuiteFile && fs.existsSync(cleanedSuiteFile)) {
+                    const diskSuitePath = cleanedSuiteFile
+                        ? (fs.existsSync(cleanedSuiteFile)
+                            ? cleanedSuiteFile
+                            : (options.rootDir ? path.resolve(options.rootDir, cleanedSuiteFile) : cleanedSuiteFile))
+                        : null;
+                    if (registeredScenarios.length === 0 && diskSuitePath && fs.existsSync(diskSuitePath)) {
                         try {
-                            const fileContent = fs.readFileSync(cleanedSuiteFile, 'utf8');
-                            const reqs = extractTestRequests(fileContent, cleanedSuiteFile);
+                            const fileContent = fs.readFileSync(diskSuitePath, 'utf8');
+                            const reqs = extractTestRequests(fileContent, cleanedSuiteFile || diskSuitePath);
                             if (Array.isArray(reqs) && reqs.length > 0) {
                                 registeredScenarios = reqs.map(r => ({
                                     title: r.testName,
@@ -466,8 +509,14 @@ export const parseVitestResults = (coverageDir, options = {}) => {
 
         const totalTests = Math.max(raw.numTotalTests || 0, scenarios.length);
         const failedTests = Math.max(raw.numFailedTests || 0, scenarios.filter(s => s.status === 'failed').length);
-        const passedTests = raw.numPassedTests || scenarios.filter(s => s.status === 'passed').length;
-        const skippedTests = raw.numPendingTests || scenarios.filter(s => s.status === 'pending').length;
+        const passedTests = Math.max(raw.numPassedTests || 0, scenarios.filter(s => s.status === 'passed').length);
+        const skippedTests = Math.max(raw.numPendingTests || 0, scenarios.filter(s => ['pending', 'skipped', 'todo'].includes(s.status)).length);
+        const allSuitesFailedToLoad =
+            (raw.numTotalTests || 0) === 0 &&
+            (
+                (raw.numRuntimeErrorTestSuites || 0) > 0 ||
+                (scenarios.length > 0 && scenarios.every(s => s.isSuiteLevelFailure))
+            );
 
         const results = {
             totalTests,
@@ -475,7 +524,8 @@ export const parseVitestResults = (coverageDir, options = {}) => {
             failedTests,
             skippedTests,
             durationMs: duration,
-            status: (raw.success && failedTests === 0) ? "PASSED" : "FAILED",
+            status: (raw.success && failedTests === 0 && !allSuitesFailedToLoad) ? "PASSED" : "FAILED",
+            allSuitesFailedToLoad,
             scenarios
         };
 

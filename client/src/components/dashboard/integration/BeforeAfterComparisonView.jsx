@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo } from "react";
 import {
   GitCompare,
   FileCode,
-  Zap,
   PlayCircle,
   AlertTriangle,
   CheckCircle2,
@@ -34,20 +33,23 @@ import {
 } from "../../../services/coverage.service.js";
 import { getProjectSnapshotsApi } from "../../../services/project.service.js";
 
+const NEUTRAL_BADGE =
+  "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]";
+
 const HTTP_METHOD_COLORS = {
-  GET: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/25",
-  POST: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25",
-  PUT: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/25",
-  PATCH: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/25",
-  DELETE: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/25"
+  GET: "bg-[var(--color-bg)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
+  POST: "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border-[var(--color-border-strong)]",
+  PUT: NEUTRAL_BADGE,
+  PATCH: NEUTRAL_BADGE,
+  DELETE: "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border-[var(--color-border)]"
 };
 
 const CATEGORY_COLORS = {
-  HAPPY_PATH: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
-  VALIDATION: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
-  AUTHORIZATION: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
-  NEGATIVE_PATH: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
-  OTHER: "bg-gray-500/10 text-gray-500 border-gray-500/20"
+  HAPPY_PATH: NEUTRAL_BADGE,
+  VALIDATION: NEUTRAL_BADGE,
+  AUTHORIZATION: NEUTRAL_BADGE,
+  NEGATIVE_PATH: "bg-rose-500/[0.07] text-rose-400/85 border-rose-500/20",
+  OTHER: NEUTRAL_BADGE
 };
 
 export default function BeforeAfterComparisonView({
@@ -445,11 +447,7 @@ export default function BeforeAfterComparisonView({
                   Before / After Comparison
                 </h3>
                 <span
-                  className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
-                    isSameSnapshot
-                      ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/25"
-                      : "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/25"
-                  }`}
+                  className="px-2 py-0.5 rounded-md text-[10px] font-medium border bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
                 >
                   {isSameSnapshot ? "Same-Snapshot Run Diff" : "Project Version Diff"}
                 </span>
@@ -702,7 +700,7 @@ export default function BeforeAfterComparisonView({
                 <span className="text-[10px] font-bold uppercase tracking-wider font-mono text-[var(--color-text-secondary)]">
                   3. Test Suite Evolution
                 </span>
-                <Zap size={16} className="text-[var(--color-primary)]" />
+                <Layers size={15} className="text-[var(--color-text-secondary)]" />
               </div>
               <div>
                 <div className="text-sm font-extrabold text-[var(--color-text)]">
@@ -798,7 +796,7 @@ export default function BeforeAfterComparisonView({
                 : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-text)]"
             }`}
           >
-            <Zap size={14} />
+            <Layers size={14} />
             <span>2. Test Suite & Endpoints</span>
             <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-black/10">
               {endpointList.length} routes

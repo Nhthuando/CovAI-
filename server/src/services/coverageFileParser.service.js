@@ -202,6 +202,7 @@ export const parseCoverageFilesForSnapshot = async ({
   userId,
   testType: explicitTestType,
   preserveOtherFiles = false,
+  preserveUnitRows = false,
 }) => {
   assertStringField(projectId, "projectId");
   assertStringField(snapshotId, "snapshotId");
@@ -296,12 +297,15 @@ export const parseCoverageFilesForSnapshot = async ({
             },
           },
           create: row,
-          update: {
-            linesPct: row.linesPct,
-            branchesPct: row.branchesPct,
-            funcsPct: row.funcsPct,
-            stmtsPct: row.stmtsPct,
-          },
+          update:
+            testType === "INTEGRATION" && preserveUnitRows && isBusinessLogicSourceFile(row.filePath)
+              ? {}
+              : {
+                  linesPct: row.linesPct,
+                  branchesPct: row.branchesPct,
+                  funcsPct: row.funcsPct,
+                  stmtsPct: row.stmtsPct,
+                },
         });
       }
     } else {

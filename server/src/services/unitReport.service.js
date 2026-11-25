@@ -151,8 +151,23 @@ export const capturePeakUnitReportIfHigher = async (
     return baseObj?.peakUnitReport || null;
   }
 
-  if (baseObj?.peakUnitReport && score < existingScore) {
-    return baseObj.peakUnitReport;
+  const previousPeak = baseObj?.peakUnitReport || null;
+  const previousTotals = previousPeak ? normalizeTotalsBlock(previousPeak.rawTotals) : null;
+  // A full run with at least the same scope and coverage replaces the saved peak
+  // even when the older rank counted files that do not belong to the unit suite.
+  const matchesPreviousPeak =
+    Boolean(previousTotals) &&
+    !isTargetedRun &&
+    rawTotals.lines.total > 0 &&
+    ["lines", "branches", "functions", "statements"].every(
+      (key) =>
+        rawTotals[key].total >= previousTotals[key].total &&
+        rawTotals[key].pct >= previousTotals[key].pct,
+    ) &&
+    passedTests >= Number(previousPeak.peakMeta?.passedTests ?? 0);
+
+  if (previousPeak && score < existingScore && !matchesPreviousPeak) {
+    return previousPeak;
   }
 
   const capturedAt = new Date().toISOString();

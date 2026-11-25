@@ -106,8 +106,8 @@ export const isBusinessLogicSourceFile = (filePath = "", configExclusions = []) 
         return false;
     }
 
-    // 4. Reject dependencies, build outputs, and caches
-    if (/(^|\/)(node_modules|coverage|dist|build|out|\.next|\.nuxt|\.turbo|\.git|\.cache|\.covai-temp|\.covai_journal)\//i.test(norm)) {
+    // 4. Reject dependencies, build outputs, coverage reports, and caches
+    if (/(^|\/)(node_modules|coverage|lcov-report|\.nyc_output|dist|build|out|\.next|\.nuxt|\.turbo|\.git|\.cache|\.covai-temp|\.covai_journal)\//i.test(norm)) {
         return false;
     }
 

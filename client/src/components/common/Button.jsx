@@ -32,17 +32,17 @@ export const Button = forwardRef(function Button(
 
   const variantStyles = {
     primary:
-      "bg-[var(--color-primary)] text-[var(--color-primary-foreground)] hover:bg-[var(--color-primary-hover)] active:bg-[var(--color-primary-active)] border border-transparent font-medium",
+      "bg-[var(--color-text)] text-[var(--color-bg)] hover:opacity-90 active:scale-[0.98] border border-transparent font-semibold",
     secondary:
-      "bg-[var(--color-surface-secondary)] text-[var(--color-text)] hover:bg-[var(--color-border)] border border-[var(--color-border)]",
+      "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-muted)] border border-[var(--color-border)]",
     outline:
       "bg-transparent text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] border border-[var(--color-border)] active:bg-[var(--color-surface)]",
     ghost:
       "bg-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] border border-transparent",
     success:
-      "bg-[var(--color-success)] text-white hover:opacity-90 active:opacity-80 border border-transparent font-medium",
+      "bg-emerald-600/90 text-white hover:bg-emerald-500 active:opacity-90 border border-emerald-500/35 font-medium",
     danger:
-      "bg-[var(--color-danger)] text-white hover:opacity-90 active:opacity-80 border border-transparent font-medium",
+      "bg-rose-600/90 text-white hover:bg-rose-500 active:opacity-90 border border-rose-500/35 font-medium",
   };
 
   const classes = `${baseStyles} ${sizeStyles[size] || sizeStyles.md} ${

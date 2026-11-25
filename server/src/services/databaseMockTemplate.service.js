@@ -1126,6 +1126,30 @@ try {
           const actualStatus = res ? res.status : (err && err.status ? err.status : null);
           const finalResolvedUrl = (res && res.req && res.req.path) ? res.req.path : resolvedUrl;
 
+          let serverErrorMessage = null;
+          let responseBodyPreview = null;
+          if (actualStatus >= 400 || err) {
+            try {
+              if (res && res.body !== undefined && res.body !== null && typeof res.body === 'object' && Object.keys(res.body).length > 0) {
+                const candidate = res.body.error || res.body.message || res.body.details || res.body.msg || res.body.reason;
+                if (typeof candidate === 'string' && candidate.trim()) {
+                  serverErrorMessage = candidate.trim().slice(0, 400);
+                } else if (candidate && typeof candidate === 'object') {
+                  serverErrorMessage = JSON.stringify(candidate).slice(0, 400);
+                }
+                responseBodyPreview = JSON.stringify(res.body).slice(0, 500);
+              }
+            } catch (_) {}
+            if (!serverErrorMessage && res && typeof res.text === 'string' && res.text.trim()) {
+              const trimmedText = res.text.trim();
+              serverErrorMessage = trimmedText.slice(0, 400);
+              if (!responseBodyPreview) responseBodyPreview = trimmedText.slice(0, 500);
+            }
+            if (!serverErrorMessage && err && err.message) {
+              serverErrorMessage = String(err.message).slice(0, 400);
+            }
+          }
+
           const evidenceRecord = {
             jobId: process.env.COVAI_JOB_ID || null,
             testRunId: process.env.COVAI_TEST_RUN_ID || null,
@@ -1144,6 +1168,8 @@ try {
             durationMs: Date.now() - reqStartTime,
             evidenceSource: 'TEST_SERVER_HTTP_RESPONSE',
             responseHeaders: res ? { 'content-type': res.headers && res.headers['content-type'] } : null,
+            serverErrorMessage,
+            responseBodyPreview,
             hasError: Boolean(err)
           };
 
@@ -1170,27 +1196,70 @@ try {
   }
 } catch (_) {}
 
-// Mock Stripe library if required by payment routes
+// Mock Stripe library if required by payment routes (CommonJS & ESM compatible)
 try {
-  jest.mock('stripe', () => {
-    return jest.fn().mockImplementation(() => ({
+  const buildStripeCtor = () => {
+    const _fn = (impl) => (typeof jest !== 'undefined' && typeof jest.fn === 'function')
+      ? jest.fn(impl)
+      : (impl || (() => undefined));
+    const createClient = () => ({
       checkout: {
         sessions: {
-          create: jest.fn().mockResolvedValue({ id: 'cs_test_mock', url: 'https://checkout.stripe.com/mock' })
+          create: _fn(async () => ({ id: 'cs_test_mock', url: 'https://checkout.stripe.com/mock' })),
+          retrieve: _fn(async (id) => ({ id: id || 'cs_test_mock', payment_status: 'paid', status: 'complete' })),
         }
       },
       paymentIntents: {
-        create: jest.fn().mockImplementation(async (params) => {
+        create: _fn(async (params) => {
           if (params && (isNaN(params.amount) || params.amount < 0)) {
             const err = new Error("Stripe API error: Invalid amount");
             err.type = "StripeInvalidRequestError";
             throw err;
           }
-          return { id: 'pi_test_mock', client_secret: 'pi_test_secret_mock' };
-        })
+          return { id: 'pi_test_mock', client_secret: 'pi_test_secret_mock', status: 'succeeded' };
+        }),
+        retrieve: _fn(async (id) => ({ id: id || 'pi_test_mock', status: 'succeeded' })),
+        confirm: _fn(async (id) => ({ id: id || 'pi_test_mock', status: 'succeeded' })),
+      },
+      customers: {
+        create: _fn(async (params) => ({ id: 'cus_test_mock', ...(params || {}) })),
+        retrieve: _fn(async (id) => ({ id: id || 'cus_test_mock' })),
+      },
+      refunds: {
+        create: _fn(async () => ({ id: 're_test_mock', status: 'succeeded' })),
+      },
+      webhooks: {
+        constructEvent: _fn((payload) => {
+          if (typeof payload === 'string') {
+            try { return JSON.parse(payload); } catch (_) { return { id: 'evt_test_mock', type: 'checkout.session.completed', data: { object: {} } }; }
+          }
+          return payload || { id: 'evt_test_mock', type: 'checkout.session.completed', data: { object: {} } };
+        }),
       }
-    }));
-  }, { virtual: true });
+    });
+    const StripeCtor = _fn(createClient);
+    StripeCtor.default = StripeCtor;
+    return StripeCtor;
+  };
+
+  global.__covai_stripe_mock__ = buildStripeCtor();
+
+  if (typeof jest !== 'undefined') {
+    if (typeof jest.mock === 'function') {
+      try {
+        jest.mock('stripe', () => global.__covai_stripe_mock__, { virtual: true });
+      } catch (_) {}
+    }
+    if (typeof jest.unstable_mockModule === 'function') {
+      try {
+        jest.unstable_mockModule('stripe', () => ({
+          __esModule: true,
+          default: global.__covai_stripe_mock__,
+          Stripe: global.__covai_stripe_mock__,
+        }));
+      } catch (_) {}
+    }
+  }
 } catch (_) {}
 
 // 3. Schema-Aware In-Memory Prisma Client Mock

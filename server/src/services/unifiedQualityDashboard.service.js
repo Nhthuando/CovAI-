@@ -7,6 +7,7 @@ import { detectCoverageFrameworks } from "./coverageFramework.service.js";
 import { coverageSummaryFor } from "./systemAssessmentContract.service.js";
 import { cleanStoragePath, cleanStorageText } from "../utils/pathSanitizer.js";
 import { isApiFilePath } from "../utils/apiFileDetector.js";
+import { isBusinessLogicSourceFile } from "../utils/businessLogicFileDetector.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 
 function toFixedNum(val, fallback = 0) {
@@ -702,6 +703,7 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
         type: true,
         status: true,
         progress: true,
+        resultJson: true,
         createdAt: true,
         startedAt: true,
         finishedAt: true,
@@ -868,7 +870,9 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
   const allCoverageFiles = (rawCoverageFiles || []).filter(
     (f) => !isExcludedCoverageFilePath(f.filePath)
   );
-  const unitFiles = allCoverageFiles.filter((f) => !isApiFilePath(f.filePath));
+  const unitFiles = allCoverageFiles.filter(
+    (f) => !isApiFilePath(f.filePath) && isBusinessLogicSourceFile(f.filePath)
+  );
   const unitFwRaw =
     detectedFrameworks?.supported?.unit?.[0] ||
     (latestUnitRun?.type === "VITEST" ? "Vitest" : "Jest");
