@@ -2,20 +2,22 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import Editor from "@monaco-editor/react";
 import {
   X,
-  Sparkles,
+  Code2,
   RefreshCw,
   AlertCircle,
   CheckCircle2,
   AlignLeft,
+  Save,
 } from "lucide-react";
 import { useTheme } from "../../../contexts/ThemeContext";
+import ConfirmDialog from "../../common/ConfirmDialog.jsx";
 
 const METHOD_STYLES = {
-  GET: "bg-blue-500/10 text-blue-500 dark:text-blue-400 border-blue-500/20",
-  POST: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
-  PUT: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
-  PATCH: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
-  DELETE: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
+  GET: "bg-[var(--color-bg)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
+  POST: "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border-[var(--color-border-strong)]",
+  PUT: "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
+  PATCH: "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
+  DELETE: "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border-[var(--color-border)]",
   DEFAULT: "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
 };
 
@@ -583,6 +585,8 @@ export default function IntegrationScenarioEditorModal({
     []
   );
 
+  const [pendingConfirmCode, setPendingConfirmCode] = useState(null);
+
   // Validate and submit
   const handleSave = () => {
     const latestCode = editorRef.current?.getValue() ?? codeRef.current;
@@ -595,6 +599,10 @@ export default function IntegrationScenarioEditorModal({
       }
       return;
     }
+    if (!isAddMode) {
+      setPendingConfirmCode(latestCode);
+      return;
+    }
     onSave(latestCode);
   };
 
@@ -605,14 +613,14 @@ export default function IntegrationScenarioEditorModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="scenario-editor-title"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs font-sans"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-[2px] font-sans"
     >
-      <div className="w-full max-w-4xl h-[720px] max-h-[94vh] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-[var(--radius-xl)] shadow-2xl flex flex-col overflow-hidden text-[var(--color-text)]">
+      <div className="w-full max-w-4xl h-[720px] max-h-[94vh] bg-[var(--color-surface)] border border-[var(--color-border-strong)] ring-1 ring-white/[0.04] rounded-lg shadow-[0_24px_64px_-12px_rgba(0,0,0,0.9)] flex flex-col overflow-hidden text-[var(--color-text)]">
         {/* 1. Header */}
         <div className="h-14 px-6 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-7 h-7 rounded-[var(--radius-sm)] bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center shrink-0">
-              <Sparkles size={16} />
+            <div className="w-7 h-7 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] flex items-center justify-center shrink-0">
+              <Code2 size={15} />
             </div>
             <div className="min-w-0">
               <h3
@@ -861,13 +869,33 @@ export default function IntegrationScenarioEditorModal({
                     ? "Add Scenario"
                     : "Save Changes"
               }
-              className="px-4 py-2 rounded-[var(--radius-md)] bg-[var(--color-primary)] text-white text-xs font-semibold hover:bg-[var(--color-primary-hover)] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-xs"
+              className="px-4 py-2 rounded-md bg-[var(--color-text)] text-[var(--color-bg)] text-xs font-semibold hover:opacity-90 transition-all duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {loading ? "Saving..." : isAddMode ? "Add Scenario" : "Save Changes"}
             </button>
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={pendingConfirmCode !== null}
+        onClose={() => setPendingConfirmCode(null)}
+        onConfirm={() => {
+          const codeToSave = pendingConfirmCode;
+          setPendingConfirmCode(null);
+          onSave(codeToSave);
+        }}
+        title="Confirm Scenario Changes"
+        message="Save your modifications to this integration test scenario?"
+        confirmText="Save Changes"
+        variant="primary"
+        icon={Save}
+        loading={loading}
+      >
+        <div className="px-3 py-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-xs text-[var(--color-text-secondary)] break-all">
+          {scenarioName || title || `${effectiveMethod} ${effectivePath}`}
+        </div>
+      </ConfirmDialog>
     </div>
   );
 }

@@ -7,7 +7,8 @@ import {
   XCircle,
   Activity,
   Search,
-  Zap,
+  Play,
+  Plus,
   ArrowRight,
   Loader2,
   Printer,
@@ -903,9 +904,9 @@ export default function IntegrationReportEmbed({
             <button
               type="button"
               onClick={onRunCoverage}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold transition-colors duration-150 active:scale-[0.98] cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[var(--color-text)] text-[var(--color-bg)] hover:opacity-90 text-xs font-semibold transition-all duration-150 active:scale-[0.98] cursor-pointer"
             >
-              <Zap size={12} />
+              <Play size={11} fill="currentColor" />
               <span>Run Coverage</span>
             </button>
           )}
@@ -1062,10 +1063,10 @@ export default function IntegrationReportEmbed({
 
       {/* ── 3. FAILURE LOCALIZATION (Prominent only when failures exist) ── */}
       {failureLogs.length > 0 ? (
-        <section className="rounded-lg border border-[var(--color-border)] border-l-2 border-l-rose-400/60 bg-[var(--color-surface)] overflow-hidden">
+        <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
           <div className="px-4 py-2.5 bg-[var(--color-surface-secondary)] border-b border-[var(--color-border)] flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <XCircle size={14} className="text-rose-400/80 shrink-0" />
+              <XCircle size={14} className="text-rose-400/75 shrink-0" />
               <h3 className="text-xs font-semibold text-[var(--color-text)] m-0">
                 Failing Scenarios & Root Causes ({failureLogs.length})
               </h3>
@@ -1087,7 +1088,7 @@ export default function IntegrationReportEmbed({
                 <div key={f.id || i} className="px-4 py-3 space-y-1.5 text-xs">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2 font-mono min-w-0">
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-rose-500/[0.06] text-rose-300/85 border border-rose-500/20 shrink-0">
+                      <span className="px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] shrink-0">
                         {f.failureLayer || "ASSERTION_FAILED"}
                       </span>
                       <span className="font-semibold text-[var(--color-text)] truncate">
@@ -1105,16 +1106,16 @@ export default function IntegrationReportEmbed({
                           {f.failingComponent}
                         </span>
                       )}
-                      <span className="font-mono text-[11px] text-rose-300/85 tabular-nums">
+                      <span className="font-mono text-[11px] text-[var(--color-text-secondary)] tabular-nums">
                         Expected {f.expectedStatus || 200} · Received{" "}
                         {f.responseStatus || "Error"}
                       </span>
                     </div>
                   </div>
-                  <div className="font-sans text-[12px] text-[var(--color-text-secondary)] pl-3 border-l-2 border-rose-400/35 space-y-1.5">
+                  <div className="font-sans text-[12px] text-[var(--color-text-secondary)] pl-3 border-l border-[var(--color-border-strong)] space-y-1.5">
                     <p className="m-0">{conciseSummary}</p>
                     {f.serverErrorMessage && (
-                      <div className="px-2 py-1 rounded bg-[var(--color-bg)] border border-rose-500/20 font-mono text-[10px] text-rose-300 break-words">
+                      <div className="px-2 py-1 rounded bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-[10px] text-[var(--color-text-secondary)] break-words">
                         <span className="text-[var(--color-text-muted)] mr-1.5">
                           Server Error:
                         </span>
@@ -1505,7 +1506,7 @@ export default function IntegrationReportEmbed({
                                 }
                                 className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer no-print"
                               >
-                                <Zap size={10} className="text-[var(--color-text-muted)]" />
+                                <Plus size={10} className="text-[var(--color-text-muted)]" />
                                 <span>Generate {missingCount} missing</span>
                               </button>
                             )}

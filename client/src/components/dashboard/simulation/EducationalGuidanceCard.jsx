@@ -120,7 +120,7 @@ export default function EducationalGuidanceCard({
               marginBottom: 3,
             }}
           >
-            <Cpu size={12} className="text-indigo-400" />
+            <Cpu size={12} className="text-[var(--color-text-secondary)]" />
             <span>Execution Flow</span>
           </div>
           <div
@@ -156,7 +156,7 @@ export default function EducationalGuidanceCard({
               marginBottom: 3,
             }}
           >
-            <GitBranch size={12} className="text-amber-400" />
+            <GitBranch size={12} className="text-[var(--color-text-secondary)]" />
             <span>Decision Logic</span>
           </div>
           <div

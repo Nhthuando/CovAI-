@@ -67,17 +67,17 @@ export default function ConfirmDialog({
       case "danger":
         return {
           icon: CustomIcon || AlertTriangle,
-          iconBg: "bg-[var(--color-danger)]/10",
-          iconBorder: "border-[var(--color-danger)]/25",
-          iconColor: "text-[var(--color-danger)]",
+          iconBg: "bg-rose-500/10",
+          iconBorder: "border-rose-500/25",
+          iconColor: "text-rose-400",
           buttonVariant: "danger",
         };
       case "warning":
         return {
           icon: CustomIcon || AlertCircle,
-          iconBg: "bg-[var(--color-warning)]/10",
-          iconBorder: "border-[var(--color-warning)]/25",
-          iconColor: "text-[var(--color-warning)]",
+          iconBg: "bg-[var(--color-surface-secondary)]",
+          iconBorder: "border-[var(--color-border-strong)]",
+          iconColor: "text-[var(--color-text-secondary)]",
           buttonVariant: "primary",
         };
       case "info":
@@ -85,9 +85,9 @@ export default function ConfirmDialog({
       default:
         return {
           icon: CustomIcon || Info,
-          iconBg: "bg-[var(--color-primary)]/10",
-          iconBorder: "border-[var(--color-primary)]/25",
-          iconColor: "text-[var(--color-primary)]",
+          iconBg: "bg-[var(--color-surface-secondary)]",
+          iconBorder: "border-[var(--color-border)]",
+          iconColor: "text-[var(--color-text)]",
           buttonVariant: "primary",
         };
     }
@@ -106,53 +106,55 @@ export default function ConfirmDialog({
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs font-sans animate-in fade-in duration-150"
+      className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/75 backdrop-blur-[2px] font-sans animate-in fade-in duration-150"
       onClick={!loading ? onClose : undefined}
     >
       <div
         ref={dialog}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md max-h-[calc(100dvh-32px)] overflow-y-auto bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded-[var(--radius-xl)] p-6 shadow-xl text-[var(--color-text)] relative animate-in zoom-in-95 duration-150"
+        className="w-full max-w-[440px] max-h-[calc(100dvh-32px)] flex flex-col overflow-hidden bg-[var(--color-surface)] border border-[var(--color-border-strong)] ring-1 ring-white/[0.04] rounded-lg shadow-[0_24px_64px_-12px_rgba(0,0,0,0.9)] text-[var(--color-text)] relative animate-in zoom-in-95 duration-150"
       >
         {/* Close Button in corner */}
         <button
           type="button"
           onClick={onClose}
           disabled={loading}
-          className="absolute top-4 right-4 p-1 rounded-[var(--radius-sm)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          className="absolute top-3.5 right-3.5 w-7 h-7 rounded-md flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-secondary)] transition-colors duration-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           aria-label="Close dialog"
         >
-          <X size={15} />
+          <X size={14} />
         </button>
 
-        {/* Header with Icon and Title */}
-        <div className="flex items-start gap-3.5 mb-3 pr-6">
-          <div
-            className={`w-10 h-10 rounded-[var(--radius-md)] ${iconBg} border ${iconBorder} flex items-center justify-center ${iconColor} shrink-0`}
-          >
-            <DialogIcon size={20} strokeWidth={2} />
-          </div>
-          <div>
-            <h3
-              id={titleId}
-              className="text-base font-bold text-[var(--color-text)] tracking-tight"
+        {/* Body */}
+        <div className="p-5 overflow-y-auto">
+          <div className="flex items-start gap-3.5 pr-7">
+            <div
+              className={`w-9 h-9 rounded-md ${iconBg} border ${iconBorder} flex items-center justify-center ${iconColor} shrink-0`}
             >
-              {title}
-            </h3>
-            {message && (
-              <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
-                {message}
-              </p>
-            )}
+              <DialogIcon size={18} strokeWidth={1.9} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h3
+                id={titleId}
+                className="text-sm font-semibold text-[var(--color-text)] tracking-tight leading-snug"
+              >
+                {title}
+              </h3>
+              {message && (
+                <p className="text-[13px] text-[var(--color-text-muted)] mt-1.5 leading-relaxed">
+                  {message}
+                </p>
+              )}
+            </div>
           </div>
+
+          {/* Optional custom children (e.g. details, warning snippet) */}
+          {children && <div className="mt-4">{children}</div>}
         </div>
 
-        {/* Optional custom children (e.g. details, warning snippet) */}
-        {children && <div className="mt-3 mb-2">{children}</div>}
-
-        {/* Footer Actions */}
-        <div className="flex flex-wrap items-center justify-end gap-2.5 mt-5">
+        {/* Structured Footer */}
+        <div className="px-5 py-3.5 bg-[var(--color-bg)] border-t border-[var(--color-border)] flex flex-wrap items-center justify-end gap-2">
           <Button
             type="button"
             variant="secondary"

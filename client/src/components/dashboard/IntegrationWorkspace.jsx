@@ -38,7 +38,6 @@ import { cancelJobApi } from "../../services/job.service.js";
 import { invalidateCoverageQueries } from "../../hooks/useCoverageQuery.js";
 import {
   Search,
-  Zap,
   CheckCircle2,
   XCircle,
   PlayCircle,
@@ -83,6 +82,8 @@ import IntegrationApplyTestsModal from "./integration/IntegrationApplyTestsModal
 import IntegrationScenarioEditorModal from "./integration/IntegrationScenarioEditorModal.jsx";
 import SourceCodeViewerModal from "./integration/SourceCodeViewerModal.jsx";
 import IntegrationSimulationStudioModal from "./integration/IntegrationSimulationStudioModal.jsx";
+import ConfirmDialog from "../common/ConfirmDialog.jsx";
+import { TEST_UI, calmProgressFillClass } from "./shared/testingUiTokens.js";
 import {
   getEndpointCaseCoverage,
   getEpIdentityKey,
@@ -438,6 +439,7 @@ export default function IntegrationWorkspace({
   const [activeFailureLayerFilter, setActiveFailureLayerFilter] =
     useState("ALL");
   const [expandedCallstacks, setExpandedCallstacks] = useState({});
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
 
   // Active navigation tab (only 2 tabs: 'endpoints' and 'report')
   const [activeTab, setActiveTab] = useState(() => {
@@ -2633,7 +2635,7 @@ export default function IntegrationWorkspace({
       <header className="shrink-0 bg-[var(--color-surface)] border-b border-[var(--color-border)] z-20 no-print relative">
         {(refreshing || isScanningEndpoints) && (
           <div className="absolute top-0 left-0 right-0 h-0.5 bg-[var(--color-surface-secondary)] overflow-hidden z-30">
-            <div className="h-full bg-[var(--color-primary)] animate-pulse w-full" />
+            <div className="h-full bg-[var(--color-text-muted)]/60 animate-pulse w-full" />
           </div>
         )}
         {/* Top Control Bar */}
@@ -2655,7 +2657,7 @@ export default function IntegrationWorkspace({
                 type="button"
                 onClick={handleScanEndpoints}
                 disabled={isScanningEndpoints || isJobActive}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
+                className={TEST_UI.btnPrimary}
                 title="Scan Express/Node AST to discover API routes and controllers"
               >
                 <RefreshCw
@@ -2676,7 +2678,7 @@ export default function IntegrationWorkspace({
                     setSetupModalOpen(true);
                   }}
                   disabled={!projectAccess.can("ai.use") || isJobActive}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
+                  className={TEST_UI.btnSecondary}
                   title="Configure Supertest + Jest runner and dependencies"
                 >
                   <SlidersHorizontal
@@ -2694,7 +2696,7 @@ export default function IntegrationWorkspace({
                     isJobActive ||
                     pendingAction === "RUN"
                   }
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold transition-colors duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
+                  className={TEST_UI.btnPrimary}
                   title="Select all API endpoints and run integration test coverage"
                 >
                   {pendingAction === "RUN" ||
@@ -2718,11 +2720,9 @@ export default function IntegrationWorkspace({
             <button
               type="button"
               onClick={() => setDrawerOpen(drawerOpen ? null : "history")}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border transition-colors duration-150 cursor-pointer ${
-                drawerOpen
-                  ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] border-[var(--color-primary)]/30 font-semibold"
-                  : "bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)]"
-              }`}
+              className={
+                drawerOpen ? TEST_UI.btnSecondaryActive : TEST_UI.btnSecondary
+              }
               title="View execution history and before/after comparisons"
             >
               <Clock size={13} />
@@ -2758,14 +2758,9 @@ export default function IntegrationWorkspace({
                       verified
                     </span>
                   </div>
-                  <div className="flex-1 max-w-[160px] bg-[var(--color-surface-secondary)] h-1.5 rounded-sm overflow-hidden">
+                  <div className={`flex-1 max-w-[160px] ${TEST_UI.progressTrack}`}>
                     <div
-                      className={`h-full transition-all duration-300 ${
-                        overallStats.apiCoverageRate === 100 &&
-                        overallStats.totalApis > 0
-                          ? "bg-emerald-500/65"
-                          : "bg-[var(--color-primary)]/70"
-                      }`}
+                      className={calmProgressFillClass(overallStats.apiCoverageRate)}
                       style={{ width: `${overallStats.apiCoverageRate}%` }}
                     />
                   </div>
@@ -2895,30 +2890,21 @@ export default function IntegrationWorkspace({
                   id={`integration-tab-${tab.id}`}
                   aria-selected={isActive}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`relative flex items-center gap-1.5 py-2.5 text-xs font-medium transition-colors cursor-pointer select-none outline-none border-b-2 -mb-px ${
-                    isActive
-                      ? "border-[var(--color-primary)] text-[var(--color-text)] font-semibold"
-                      : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                  className={`${TEST_UI.tabBase} ${
+                    isActive ? TEST_UI.tabActive : TEST_UI.tabInactive
                   }`}
                 >
                   <Icon
                     size={13}
                     className={
                       isActive
-                        ? "text-[var(--color-primary)]"
+                        ? "text-[var(--color-text)]"
                         : "text-[var(--color-text-muted)]"
                     }
                   />
                   <span>{tab.label}</span>
                   {tab.badge != null && (
-                    <span
-                      className={`px-1.5 py-0.2 rounded text-[10px] font-mono tabular-nums ${
-                        tab.badgeColor ||
-                        (isActive
-                          ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
-                          : "bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)]")
-                      }`}
-                    >
+                    <span className={tab.badgeColor || TEST_UI.badgeNeutral}>
                       {tab.badge}
                     </span>
                   )}
@@ -2929,7 +2915,7 @@ export default function IntegrationWorkspace({
 
           <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] shrink-0 font-mono">
             {(refreshing || isScanningEndpoints) && (
-              <span className="flex items-center gap-1 text-[var(--color-primary)]">
+              <span className="flex items-center gap-1 text-[var(--color-text-muted)]">
                 <RefreshCw size={11} className="animate-spin" /> Syncing...
               </span>
             )}
@@ -2939,7 +2925,7 @@ export default function IntegrationWorkspace({
 
       {/* Cancellation Notice Banner */}
       {cancellationNotice && (
-        <div className="px-5 py-2 bg-amber-500/10 border-b border-amber-500/20 text-xs text-[var(--color-warning)] flex items-center justify-between no-print">
+        <div className="px-5 py-2 bg-amber-500/[0.06] border-b border-amber-500/20 text-xs text-amber-300/90 flex items-center justify-between no-print">
           <span>{cancellationNotice}</span>
           <button
             type="button"
@@ -3000,22 +2986,22 @@ export default function IntegrationWorkspace({
         <IntegrationErrorBoundary onRetry={() => load({ scan: hasScanned })}>
           {/* Live Pipeline Progress Card */}
           {isJobActive && (
-            <div className="mb-4 rounded-lg border border-[var(--color-primary)]/30 bg-[var(--color-surface)] overflow-hidden no-print">
+            <div className="mb-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] overflow-hidden no-print">
               <div className="px-4 py-3 bg-[var(--color-surface-secondary)] border-b border-[var(--color-border)] flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-7 rounded-md bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center shrink-0">
+                  <div className="w-7 h-7 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text-secondary)] flex items-center justify-center shrink-0">
                     <Loader2 size={15} className="animate-spin" />
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-[var(--color-text)]">
+                      <span className="text-xs font-semibold text-[var(--color-text)]">
                         {activeJobType === "EXECUTE"
                           ? "Executing Integration Coverage Runner..."
                           : activeJobType === "GENERATE"
                             ? "Synthesizing 100% API Test Scenarios..."
                             : "Scanning AST Route Architecture..."}
                       </span>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/20">
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-medium bg-[var(--color-bg)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
                         Job #{activeJobId?.substring(0, 8) || "running"}
                       </span>
                     </div>
@@ -3036,7 +3022,7 @@ export default function IntegrationWorkspace({
                     type="button"
                     onClick={() => handleCancelActiveJob(activeJobId)}
                     disabled={isCancelling}
-                    className="px-2.5 py-1 rounded-md bg-rose-500/10 text-rose-400 border border-rose-500/25 hover:bg-rose-500/20 text-xs font-medium cursor-pointer transition-colors disabled:opacity-50"
+                    className="px-2.5 py-1 rounded-md bg-[var(--color-bg)] text-rose-400/85 border border-[var(--color-border)] hover:border-rose-500/30 hover:bg-rose-500/10 text-xs font-medium cursor-pointer transition-colors disabled:opacity-50"
                   >
                     {isCancelling ? "Canceling..." : "Cancel Task"}
                   </button>
@@ -3051,9 +3037,9 @@ export default function IntegrationWorkspace({
                       <React.Fragment key={i}>
                         <div className="flex items-center gap-1.5 font-mono text-[11px]">
                           <span
-                            className={`w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold ${
+                            className={`w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-semibold ${
                               st.done
-                                ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                                ? "bg-[var(--color-text)] text-[var(--color-bg)] border border-transparent"
                                 : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border border-[var(--color-border)]"
                             }`}
                           >
@@ -3085,7 +3071,7 @@ export default function IntegrationWorkspace({
                   <button
                     type="button"
                     onClick={() => setShowLiveLogsDetails((prev) => !prev)}
-                    className="text-[11px] font-mono text-[var(--color-primary)] hover:underline inline-flex items-center gap-1 cursor-pointer"
+                    className="text-[11px] font-mono text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:underline inline-flex items-center gap-1 cursor-pointer"
                   >
                     <Terminal size={11} />
                     <span>
@@ -3261,16 +3247,7 @@ export default function IntegrationWorkspace({
                     });
                   }
                 }}
-                onDiscardPendingChanges={() => {
-                  const cleared = { deletes: [], updates: [], adds: [] };
-                  setPendingOps(cleared);
-                  saveStagedOps("integration", snapshotId, cleared);
-                  showToast({
-                    type: "info",
-                    title: "Temporary Edits Discarded",
-                    message: "Reverted temporary scenario changes in UI.",
-                  });
-                }}
+                onDiscardPendingChanges={() => setShowDiscardConfirm(true)}
               />
             </div>
           )}
@@ -3394,7 +3371,7 @@ export default function IntegrationWorkspace({
             {/* Modal Header */}
             <div className="px-5 py-4 bg-[var(--color-surface-secondary)] border-b border-[var(--color-border)] flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-primary)]">
+                <div className="w-7 h-7 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)] flex items-center justify-center text-[var(--color-text-secondary)]">
                   <ShieldCheck size={16} />
                 </div>
                 <div>
@@ -3425,11 +3402,11 @@ export default function IntegrationWorkspace({
                   <div className="font-semibold text-[var(--color-text)] flex items-center gap-2">
                     <span>Project Environment Status</span>
                     {detectionInfo?.needsDependencyInstall ? (
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-amber-500/10 text-amber-400 border border-amber-500/25">
+                      <span className="px-1.5 py-0.5 rounded-md text-[10px] font-mono bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
                         Missing Test Libraries
                       </span>
                     ) : (
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/25">
+                      <span className="px-1.5 py-0.5 rounded-md text-[10px] font-mono bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
                         Dependencies Ready
                       </span>
                     )}
@@ -3487,7 +3464,7 @@ export default function IntegrationWorkspace({
                         onClick={() => setSetupFramework(fw.id)}
                         className={`p-3 rounded-md border text-left transition-colors cursor-pointer ${
                           selected
-                            ? "bg-[var(--color-primary)]/10 border-[var(--color-primary)] text-[var(--color-text)]"
+                            ? "bg-[var(--color-surface-secondary)] border-[var(--color-border-strong)] text-[var(--color-text)]"
                             : "bg-[var(--color-bg)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-hover)]"
                         }`}
                       >
@@ -3498,7 +3475,7 @@ export default function IntegrationWorkspace({
                           <span
                             className={`px-1.5 py-0.2 rounded text-[9px] font-mono ${
                               selected
-                                ? "bg-[var(--color-primary)] text-white"
+                                ? "bg-[var(--color-text)] text-[var(--color-bg)]"
                                 : "bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)]"
                             }`}
                           >
@@ -3520,7 +3497,7 @@ export default function IntegrationWorkspace({
                   <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text)]">
                     Standard 5-Layer API Test Blueprint (100% Route Coverage)
                   </span>
-                  <span className="font-mono text-[11px] text-[var(--color-primary)] font-semibold">
+                  <span className="font-mono text-[11px] text-[var(--color-text-secondary)] font-medium">
                     {endpoints.length > 0
                       ? `${endpoints.length} APIs Targeted`
                       : "Auto-Scan Included"}
@@ -3551,7 +3528,7 @@ export default function IntegrationWorkspace({
                   type="checkbox"
                   checked={setupAutoRun}
                   onChange={(e) => setSetupAutoRun(e.target.checked)}
-                  className="rounded border-[var(--color-border)] text-[var(--color-primary)] focus:ring-0"
+                  className="rounded border-[var(--color-border)] accent-[var(--color-text)] focus:ring-0"
                 />
                 <span className="text-xs text-[var(--color-text)] font-medium">
                   Automatically execute coverage runner immediately after
@@ -3603,7 +3580,7 @@ export default function IntegrationWorkspace({
                     })
                   }
                   disabled={isRunningSetupFlow}
-                  className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] transition-colors cursor-pointer disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-text)] text-[var(--color-bg)] hover:opacity-90 transition-all duration-150 active:scale-[0.98] cursor-pointer disabled:opacity-50"
                 >
                   {isRunningSetupFlow ? (
                     <>
@@ -3612,7 +3589,7 @@ export default function IntegrationWorkspace({
                     </>
                   ) : (
                     <>
-                      <Zap size={13} />
+                      <Play size={12} fill="currentColor" />
                       <span>
                         {detectionInfo?.needsDependencyInstall
                           ? "Install & Generate 100% API Tests"
@@ -3691,6 +3668,26 @@ export default function IntegrationWorkspace({
         initialScenario={simulationModalState.scenario}
         autoPlayOnOpen={simulationModalState.autoPlay}
         onOpenSourceFile={onOpenFile}
+      />
+
+      <ConfirmDialog
+        isOpen={showDiscardConfirm}
+        onClose={() => setShowDiscardConfirm(false)}
+        onConfirm={() => {
+          const cleared = { deletes: [], updates: [], adds: [] };
+          setPendingOps(cleared);
+          saveStagedOps("integration", snapshotId, cleared);
+          setShowDiscardConfirm(false);
+          showToast({
+            type: "info",
+            title: "Discarded",
+            message: "All staged integration test edits have been cleared.",
+          });
+        }}
+        title="Discard Pending Integration Changes"
+        message={`Discard ${pendingOpsCount} staged integration test ${pendingOpsCount === 1 ? "change" : "changes"}? This cannot be undone.`}
+        confirmText="Discard Changes"
+        variant="danger"
       />
     </div>
   );

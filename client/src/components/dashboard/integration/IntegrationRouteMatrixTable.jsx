@@ -17,7 +17,6 @@ import {
   CheckCircle2,
   XCircle,
   Play,
-  Zap,
   ChevronDown,
   ChevronRight,
   FileCode,
@@ -39,6 +38,7 @@ import {
   Wrench,
   HardDriveDownload,
 } from "lucide-react";
+import ConfirmDialog from "../../common/ConfirmDialog.jsx";
 import {
   CATEGORY_LABELS,
   classifyScenario,
@@ -158,8 +158,7 @@ const IntegrationRouteMatrixTable = forwardRef(
 
     const [expandedScenarioCodeKey, setExpandedScenarioCodeKey] =
       useState(null);
-    const [confirmDeleteKey, setConfirmDeleteKey] = useState(null);
-    const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+    const [pendingDelete, setPendingDelete] = useState(null);
     const [copiedKey, setCopiedKey] = useState(null);
 
     useEffect(() => {
@@ -654,7 +653,7 @@ const IntegrationRouteMatrixTable = forwardRef(
               </div>
               <div className="p-3.5 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)]">
                 <div className="flex items-center gap-2 text-xs font-semibold text-[var(--color-text)] mb-1">
-                  <Zap className="w-3.5 h-3.5 text-[var(--color-primary)]" />
+                  <Terminal className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                   <span>2. Run or generate tests</span>
                 </div>
                 <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed m-0">
@@ -800,7 +799,7 @@ const IntegrationRouteMatrixTable = forwardRef(
                     type="button"
                     onClick={onApplyPendingChanges}
                     disabled={isApplyingPending || isRunning}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-[var(--color-text)] text-[var(--color-bg)] hover:opacity-90 transition-opacity duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer"
                     title="Apply staged UI edits, additions, and deletions to repository source"
                   >
                     <HardDriveDownload className="w-3.5 h-3.5" />
@@ -846,11 +845,11 @@ const IntegrationRouteMatrixTable = forwardRef(
         {/* Unified Selection Action Bar (Endpoints & Scenarios) */}
         {(selectedEndpointsList.length > 0 ||
           selectedScenariosList.length > 0) && (
-          <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-primary)]/5 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-xs font-mono text-[var(--color-text)] tabular-nums">
+          <div className="px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)]/50 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-xs font-mono text-[var(--color-text-secondary)] tabular-nums">
               {selectedEndpointsList.length > 0 && (
                 <span>
-                  <span className="font-semibold text-[var(--color-primary)]">
+                  <span className="font-semibold text-[var(--color-text)]">
                     {selectedEndpointsList.length}
                   </span>{" "}
                   {selectedEndpointsList.length === 1
@@ -864,7 +863,7 @@ const IntegrationRouteMatrixTable = forwardRef(
                 )}
               {selectedScenariosList.length > 0 && (
                 <span>
-                  <span className="font-semibold text-emerald-400">
+                  <span className="font-semibold text-[var(--color-text)]">
                     {selectedScenariosList.length}
                   </span>{" "}
                   {selectedScenariosList.length === 1
@@ -881,9 +880,9 @@ const IntegrationRouteMatrixTable = forwardRef(
                   type="button"
                   onClick={() => onGenerateSelected(selectedEndpointsList)}
                   disabled={isGenerating || isRunning}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] transition-colors disabled:opacity-50 cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-muted)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] transition-colors disabled:opacity-50 cursor-pointer"
                 >
-                  <Zap className="w-3 h-3 text-[var(--color-primary)]" />
+                  <Plus className="w-3 h-3 text-[var(--color-text-muted)]" />
                   <span className="tabular-nums">
                     Generate Tests ({selectedEndpointsList.length})
                   </span>
@@ -901,7 +900,7 @@ const IntegrationRouteMatrixTable = forwardRef(
                       : onRunSelected(selectedEndpointsList)
                   }
                   disabled={isRunning || isGenerating}
-                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] transition-colors disabled:opacity-50 cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-[var(--color-text)] text-[var(--color-bg)] hover:opacity-90 transition-opacity disabled:opacity-50 cursor-pointer"
                 >
                   <Play className="w-3 h-3" fill="currentColor" />
                   <span className="tabular-nums">
@@ -928,69 +927,39 @@ const IntegrationRouteMatrixTable = forwardRef(
                       }
                     }}
                     disabled={isRunning || isGenerating || isDeletingSelected}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] transition-colors disabled:opacity-50 cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-muted)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] transition-colors disabled:opacity-50 cursor-pointer"
                   >
-                    <HardDriveDownload className="w-3 h-3 text-[var(--color-primary)]" />
+                    <HardDriveDownload className="w-3 h-3 text-[var(--color-text-muted)]" />
                     <span className="tabular-nums">
                       Apply ({selectedScenariosList.length})
                     </span>
                   </button>
                 )}
 
-              {onDeleteSelectedScenarios &&
-                selectedScenariosList.length > 0 &&
-                (confirmBulkDelete ? (
-                  <div className="inline-flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const ok = await onDeleteSelectedScenarios(
-                          selectedScenariosList,
-                        );
-                        setConfirmBulkDelete(false);
-                        if (ok !== false) {
-                          setSelectedEndpointKeys(new Set());
-                          setSelectedScenarioKeys(new Set());
-                        }
-                      }}
-                      disabled={isDeletingSelected || isRunning || isGenerating}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white transition-colors duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                      <span className="tabular-nums">
-                        {isDeletingSelected
-                          ? "Deleting..."
-                          : `Confirm Delete (${selectedScenariosList.length})`}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmBulkDelete(false)}
-                      disabled={isDeletingSelected}
-                      className="px-2 py-1 rounded-md text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border)] bg-[var(--color-surface)] cursor-pointer disabled:opacity-50"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setConfirmBulkDelete(true)}
-                    disabled={isDeletingSelected || isRunning || isGenerating}
-                    title={`Delete ${selectedScenariosList.length} selected scenario${selectedScenariosList.length === 1 ? "" : "s"}`}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 transition-colors duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                    <span className="tabular-nums">
-                      Delete ({selectedScenariosList.length})
-                    </span>
-                  </button>
-                ))}
+              {onDeleteSelectedScenarios && selectedScenariosList.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPendingDelete({
+                      kind: "bulk",
+                      items: selectedScenariosList,
+                    })
+                  }
+                  disabled={isDeletingSelected || isRunning || isGenerating}
+                  title={`Delete ${selectedScenariosList.length} selected scenario${selectedScenariosList.length === 1 ? "" : "s"}`}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-muted)] text-[var(--color-text-secondary)] hover:text-rose-400 border border-[var(--color-border)] transition-colors duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  <span className="tabular-nums">
+                    Delete ({selectedScenariosList.length})
+                  </span>
+                </button>
+              )}
 
               <button
                 type="button"
                 onClick={() => {
-                  setConfirmBulkDelete(false);
+                  setPendingDelete(null);
                   setSelectedEndpointKeys(new Set());
                   setSelectedScenarioKeys(new Set());
                 }}
@@ -1018,7 +987,7 @@ const IntegrationRouteMatrixTable = forwardRef(
                       )
                     }
                     onChange={toggleSelectAllFiltered}
-                    className="rounded border-[var(--color-border)] bg-[var(--color-bg)] accent-[var(--color-primary)] cursor-pointer"
+                    className="rounded border-[var(--color-border)] bg-[var(--color-bg)] accent-[var(--color-text)] cursor-pointer"
                   />
                 </th>
                 <th className="py-2.5 px-3">Endpoint</th>
@@ -1089,7 +1058,7 @@ const IntegrationRouteMatrixTable = forwardRef(
                               aria-label={`Select ${method} ${ep.path}`}
                               checked={isSelected}
                               onChange={() => toggleSelectEndpoint(epActionKey)}
-                              className="rounded border-[var(--color-border)] bg-[var(--color-bg)] accent-[var(--color-primary)] cursor-pointer"
+                              className="rounded border-[var(--color-border)] bg-[var(--color-bg)] accent-[var(--color-text)] cursor-pointer"
                             />
                             <button
                               type="button"
@@ -1781,46 +1750,19 @@ const IntegrationRouteMatrixTable = forwardRef(
                                             </button>
 
                                             {canDelete && (
-                                              <>
-                                                {confirmDeleteKey === scKey ? (
-                                                  <div className="inline-flex items-center gap-1">
-                                                    <button
-                                                      type="button"
-                                                      onClick={() => {
-                                                        onDeleteScenario(sc);
-                                                        setConfirmDeleteKey(
-                                                          null,
-                                                        );
-                                                      }}
-                                                      className="px-2 py-1 rounded text-[10px] font-semibold bg-rose-500 text-white hover:bg-rose-600 transition-colors cursor-pointer"
-                                                    >
-                                                      Confirm
-                                                    </button>
-                                                    <button
-                                                      type="button"
-                                                      onClick={() =>
-                                                        setConfirmDeleteKey(
-                                                          null,
-                                                        )
-                                                      }
-                                                      className="px-1.5 py-1 rounded text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
-                                                    >
-                                                      Cancel
-                                                    </button>
-                                                  </div>
-                                                ) : (
-                                                  <button
-                                                    type="button"
-                                                    onClick={() =>
-                                                      setConfirmDeleteKey(scKey)
-                                                    }
-                                                    title="Delete this scenario"
-                                                    className="p-1 rounded text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
-                                                  >
-                                                    <Trash2 className="w-3.5 h-3.5" />
-                                                  </button>
-                                                )}
-                                              </>
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  setPendingDelete({
+                                                    kind: "single",
+                                                    sc,
+                                                  })
+                                                }
+                                                title="Delete this scenario"
+                                                className="p-1 rounded text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                                              >
+                                                <Trash2 className="w-3.5 h-3.5" />
+                                              </button>
                                             )}
                                           </div>
                                         </div>
@@ -2138,37 +2080,21 @@ const IntegrationRouteMatrixTable = forwardRef(
                           <span>Edit Code</span>
                         </button>
                       )}
-                      {onDeleteScenario &&
-                        (confirmDeleteKey === unmappedKey ? (
-                          <div className="inline-flex items-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                onDeleteScenario(sc);
-                                setConfirmDeleteKey(null);
-                              }}
-                              className="px-2 py-1 rounded text-[10px] font-semibold bg-rose-500 text-white hover:bg-rose-600 transition-colors cursor-pointer"
-                            >
-                              Confirm
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setConfirmDeleteKey(null)}
-                              className="px-1.5 py-1 rounded text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeleteKey(unmappedKey)}
-                            title="Delete this scenario"
-                            className="p-1 rounded text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        ))}
+                      {onDeleteScenario && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPendingDelete({
+                              kind: "single",
+                              sc,
+                            })
+                          }
+                          title="Delete this scenario"
+                          className="p-1 rounded text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -2176,6 +2102,55 @@ const IntegrationRouteMatrixTable = forwardRef(
             </div>
           </div>
         )}
+
+        <ConfirmDialog
+          isOpen={Boolean(pendingDelete)}
+          onClose={() => !isDeletingSelected && setPendingDelete(null)}
+          onConfirm={async () => {
+            if (!pendingDelete) return;
+            if (pendingDelete.kind === "bulk" && onDeleteSelectedScenarios) {
+              const ok = await onDeleteSelectedScenarios(pendingDelete.items);
+              setPendingDelete(null);
+              if (ok !== false) {
+                setSelectedEndpointKeys(new Set());
+                setSelectedScenarioKeys(new Set());
+              }
+            } else if (pendingDelete.kind === "single" && onDeleteScenario) {
+              onDeleteScenario(pendingDelete.sc);
+              setPendingDelete(null);
+            }
+          }}
+          title={
+            pendingDelete?.kind === "bulk"
+              ? `Delete ${pendingDelete.items?.length || 0} Integration Scenarios`
+              : "Delete Integration Scenario"
+          }
+          message={
+            pendingDelete?.kind === "bulk"
+              ? "Are you sure you want to remove the selected integration test scenarios? Existing applied scenarios will be staged for removal."
+              : "Are you sure you want to remove this integration test scenario?"
+          }
+          confirmText="Delete"
+          variant="danger"
+          icon={Trash2}
+          loading={isDeletingSelected}
+        >
+          {pendingDelete && (
+            <div className="px-3 py-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-xs text-[var(--color-text-secondary)] break-all">
+              {pendingDelete.kind === "bulk"
+                ? pendingDelete.items
+                    .slice(0, 3)
+                    .map((item) => item.title || item.testName || item.name)
+                    .join("\n") +
+                  (pendingDelete.items.length > 3
+                    ? `\n+${pendingDelete.items.length - 3} more...`
+                    : "")
+                : pendingDelete.sc?.title ||
+                  pendingDelete.sc?.testName ||
+                  pendingDelete.sc?.name}
+            </div>
+          )}
+        </ConfirmDialog>
       </div>
     );
   },

@@ -67,9 +67,9 @@ function getCoverageColor(pct) {
 
 function getCoverageTextClass(pct) {
   if (pct === null || pct === undefined) return "text-[var(--color-text-muted,#94A3B8)]";
-  if (pct >= 80) return "text-emerald-400";
-  if (pct >= 50) return "text-amber-400";
-  return "text-rose-400";
+  if (pct >= 80) return "text-[var(--color-text)]";
+  if (pct >= 50) return "text-[var(--color-text-secondary)]";
+  return "text-rose-400/85";
 }
 
 function TestOutcomeDonut({ totals }) {
@@ -105,9 +105,9 @@ function TestOutcomeDonut({ totals }) {
   }, [total, passed, failed, skipped, circumference]);
 
   const legendItems = [
-    { label: "Passed", count: passed, color: "bg-emerald-500", textClass: "text-emerald-400" },
-    { label: "Failed", count: failed, color: "bg-rose-500", textClass: "text-rose-400" },
-    { label: "Skipped", count: skipped, color: "bg-amber-500", textClass: "text-amber-400" },
+    { label: "Passed", count: passed, color: "bg-emerald-500/70", textClass: "text-[var(--color-text)]" },
+    { label: "Failed", count: failed, color: "bg-rose-400/80", textClass: "text-rose-400/85" },
+    { label: "Skipped", count: skipped, color: "bg-[var(--color-text-muted)]", textClass: "text-[var(--color-text-secondary)]" },
   ];
 
   return (

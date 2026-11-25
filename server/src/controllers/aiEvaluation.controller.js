@@ -1,5 +1,6 @@
 import prisma from '../config/prisma.js';
 import * as service from '../services/aiEvaluation/management.service.js';
+import { createProjectProfileSource } from '../services/aiEvaluation/projectProfile.service.js';
 import { getChatbotDesignAudit, runChatbotDesignAudit } from '../services/aiEvaluation/designAudit.service.js';
 import { exportDesignAuditReport } from '../services/aiEvaluation/designAuditReport.service.js';
 import { cancelProjectRun } from '../services/aiEvaluation/runner.service.js';
@@ -44,6 +45,10 @@ export function createEvaluationController({ db = prisma, enqueue = service.enqu
         getSource: json(req => service.getKnowledgeSource(db, req.params.projectId, req.params.id)),
         uploadSource: json(req => service.uploadKnowledgeSource(db, req.params.projectId, req.user.id, req.file, enqueue), 202),
         createSource: json(req => service.createKnowledgeSourceFromInput(db, req.params.projectId, req.body), 201),
+        createProfileSource: json(req => createProjectProfileSource(db, req.params.projectId, {
+            description: req.body?.description,
+            snapshotId: typeof req.body?.snapshotId === 'string' ? req.body.snapshotId : undefined,
+        }), 201),
         listProfiles: json(async req => (await service.workspace(db, req.params.projectId, req.user.id)).profiles),
         createProfile: json(req => service.createProfile(db, req.params.projectId, req.body?.name), 201),
         getProfile: json(req => service.getProfileWithVersions(db, req.params.projectId, req.params.id)),

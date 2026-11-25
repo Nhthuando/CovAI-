@@ -5,6 +5,7 @@ import { ProgressCircle } from '../../ui/tremor';
 import { cn } from '../../../lib/utils';
 import { numberText, percentText } from './evaluationTheme';
 import { getStepStatus, nextStep } from './evaluationSteps';
+import { representativeScore } from './reportHelpers';
 
 const steps = [
   { key: 'connect', title: 'Connect your chatbot', action: 'Connect chatbot', icon: Plug },
@@ -76,7 +77,7 @@ export default function HomeScreen({ data, capabilities, navigateView }) {
       : verdict === 'FAILED' ? 'Your chatbot did not pass the evaluation checks.'
         : "Some checks couldn't be graded, so there's no final verdict.";
   const latency = result?.summary?.latency?.avgMs;
-  const score = result?.summary?.score;
+  const { value: score, hidden, partial, scored, applicable } = representativeScore(result?.summary);
   const doneCount = steps.filter(step => status[step.key].done).length;
   return (
     <div className="space-y-5">
@@ -132,8 +133,11 @@ export default function HomeScreen({ data, capabilities, navigateView }) {
           ) : (
             <div className="space-y-5 p-5">
               <div className="flex items-center gap-5">
-                <ProgressCircle value={Number.isFinite(score) ? score : 0} radius={38} strokeWidth={6} color={tone}>
-                  <span className="font-mono text-xl font-semibold tabular-nums">{Number.isFinite(score) ? numberText(score, 0) : '—'}</span>
+                <ProgressCircle value={score ?? 0} radius={38} strokeWidth={6} color={tone}>
+                  <span className="font-mono text-xl font-semibold tabular-nums" title={hidden ? `Only ${scored} of ${applicable} checks graded` : undefined}>
+                    {hidden ? '—' : numberText(score, 0)}
+                    {!hidden && partial && <span className="text-xs font-normal text-[var(--color-text-muted)]"> partial</span>}
+                  </span>
                 </ProgressCircle>
                 <div className="min-w-0 space-y-1.5">
                   <Badge variant={tone}>{label}</Badge>

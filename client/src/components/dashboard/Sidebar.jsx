@@ -893,7 +893,7 @@ export default function Sidebar({
         loading={isDeleting}
       >
         {itemToDelete && (
-          <div className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md p-2.5 text-xs font-mono text-[var(--color-danger)] break-all mt-3">
+          <div className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-md px-3 py-2 text-xs font-mono text-rose-300/90 break-all">
             {itemToDelete.id || itemToDelete.name}
           </div>
         )}

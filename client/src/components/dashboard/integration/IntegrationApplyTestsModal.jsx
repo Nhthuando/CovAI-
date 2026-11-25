@@ -179,7 +179,7 @@ export default function IntegrationApplyTestsModal({
                         <button
                           type="button"
                           onClick={() => setSelectedKeys(passedScenarios.map((s) => s.key))}
-                          className="px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/25 cursor-pointer"
+                          className="px-2 py-0.5 rounded text-[10px] font-medium bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-muted)] text-[var(--color-text-secondary)] border border-[var(--color-border)] cursor-pointer"
                         >
                           Passed Only ({passedScenarios.length})
                         </button>
@@ -199,9 +199,9 @@ export default function IntegrationApplyTestsModal({
                       const statusLower = String(sc.status || "ready").toLowerCase();
                       const statusColor =
                         statusLower === "passed"
-                          ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/25"
+                          ? "text-emerald-400/85 bg-emerald-500/[0.07] border-emerald-500/20"
                           : statusLower === "failed"
-                            ? "text-rose-400 bg-rose-500/10 border-rose-500/25"
+                            ? "text-rose-400/85 bg-rose-500/[0.07] border-rose-500/20"
                             : "text-[var(--color-text-muted)] bg-[var(--color-surface-secondary)] border-[var(--color-border)]";
                       return (
                         <button

@@ -56,6 +56,9 @@ export const DEFAULT_EVALUATION_CONFIG = Object.freeze({
     latencySlaMs: 5000,
 });
 
+export const CHATBOT_PROFILE = 'CHATBOT_PROFILE';
+export const isBehaviorOnly = (sources = []) => Array.isArray(sources) && sources.length > 0 && sources.every(source => source?.provenance?.type === CHATBOT_PROFILE);
+
 export const TERMINAL = ['COMPLETED', 'ERROR', 'CANCELED', 'INDETERMINATE'];
 export const fail = (code, message, status = 422) => { throw new ServiceError(message, status, code); };
 export const enabled = () => process.env.AI_EVALUATION_ENABLED !== 'false';

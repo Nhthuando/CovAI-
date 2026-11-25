@@ -28,11 +28,13 @@ function readTargetHttpError(response, reject) {
     const finish = (withSnippet = false) => {
         if (settled) return;
         settled = true;
-        const snippet = withSnippet ? targetErrorSnippet(Buffer.concat(chunks).toString('utf8')) : '';
+        const body = Buffer.concat(chunks).toString('utf8');
+        const snippet = withSnippet ? targetErrorSnippet(body) : '';
         try {
             fail(status === 429 ? 'TARGET_RATE_LIMIT' : 'TARGET_HTTP_ERROR', `Your chatbot returned HTTP ${status}${snippet ? `: ${snippet}` : ''}`, 502);
         } catch (error) {
             error.details = { targetStatus: status };
+            Object.defineProperty(error, 'targetBody', { value: body });
             reject(error);
         }
     };
@@ -105,6 +107,19 @@ export function isManagedLoopbackLeaseValid(lease) {
         typeof lease.isActive === 'function' &&
         lease.isActive() === true,
     );
+}
+
+function withTargetText(error, text, contentType) {
+    Object.defineProperty(error, 'targetText', { value: Buffer.from(text).subarray(0, 64 * 1024).toString('utf8') });
+    Object.defineProperty(error, 'targetContentType', { value: contentType });
+    return error;
+}
+
+function failWithRaw(code, message, raw) {
+    try { fail(code, message, 502); } catch (error) {
+        Object.defineProperty(error, 'targetRaw', { value: raw });
+        throw error;
+    }
 }
 
 function parseSseBody(rawText, answerPointer = '/answer') {
@@ -232,7 +247,7 @@ export async function requestManagedLoopbackJson({
                         try {
                             resolve(parseSseBody(text, answerPointer));
                         } catch {
-                            reject(error('INVALID_TARGET_SSE', 'Target SSE stream could not be parsed'));
+                            reject(withTargetText(error('INVALID_TARGET_SSE', 'Target SSE stream could not be parsed'), text, contentType));
                         }
                         return;
                     }
@@ -240,7 +255,7 @@ export async function requestManagedLoopbackJson({
                         resolve(safeJson(JSON.parse(text)));
                     } catch {
                         if (contentType.startsWith('text/plain')) resolve(text);
-                        else reject(error('INVALID_TARGET_JSON', 'Target response must be valid JSON'));
+                        else reject(withTargetText(error('INVALID_TARGET_JSON', 'Target response must be valid JSON'), text, contentType));
                     }
                 });
             },
@@ -272,12 +287,12 @@ export async function requestPublicJson({ endpoint, responseFormat = 'json', ans
                 const contentType = String(response.headers['content-type'] || '').toLowerCase();
                 if (responseFormat === 'text') { resolve(text); return; }
                 if (responseFormat === 'sse' || contentType.includes('text/event-stream')) {
-                    try { resolve(parseSseBody(text, answerPointer)); } catch { reject(error('INVALID_TARGET_SSE', 'Target SSE stream could not be parsed')); }
+                    try { resolve(parseSseBody(text, answerPointer)); } catch { reject(withTargetText(error('INVALID_TARGET_SSE', 'Target SSE stream could not be parsed'), text, contentType)); }
                     return;
                 }
                 try { resolve(safeJson(JSON.parse(text))); } catch {
                     if (contentType.startsWith('text/plain')) resolve(text);
-                    else reject(error('INVALID_TARGET_JSON', 'Target response must be valid JSON'));
+                    else reject(withTargetText(error('INVALID_TARGET_JSON', 'Target response must be valid JSON'), text, contentType));
                 }
             });
         });
@@ -287,16 +302,31 @@ export async function requestPublicJson({ endpoint, responseFormat = 'json', ans
         request.end(payload);
     });
 }
+const modelRole = role => role === 'assistant' ? 'model' : role;
+const geminiMessages = messages => messages.filter(m => m.role !== 'system')
+    .map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] }));
+
+function formatHistory(messages, format) {
+    if (!messages) return undefined;
+    if (format === 'gemini') return geminiMessages(messages);
+    if (format === 'strings') return messages.map(m => m.content);
+    return messages.map(m => ({ role: format === 'model' ? modelRole(m.role) : m.role, content: m.content, text: m.content }));
+}
+
 export async function executeTurn(configInput, input, { credential, lease = null, transport, timeoutMs = 60000 } = {}) {
     const config = parse(targetSchema, configInput);
-    const lastUserIndex = Array.isArray(input.messages) ? input.messages.findLastIndex(m => m?.role === 'user') : -1;
+    const messages = Array.isArray(input.messages) ? input.messages : undefined;
+    const lastUserIndex = messages?.findLastIndex(m => m?.role === 'user') ?? -1;
     const resolvedInput = {
         ...input,
         latestUserMessage: input.latestUserMessage ?? input.messages?.filter(m => m?.role === 'user').at(-1)?.content,
         // Prior turns for targets that take { message, history }; "text" mirrors "content" for bots that read either field.
-        history: Array.isArray(input.messages)
-            ? input.messages.slice(0, Math.max(lastUserIndex, 0)).map(m => ({ role: m.role, content: m.content, text: m.content }))
-            : undefined,
+        history: formatHistory(messages?.slice(0, Math.max(lastUserIndex, 0)), config.historyFormat),
+        generatedConversationId: input.conversationKey ?? input.requestId,
+        uiMessages: messages?.map((m, index) => ({
+            id: `m${index}`, role: m.role, content: m.content, parts: [{ type: 'text', text: m.content }],
+        })),
+        geminiContents: messages ? geminiMessages(messages) : undefined,
     };
     let body = structuredClone(config.requestTemplate);
     for (const [pointer, binding] of Object.entries(config.bindings)) if (resolvedInput[binding] !== undefined) body = setPointer(body, pointer, resolvedInput[binding]);
@@ -329,7 +359,7 @@ export async function executeTurn(configInput, input, { credential, lease = null
             timeoutMs,
         });
     const answer = typeof raw === 'string' ? raw : getPointer(raw, config.response.answer);
-    if (typeof answer !== 'string') fail('INVALID_ANSWER_MAPPING', 'Response answer mapping must resolve to a string', 502);
+    if (typeof answer !== 'string') failWithRaw('INVALID_ANSWER_MAPPING', 'Response answer mapping must resolve to a string', raw);
     const result = { answer, latencyMs: Math.round(performance.now() - start), evidenceAvailability: {} };
     for (const key of ['conversationId', 'citations', 'retrievedContext', 'toolTrace', 'usage', 'metadata']) {
         const value = typeof raw === 'string' || config.response[key] === undefined ? undefined : getPointer(raw, config.response[key]);
@@ -337,6 +367,7 @@ export async function executeTurn(configInput, input, { credential, lease = null
         result.evidenceAvailability[key] = { availability: config.response[key] === undefined ? 'UNSUPPORTED' : value === undefined ? 'MISSING' : valid ? 'AVAILABLE' : 'INVALID', completeness: 'UNKNOWN', provenance: 'TARGET_REPORTED' };
         if (valid) result[key] = value;
     }
-    if (config.conversationMode === 'session' && !result.conversationId) fail('SESSION_UNAVAILABLE', 'Target did not return a valid conversation ID', 502);
+    if (config.conversationMode === 'session' && !result.conversationId) failWithRaw('SESSION_UNAVAILABLE', 'Target did not return a valid conversation ID', raw);
+    Object.defineProperty(result, 'raw', { value: raw });
     return result;
 }

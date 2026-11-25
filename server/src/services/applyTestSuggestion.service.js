@@ -1913,6 +1913,12 @@ export function resolveContainerOrHostTestPath(relOrAbs, rootDir) {
     return path.isAbsolute(hostCandidate) ? hostCandidate : path.join(rootDir || process.cwd(), hostCandidate);
 }
 
+const isVitestTestFile = (content, filePath, framework) => Boolean(
+    framework === "vitest" ||
+    filePath.includes("vitest") ||
+    /from\s+['"]vitest['"]|\bvi\s*\./.test(content)
+);
+
 /**
  * Repairs runner/setup failures. Assertion failures require source-aware input repair
  * and a real rerun; never rewrite expectations from the observed output.
@@ -2057,11 +2063,7 @@ export const autoHealTestFailures = (rootDir, testFilesToRun, testResults, rawOu
         const missingDep = extractMissingDependency(rawOutput);
         if (missingDep && missingDep.packageName) {
             const pkgName = missingDep.packageName;
-            const isVitestSuite = Boolean(
-                options.framework === "vitest" ||
-                fullPath.includes("vitest") ||
-                /from\s+['"]vitest['"]|\bvi\s*\./.test(content)
-            );
+            const isVitestSuite = isVitestTestFile(content, fullPath, options.framework);
             const escapedPkg = pkgName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const alreadyMocked = new RegExp(`(?:vi|jest)\\.mock\\s*\\(\\s*['"]${escapedPkg}['"]`).test(content);
             if (!alreadyMocked) {
@@ -2491,7 +2493,7 @@ export const autoHealTestFailures = (rootDir, testFilesToRun, testResults, rawOu
                     code: content,
                     filePath: fullPath,
                     rootDir,
-                    framework: isVitest ? "vitest" : "jest"
+                    framework: isVitestTestFile(content, fullPath, options.framework) ? "vitest" : "jest"
                 }).code;
                 continue;
             }

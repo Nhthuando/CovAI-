@@ -417,7 +417,7 @@ export default function ProjectSelectionPage() {
         loading={isDeleting}
       >
         {projectToDelete && (
-          <div className="p-2.5 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] font-mono text-xs text-[var(--color-danger)] break-all">
+          <div className="px-3 py-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-xs text-rose-300/90 break-all">
             {projectToDelete.name}
           </div>
         )}

@@ -5,6 +5,17 @@ export const CRITERION_STATUSES = Object.freeze([
 export const RUBRIC_LEVELS = Object.freeze([0, 0.5, 1]);
 export const DEFAULT_WILSON_Z = 1.96;
 
+export function representativeScore(summary) {
+    const completeness = summary?.completeness;
+    const scored = completeness?.scored ?? 0;
+    const applicable = completeness?.applicable ?? 0;
+    const tasks = summary?.tasks;
+    const hidden = Boolean(summary?.partial && Number.isFinite(completeness?.scored)
+        && Number.isFinite(completeness?.applicable) && Array.isArray(tasks)
+        && (scored / applicable < 0.8 || tasks.some(task => task?.applicable > 0 && task.score === null)));
+    return { value: hidden ? null : summary?.score ?? null, partial: scored < applicable, scored, applicable, hidden };
+}
+
 const scored = result => result.status === 'PASSED' || result.status === 'FAILED';
 const positive = value => typeof value === 'number' && Number.isFinite(value) && value > 0;
 

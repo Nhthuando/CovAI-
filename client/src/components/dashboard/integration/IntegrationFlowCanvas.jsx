@@ -114,36 +114,36 @@ function getSemanticStatusColor(status, statusCode) {
   const code = Number(statusCode || 0);
   if (status === "ERROR" || code >= 500) {
     return {
-      stroke: "#fb7185",
-      badgeClass: "bg-rose-500/10 text-rose-400 border-rose-500/30",
-      nodeBorder: "border-rose-500/60 bg-rose-500/10",
-      dot: "bg-rose-400",
+      stroke: "#fca5a5",
+      badgeClass: "bg-[var(--color-surface-secondary)] text-rose-300/90 border-[var(--color-border-strong)]",
+      nodeBorder: "border-rose-500/35 bg-[var(--color-surface)]",
+      dot: "bg-rose-400/80",
       marker: "url(#arrow-error)",
     };
   }
   if (status === "BLOCKED" || (code >= 400 && code < 500)) {
     return {
-      stroke: "#fbbf24",
-      badgeClass: "bg-amber-500/10 text-amber-400 border-amber-500/30",
-      nodeBorder: "border-amber-500/60 bg-amber-500/10",
-      dot: "bg-amber-400",
+      stroke: "#94a3b8",
+      badgeClass: "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]",
+      nodeBorder: "border-[var(--color-border-strong)] bg-[var(--color-surface-secondary)]",
+      dot: "bg-[var(--color-text-muted)]",
       marker: "url(#arrow-warn)",
     };
   }
   if (status === "PASS") {
     return {
-      stroke: "#34d399",
-      badgeClass: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
-      nodeBorder: "border-emerald-500/50 bg-emerald-500/10",
-      dot: "bg-emerald-400",
+      stroke: "#cbd5e1",
+      badgeClass: "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border-[var(--color-border)]",
+      nodeBorder: "border-[var(--color-border-strong)] bg-[var(--color-surface)]",
+      dot: "bg-[var(--color-text-secondary)]",
       marker: "url(#arrow-pass)",
     };
   }
   return {
-    stroke: "#38bdf8",
-    badgeClass: "bg-sky-500/10 text-sky-400 border-sky-500/30",
-    nodeBorder: "border-sky-500/60 bg-sky-500/10",
-    dot: "bg-sky-400",
+    stroke: "#f8fafc",
+    badgeClass: "bg-[var(--color-surface-secondary)] text-[var(--color-text)] border-[var(--color-border-strong)]",
+    nodeBorder: "border-[var(--color-text)] bg-[var(--color-surface-secondary)]",
+    dot: "bg-[var(--color-text)]",
     marker: "url(#arrow-active)",
   };
 }
@@ -393,19 +393,19 @@ export default function IntegrationFlowCanvas({
         className="absolute bottom-3 left-3 z-20 flex flex-wrap items-center gap-3 px-2.5 py-1.5 rounded-md bg-[var(--color-surface)] border border-[var(--color-border)] text-[10px] font-mono text-[var(--color-text-muted)]"
       >
         <span className="inline-flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-sky-400" />
+          <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-text)]" />
           Request
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-emerald-400" />
+          <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-text-secondary)]" />
           2xx Pass
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-amber-400" />
+          <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-text-muted)]" />
           4xx Guard / Reject
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-rose-400" />
+          <span className="w-1.5 h-1.5 rounded-full bg-rose-400/75" />
           5xx / Failure
         </span>
       </div>
@@ -429,10 +429,10 @@ export default function IntegrationFlowCanvas({
           <defs>
             {[
               { id: "arrow-idle", color: "#475569" },
-              { id: "arrow-active", color: "#38bdf8" },
-              { id: "arrow-pass", color: "#34d399" },
-              { id: "arrow-warn", color: "#fbbf24" },
-              { id: "arrow-error", color: "#fb7185" },
+              { id: "arrow-active", color: "#f8fafc" },
+              { id: "arrow-pass", color: "#cbd5e1" },
+              { id: "arrow-warn", color: "#94a3b8" },
+              { id: "arrow-error", color: "#fca5a5" },
             ].map((m) => (
               <marker
                 key={m.id}
@@ -532,7 +532,7 @@ export default function IntegrationFlowCanvas({
             : null;
 
           const borderClass = isCurrent
-            ? `${sem?.nodeBorder || "border-sky-400 bg-sky-500/10"} ring-2 ring-[var(--color-primary)]/40`
+            ? "border-[var(--color-text)] bg-[var(--color-surface-secondary)] ring-1 ring-[var(--color-text)]/25"
             : visited
               ? sem?.nodeBorder || "border-[var(--color-border-strong)] bg-[var(--color-surface)]"
               : "border-[var(--color-border)] bg-[var(--color-surface)]";
@@ -560,7 +560,7 @@ export default function IntegrationFlowCanvas({
                 height: node.height,
               }}
               className={`text-left rounded-md border px-2.5 py-2 flex flex-col justify-between transition-colors duration-150 ${borderClass} ${
-                isInScenario ? "cursor-pointer hover:border-[var(--color-primary)]/60" : "cursor-default"
+                isInScenario ? "cursor-pointer hover:border-[var(--color-border-strong)]" : "cursor-default"
               }`}
             >
               <div className="flex items-center justify-between gap-1.5">
@@ -575,23 +575,23 @@ export default function IntegrationFlowCanvas({
                     {isPlaying && (
                       <span
                         className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                          sem?.dot || "bg-sky-400"
+                          sem?.dot || "bg-[var(--color-text)]"
                         }`}
                       />
                     )}
                     <span
                       className={`relative inline-flex rounded-full h-2 w-2 ${
-                        sem?.dot || "bg-sky-400"
+                        sem?.dot || "bg-[var(--color-text)]"
                       }`}
                     />
                   </span>
                 ) : visited ? (
                   visited.status === "ERROR" ? (
-                    <XCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                    <XCircle className="w-3.5 h-3.5 text-rose-400/80 shrink-0" />
                   ) : visited.status === "BLOCKED" ? (
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <AlertTriangle className="w-3.5 h-3.5 text-[var(--color-text-secondary)] shrink-0" />
                   ) : (
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <CheckCircle2 className="w-3.5 h-3.5 text-[var(--color-text-secondary)] shrink-0" />
                   )
                 ) : null}
               </div>

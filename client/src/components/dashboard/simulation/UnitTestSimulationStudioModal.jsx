@@ -8,13 +8,12 @@ import {
   Split,
   CheckCircle2,
   XCircle,
-  Zap,
   Loader2,
   AlertCircle,
   Edit3,
   Save,
   RotateCcw,
-  Sparkles,
+  BookOpen,
   Check,
   Play,
   Terminal,
@@ -471,23 +470,23 @@ export default function UnitTestSimulationStudioModal({
                 width: 30,
                 height: 30,
                 borderRadius: 8,
-                background: "linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)",
+                background: isLight ? "#f1f5f9" : "#1c2128",
+                border: isLight ? "1px solid #cbd5e1" : "1px solid #30363d",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: "#ffffff",
-                boxShadow: "0 2px 8px rgba(99, 102, 241, 0.4)",
+                color: isLight ? "#0f172a" : "#e2e8f0",
                 flexShrink: 0,
               }}
             >
-              <Zap size={16} fill="#ffffff" />
+              <Terminal size={15} />
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span
                 style={{
                   fontSize: 14,
-                  fontWeight: 750,
+                  fontWeight: 700,
                   color: isLight ? "#0f172a" : "#f0f6fc",
                   letterSpacing: "-0.01em",
                 }}
@@ -497,17 +496,18 @@ export default function UnitTestSimulationStudioModal({
               <span
                 style={{
                   fontSize: 10,
-                  fontWeight: 700,
-                  padding: "2px 6px",
-                  borderRadius: 4,
-                  background: isLight ? "rgba(99, 102, 241, 0.12)" : "rgba(99, 102, 241, 0.25)",
-                  color: isLight ? "#4f46e5" : "#a5b4fc",
+                  fontWeight: 600,
+                  padding: "2px 7px",
+                  borderRadius: 6,
+                  background: isLight ? "#f1f5f9" : "#1c2128",
+                  border: isLight ? "1px solid #cbd5e1" : "1px solid #30363d",
+                  color: isLight ? "#475569" : "#94a3b8",
                 }}
               >
                 Interactive Player
               </span>
               {traceLoading && (
-                <Loader2 size={13} className="animate-spin text-indigo-400" />
+                <Loader2 size={13} className="animate-spin text-[var(--color-text-secondary)]" />
               )}
             </div>
           </div>
@@ -520,9 +520,9 @@ export default function UnitTestSimulationStudioModal({
                 display: "flex",
                 alignItems: "center",
                 borderRadius: 8,
-                background: isLight ? "#e2e8f0" : "rgba(255, 255, 255, 0.08)",
+                background: isLight ? "#e2e8f0" : "#11161d",
                 padding: 2,
-                border: isLight ? "1px solid #cbd5e1" : "1px solid rgba(255, 255, 255, 0.12)",
+                border: isLight ? "1px solid #cbd5e1" : "1px solid #29313d",
               }}
             >
               <button
@@ -532,23 +532,23 @@ export default function UnitTestSimulationStudioModal({
                   borderRadius: 6,
                   background:
                     studioMode === "playback"
-                      ? "linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)"
+                      ? isLight ? "#0f172a" : "#f8fafc"
                       : "transparent",
-                  color: studioMode === "playback" ? "#ffffff" : isLight ? "#475569" : "#94a3b8",
+                  color: studioMode === "playback"
+                    ? isLight ? "#ffffff" : "#0b0f14"
+                    : isLight ? "#475569" : "#94a3b8",
                   border: "none",
                   fontSize: 11,
-                  fontWeight: studioMode === "playback" ? 750 : 500,
+                  fontWeight: studioMode === "playback" ? 650 : 500,
                   cursor: "pointer",
                   display: "flex",
                   alignItems: "center",
                   gap: 5,
-                  boxShadow:
-                    studioMode === "playback" ? "0 2px 6px rgba(99, 102, 241, 0.35)" : "none",
                   transition: "all 0.15s ease",
                 }}
                 title="Replay mode: inspect execution steps, state and branch decisions"
               >
-                <Play size={12} fill={studioMode === "playback" ? "#ffffff" : "currentColor"} />
+                <Play size={12} fill={studioMode === "playback" ? "currentColor" : "none"} />
                 <span>Execution Replay</span>
               </button>
 
@@ -567,18 +567,18 @@ export default function UnitTestSimulationStudioModal({
                   borderRadius: 6,
                   background:
                     studioMode === "author"
-                      ? "linear-gradient(135deg, #059669 0%, #10b981 100%)"
+                      ? isLight ? "#0f172a" : "#f8fafc"
                       : "transparent",
-                  color: studioMode === "author" ? "#ffffff" : isLight ? "#475569" : "#94a3b8",
+                  color: studioMode === "author"
+                    ? isLight ? "#ffffff" : "#0b0f14"
+                    : isLight ? "#475569" : "#94a3b8",
                   border: "none",
                   fontSize: 11,
-                  fontWeight: studioMode === "author" ? 750 : 500,
+                  fontWeight: studioMode === "author" ? 650 : 500,
                   cursor: "pointer",
                   display: "flex",
                   alignItems: "center",
                   gap: 5,
-                  boxShadow:
-                    studioMode === "author" ? "0 2px 6px rgba(16, 185, 129, 0.35)" : "none",
                   transition: "all 0.15s ease",
                 }}
                 title="Test authoring mode: write tests, insert scenario templates and preview their logic"
@@ -813,7 +813,7 @@ export default function UnitTestSimulationStudioModal({
               >
                 {displaySources.length} files
               </span>
-              {sourcesLoading && <Loader2 size={11} className="animate-spin text-indigo-400" />}
+              {sourcesLoading && <Loader2 size={11} className="animate-spin text-[var(--color-text-secondary)]" />}
             </div>
 
             {/* Target Function Dropdown */}
@@ -1084,8 +1084,8 @@ export default function UnitTestSimulationStudioModal({
           >
             {/* Quick Template Chips */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: isLight ? "#475569" : "#94a3b8", display: "flex", alignItems: "center", gap: 4 }}>
-                <Sparkles size={13} className="text-indigo-400" />
+              <span style={{ fontSize: 11, fontWeight: 600, color: isLight ? "#475569" : "#94a3b8", display: "flex", alignItems: "center", gap: 4 }}>
+                <BookOpen size={13} className="text-[var(--color-text-secondary)]" />
                 <span>Insert scenario template:</span>
               </span>
               {Object.values(CATEGORY_METADATA).map((cat) => (
@@ -1094,10 +1094,10 @@ export default function UnitTestSimulationStudioModal({
                   onClick={() => handleInsertTemplate(cat.id)}
                   style={{
                     padding: "3px 8px",
-                    borderRadius: 5,
-                    background: isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)",
-                    border: `1px solid ${cat.color}60`,
-                    color: isLight ? "#1e293b" : "#f1f5f9",
+                    borderRadius: 6,
+                    background: isLight ? "#ffffff" : "#161b22",
+                    border: isLight ? "1px solid #cbd5e1" : "1px solid #30363d",
+                    color: isLight ? "#1e293b" : "#cbd5e1",
                     fontSize: 10.5,
                     fontWeight: 600,
                     cursor: "pointer",
@@ -1108,15 +1108,15 @@ export default function UnitTestSimulationStudioModal({
                   }}
                   title={`Insert a complete test template for ${cat.name}`}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = cat.color;
-                    e.currentTarget.style.color = "#ffffff";
+                    e.currentTarget.style.background = isLight ? "#f1f5f9" : "#21262d";
+                    e.currentTarget.style.color = isLight ? "#0f172a" : "#f8fafc";
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = isLight ? "#ffffff" : "rgba(255, 255, 255, 0.05)";
-                    e.currentTarget.style.color = isLight ? "#1e293b" : "#f1f5f9";
+                    e.currentTarget.style.background = isLight ? "#ffffff" : "#161b22";
+                    e.currentTarget.style.color = isLight ? "#1e293b" : "#cbd5e1";
                   }}
                 >
-                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: cat.color }} />
+                  <span style={{ width: 5, height: 5, borderRadius: "50%", background: isLight ? "#64748b" : "#94a3b8" }} />
                   <span>{cat.shortName}</span>
                 </button>
               ))}
@@ -1151,26 +1151,25 @@ export default function UnitTestSimulationStudioModal({
                 style={{
                   padding: "5px 12px",
                   borderRadius: 6,
-                  background: "linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)",
-                  border: "none",
-                  color: "#ffffff",
+                  background: isLight ? "#ffffff" : "#21262d",
+                  border: isLight ? "1px solid #cbd5e1" : "1px solid #30363d",
+                  color: isLight ? "#0f172a" : "#f0f6fc",
                   fontSize: 11.5,
-                  fontWeight: 700,
+                  fontWeight: 600,
                   cursor: isSimulatingCustom ? "not-allowed" : "pointer",
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
                   opacity: isSimulatingCustom ? 0.7 : 1,
-                  boxShadow: "0 2px 6px rgba(99, 102, 241, 0.35)",
                 }}
                 title="Preview the authored test using an unverified AST illustration"
               >
                 {isSimulatingCustom ? (
                   <Loader2 size={13} className="animate-spin" />
                 ) : (
-                  <Zap size={13} fill="#ffffff" />
+                  <Play size={12} fill="currentColor" />
                 )}
-                <span>⚡ Preview Test Logic</span>
+                <span>Preview Test Logic</span>
               </button>
 
               <button
@@ -1179,17 +1178,16 @@ export default function UnitTestSimulationStudioModal({
                 style={{
                   padding: "5px 12px",
                   borderRadius: 6,
-                  background: "linear-gradient(135deg, #059669 0%, #10b981 100%)",
+                  background: isLight ? "#0f172a" : "#f8fafc",
                   border: "none",
-                  color: "#ffffff",
+                  color: isLight ? "#ffffff" : "#0b0f14",
                   fontSize: 11.5,
-                  fontWeight: 700,
+                  fontWeight: 650,
                   cursor: isApplying ? "not-allowed" : "pointer",
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
                   opacity: isApplying ? 0.7 : 1,
-                  boxShadow: "0 2px 6px rgba(16, 185, 129, 0.35)",
                 }}
                 title="Apply this test to the project, verify the batch and refresh coverage"
               >
@@ -1474,20 +1472,19 @@ export default function UnitTestSimulationStudioModal({
                 style={{
                   padding: "6px 14px",
                   borderRadius: 6,
-                  background: "linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)",
-                  border: "none",
-                  color: "#ffffff",
+                  background: isLight ? "#ffffff" : "#21262d",
+                  border: isLight ? "1px solid #cbd5e1" : "1px solid #30363d",
+                  color: isLight ? "#0f172a" : "#f0f6fc",
                   fontSize: 12,
-                  fontWeight: 700,
+                  fontWeight: 600,
                   cursor: isSimulatingCustom ? "not-allowed" : "pointer",
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
-                  boxShadow: "0 2px 8px rgba(99, 102, 241, 0.4)",
                 }}
               >
-                {isSimulatingCustom ? <Loader2 size={13} className="animate-spin" /> : <Zap size={13} fill="#ffffff" />}
-                <span>⚡ Preview Test Logic</span>
+                {isSimulatingCustom ? <Loader2 size={13} className="animate-spin" /> : <Play size={12} fill="currentColor" />}
+                <span>Preview Test Logic</span>
               </button>
 
               <button
@@ -1496,20 +1493,19 @@ export default function UnitTestSimulationStudioModal({
                 style={{
                   padding: "6px 14px",
                   borderRadius: 6,
-                  background: "linear-gradient(135deg, #059669 0%, #10b981 100%)",
+                  background: isLight ? "#0f172a" : "#f8fafc",
                   border: "none",
-                  color: "#ffffff",
+                  color: isLight ? "#ffffff" : "#0b0f14",
                   fontSize: 12,
-                  fontWeight: 700,
+                  fontWeight: 650,
                   cursor: isApplying ? "not-allowed" : "pointer",
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
-                  boxShadow: "0 2px 8px rgba(16, 185, 129, 0.4)",
                 }}
               >
                 {isApplying ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-                <span>💾 Apply to Project</span>
+                <span>Apply to Project</span>
               </button>
             </div>
           </div>

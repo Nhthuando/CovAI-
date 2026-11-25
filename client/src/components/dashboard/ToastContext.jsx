@@ -49,19 +49,20 @@ export function ToastProvider({ children }) {
     <ToastContext.Provider value={{ showToast, addToast: showToast, removeToast }}>
       {children}
 
-      {/* Toast Container — fixed bottom-right */}
+      {/* Toast Container — fixed top-right */}
       <div
         style={{
           position: "fixed",
-          bottom: 48,
-          right: 32,
+          top: 16,
+          right: 16,
           zIndex: 9999,
           display: "flex",
-          flexDirection: "column-reverse",
-          gap: 10,
+          flexDirection: "column",
+          alignItems: "flex-end",
+          gap: 8,
           pointerEvents: "none",
-          maxWidth: 420,
-          width: "100%",
+          maxWidth: 380,
+          width: "calc(100vw - 32px)",
         }}
       >
         <AnimatePresence mode="popLayout">

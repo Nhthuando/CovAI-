@@ -15,8 +15,9 @@ import {
     runSchema,
     reviewSchema,
 } from './contracts.js';
-import { DEFAULT_EVALUATION_CONFIG, enabled, fail, hash, serial, VERSIONS, TERMINAL, redact, lastLogLines } from './common.js';
-import { validateEndpoint, executeTurn } from './httpJson.adapter.js';
+import { DEFAULT_EVALUATION_CONFIG, enabled, fail, hash, serial, VERSIONS, TERMINAL, redact, lastLogLines, same, isBehaviorOnly } from './common.js';
+import { validateEndpoint, executeTurn, targetErrorSnippet } from './httpJson.adapter.js';
+import { discoverWorkingConfig, isTerminalFailure, connectionReplyError } from './connectionDiscovery.js';
 import { saveKnowledge, snapshotKnowledge } from './knowledge.service.js';
 import { getChatbotDesignAudit } from './designAudit.service.js';
 import { isCriterionApplicableToTask } from './evaluator.service.js';
@@ -306,7 +307,7 @@ export async function workspace(db, projectId, userId = null) {
     };
 }
 
-export async function saveTarget(db, projectId, input, targetId) {
+export async function saveTarget(db, projectId, input, targetId, expectedVersionId) {
     const config = parse(targetSchema, input.config);
     if (config.executionMode === 'EXTERNAL_URL') {
         validateEndpoint(config.endpoint);
@@ -338,12 +339,16 @@ export async function saveTarget(db, projectId, input, targetId) {
         const target = targetId
             ? await targetFor(tx, projectId, targetId)
             : await tx.aiEvaluationTarget.create({ data: { projectId, name: input.name.trim() }, select: TARGET_SELECT });
-        if (target.archivedAt) fail('TARGET_ARCHIVED', 'Create a new target instead of modifying an archived one');
+        if (target.archivedAt) {
+            if (expectedVersionId !== undefined) return null;
+            fail('TARGET_ARCHIVED', 'Create a new target instead of modifying an archived one');
+        }
         const latest = await tx.aiEvaluationTargetVersion.findFirst({
             where: { targetId: target.id },
             orderBy: { version: 'desc' },
             select: { id: true, version: true, credentialId: true },
         });
+        if (expectedVersionId !== undefined && latest?.id !== expectedVersionId) return null;
         let credentialId = latest?.credentialId || null;
         if (credential !== undefined) {
             const previous = await tx.aiEvaluationCredential.findFirst({
@@ -417,7 +422,7 @@ function configAuthNone(config) {
 }
 
 export async function testConnection(db, projectId, id, options = {}) {
-    await targetFor(db, projectId, id);
+    const target = await targetFor(db, projectId, id);
     const version = must(await db.aiEvaluationTargetVersion.findFirst({
         where: { targetId: id },
         orderBy: { version: 'desc' },
@@ -437,9 +442,9 @@ export async function testConnection(db, projectId, id, options = {}) {
     const { ephemeralCredential, ephemeralLlmApiKey, snapshotId, ...adapterOptions } = options;
     let llmKeyRef = null;
     let runtime = null;
+    let audit = null;
     try {
         if (version.config.executionMode === 'MANAGED_PROJECT') {
-            let audit = null;
             try {
                 audit = await getChatbotDesignAudit(db, projectId, { autoScan: false });
             } catch {
@@ -470,22 +475,114 @@ export async function testConnection(db, projectId, id, options = {}) {
             });
         }
 
+        const deadlineAt = Date.now() + 120000;
+        const question = 'Connection test. Reply with OK. Do not call tools or perform any action.';
+        const conversationKey = crypto.randomUUID();
+        const messages = [{ role: 'user', content: question }];
+        const execute = async (config, input = {}) => {
+            const timeoutMs = Math.min(adapterOptions.timeoutMs ?? CONNECTION_TEST_TIMEOUT_MS, deadlineAt - Date.now());
+            if (timeoutMs <= 0) fail('TARGET_TIMEOUT', 'The connection test reached its time limit', 502);
+            const signal = AbortSignal.timeout(timeoutMs);
+            try {
+                return await executeTurn(config, {
+                    requestId: conversationKey,
+                    conversationKey,
+                    messages,
+                    latestUserMessage: question,
+                    evaluationContext: { executionMode: 'CONNECTION_TEST', toolsAllowed: false },
+                    ...input,
+                    signal,
+                }, { credential, lease: runtime?.loopbackLease || null, ...adapterOptions, timeoutMs });
+            } catch (error) {
+                if (signal.aborted && (error.code === 'REQUEST_ABORTED' || error.name === 'AbortError')) {
+                    fail('TARGET_TIMEOUT', `Your chatbot did not answer within ${Math.round(timeoutMs / 1000)} s`, 502);
+                }
+                throw error;
+            }
+        };
+        const saveMapping = async config => {
+            const changed = ['bindings', 'requestTemplate', 'endpointPath', 'response', 'conversationMode', 'historyFormat']
+                .some(key => !same(version.config[key], config[key]));
+            if (!changed) return null;
+            const saved = await saveTarget(db, projectId, { name: target.name, config }, id, version.id);
+            if (!saved) return null;
+            return {
+                endpointPath: config.endpointPath,
+                questionField: Object.keys(config.bindings).find(pointer =>
+                    ['latestUserMessage', 'messages', 'uiMessages', 'geminiContents'].includes(config.bindings[pointer])),
+                replyField: config.response.answer,
+                versionId: saved.versionId,
+            };
+        };
         let result;
+        let finalConfig = version.config;
+        let multiTurn;
+        let adapted;
         try {
-            result = await executeTurn(
-            version.config,
-            {
-                requestId: crypto.randomUUID(),
-                messages: [{ role: 'user', content: 'Connection test. Reply with OK. Do not call tools or perform any action.' }],
-                latestUserMessage: 'Connection test. Reply with OK. Do not call tools or perform any action.',
-                evaluationContext: { executionMode: 'CONNECTION_TEST', toolsAllowed: false },
-            },
-            { credential, lease: runtime?.loopbackLease || null, timeoutMs: CONNECTION_TEST_TIMEOUT_MS, ...adapterOptions },
-            );
+            try {
+                result = await execute(finalConfig);
+                const replyError = connectionReplyError(result);
+                if (replyError) throw replyError;
+            } catch (original) {
+                if (isTerminalFailure(original)) throw original;
+                const discovery = await discoverWorkingConfig({
+                    config: finalConfig,
+                    autoFill: audit?.autoFillConfig,
+                    endpoints: audit?.summary?.endpoints?.filter(endpoint => endpoint.method?.toUpperCase() === 'POST')
+                        .map(endpoint => endpoint.endpointPath),
+                    firstError: original,
+                    execute,
+                    deadlineAt,
+                });
+                if (!discovery.config) {
+                    original.message = `${original.message.replace(/[.…\s]+$/, '')}. CovAI tried ${discovery.attempts} request formats and none was accepted`;
+                    throw original;
+                }
+                finalConfig = discovery.config;
+                result = discovery.result;
+            }
+            if (Object.values(finalConfig.bindings).includes('history')) {
+                const followUp = 'Connection test, second message. Reply with OK.';
+                const input = {
+                    requestId: crypto.randomUUID(),
+                    conversationId: result.conversationId,
+                    messages: [...messages, { role: 'assistant', content: result.answer }, { role: 'user', content: followUp }],
+                    latestUserMessage: followUp,
+                };
+                const formats = [finalConfig.historyFormat, ...['chat', 'model', 'gemini', 'strings']
+                    .filter(format => format !== (finalConfig.historyFormat ?? 'chat'))];
+                multiTurn = 'FAILED';
+                for (const historyFormat of formats) {
+                    const candidate = historyFormat === finalConfig.historyFormat ? finalConfig : { ...finalConfig, historyFormat };
+                    try {
+                        const reply = await execute(candidate, input);
+                        if (connectionReplyError(reply)) break;
+                        finalConfig = candidate;
+                        multiTurn = 'OK';
+                        break;
+                    } catch (error) {
+                        if (isTerminalFailure(error)) {
+                            multiTurn = 'UNKNOWN';
+                            break;
+                        }
+                        if (error.code !== 'TARGET_HTTP_ERROR') break;
+                    }
+                }
+            }
+            adapted = await saveMapping({ ...finalConfig, verifiedMapping: true });
         } catch (error) {
+            if (error.discoveredConfig) {
+                delete error.discoveredConfig.verifiedMapping;
+                await saveMapping(error.discoveredConfig);
+            }
             if (runtime?.recentOutput && ['TARGET_TIMEOUT', 'TARGET_HTTP_ERROR', 'TARGET_RATE_LIMIT', 'TARGET_CONNECTION_ERROR', 'INVALID_TARGET_JSON'].includes(error.code)) {
                 const tail = lastLogLines(runtime.recentOutput(1200));
-                if (tail) error.message = `${error.message}. Chatbot log: ${tail}`;
+                if (tail) error.message = `${error.message.replace(/[.…\s]+$/, '')}. Chatbot log: ${tail}`;
+            }
+            if (['INVALID_ANSWER_MAPPING', 'SESSION_UNAVAILABLE'].includes(error.code) && error.targetRaw && typeof error.targetRaw === 'object') {
+                const reply = JSON.stringify(error.targetRaw);
+                const snippet = targetErrorSnippet(reply);
+                error.message += ` Reply: ${snippet.trim() ? snippet : reply.slice(0, 200)}`;
             }
             error.message = redact(error.message, [credential, inlineLlmKey].filter(Boolean));
             throw error;
@@ -494,7 +591,9 @@ export async function testConnection(db, projectId, id, options = {}) {
             answer: redact(result.answer, [credential, inlineLlmKey].filter(Boolean)).slice(0, 2000),
             latencyMs: result.latencyMs,
             evidenceAvailability: result.evidenceAvailability,
-            capabilityStatus: version.config.mockGateway ? 'GATEWAY_INTEGRATION_NOT_YET_VERIFIED' : 'ANSWER_ONLY',
+            capabilityStatus: finalConfig.mockGateway ? 'GATEWAY_INTEGRATION_NOT_YET_VERIFIED' : 'ANSWER_ONLY',
+            adapted,
+            ...(multiTurn === undefined ? {} : { multiTurn }),
         };
     } finally {
         await runtime?.stop().catch(() => {});
@@ -661,9 +760,10 @@ async function proposalReferenceFlags(db, projectId, profileVersionId) {
 }
 
 function reconcileCaseQuoteVerification(caseDef, readySources = [], persisted, proposalFlag = false) {
+    const behaviorOnly = isBehaviorOnly(readySources);
     const quote = (caseDef.sourceQuote || '').trim();
     if (!quote) {
-        return { ...caseDef, sourceQuote: '', referenceUnverified: Boolean(persisted?.definition?.referenceUnverified || proposalFlag) };
+        return { ...caseDef, sourceQuote: '', referenceUnverified: !behaviorOnly && Boolean(persisted?.definition?.referenceUnverified || proposalFlag) };
     }
     const check = verifySourceQuoteAgainstSources(quote, readySources);
     if (check.verified) {
@@ -689,6 +789,14 @@ function reconcileCaseQuoteVerification(caseDef, readySources = [], persisted, p
                     sourceQuote: verifiedQuote,
                 };
             }),
+        };
+    }
+    if (behaviorOnly) {
+        return {
+            ...caseDef,
+            sourceQuote: '',
+            referenceUnverified: false,
+            criteria: (caseDef.criteria || []).map(criterion => ({ ...criterion, sourceQuote: '' })),
         };
     }
     return {
@@ -720,7 +828,7 @@ export async function saveProfile(db, projectId, id, input) {
         const readySources = value.definition.sourceIds.length > 0
             ? await tx.aiEvaluationKnowledgeSource.findMany({
                 where: { id: { in: value.definition.sourceIds }, projectId, status: 'READY' },
-                select: { id: true, content: true },
+                select: { id: true, content: true, provenance: true },
             })
             : [];
         const persistedCases = new Map(current.cases.map(c => [c.caseKey, c]));

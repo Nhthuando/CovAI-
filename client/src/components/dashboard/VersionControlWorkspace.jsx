@@ -1578,6 +1578,28 @@ export default function VersionControlWorkspace({ projectId, onSync }) {
         variant="danger"
         loading={restoring}
       />
+
+      <ConfirmDialog
+        isOpen={Boolean(pendingDiscard)}
+        onClose={() => !gitActionLoading && setPendingDiscard(null)}
+        onConfirm={async () => {
+          if (!pendingDiscard) return;
+          const target = pendingDiscard;
+          setPendingDiscard(null);
+          await executeDiscard(target.filePath, target.isUntracked);
+        }}
+        title="Discard File Changes"
+        message="This will permanently revert all uncommitted modifications in this file. This cannot be undone."
+        confirmText="Discard Changes"
+        variant="danger"
+        loading={gitActionLoading}
+      >
+        {pendingDiscard && (
+          <div className="px-3 py-2 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-xs text-[var(--color-text-secondary)] break-all">
+            {pendingDiscard.filePath}
+          </div>
+        )}
+      </ConfirmDialog>
     </div>
   );
 }

@@ -3,7 +3,7 @@ import {
   CheckCircle2,
   XCircle,
   Download,
-  Wand2,
+  Wrench,
   Play,
   Loader2,
   GitBranch,
@@ -15,13 +15,14 @@ import {
   isUnitTestFailed,
   summarizeUnitFailure,
 } from "./unitTestCaseCoverage.js";
+import { TEST_UI, calmProgressFillClass } from "../shared/testingUiTokens.js";
 
 function computeGrade(score) {
-  if (score >= 90) return { grade: "A", color: "text-emerald-400 border-emerald-500/30 bg-emerald-500/10" };
-  if (score >= 80) return { grade: "B", color: "text-sky-400 border-sky-500/30 bg-sky-500/10" };
-  if (score >= 65) return { grade: "C", color: "text-amber-400 border-amber-500/30 bg-amber-500/10" };
-  if (score >= 45) return { grade: "D", color: "text-orange-400 border-orange-500/30 bg-orange-500/10" };
-  return { grade: "F", color: "text-rose-400 border-rose-500/30 bg-rose-500/10" };
+  if (score >= 90) return { grade: "A", color: "text-[var(--color-text)] border-[var(--color-border-strong)] bg-[var(--color-surface-secondary)]" };
+  if (score >= 80) return { grade: "B", color: "text-[var(--color-text)] border-[var(--color-border)] bg-[var(--color-surface-secondary)]" };
+  if (score >= 65) return { grade: "C", color: "text-[var(--color-text-secondary)] border-[var(--color-border)] bg-[var(--color-surface-secondary)]" };
+  if (score >= 45) return { grade: "D", color: "text-[var(--color-text-secondary)] border-[var(--color-border)] bg-[var(--color-surface-secondary)]" };
+  return { grade: "F", color: "text-rose-400/80 border-[var(--color-border)] bg-[var(--color-surface-secondary)]" };
 }
 
 export default function UnitReportEmbed({
@@ -170,15 +171,9 @@ export default function UnitReportEmbed({
               <div className="font-mono tabular-nums text-xl font-bold text-[var(--color-text)]">
                 {p.pct.toFixed(1)}%
               </div>
-              <div className="h-1.5 rounded-sm bg-[var(--color-surface-secondary)] overflow-hidden">
+              <div className={TEST_UI.progressTrack}>
                 <div
-                  className={`h-full transition-all duration-300 ${
-                    p.pct >= 80
-                      ? "bg-emerald-500"
-                      : p.pct >= 50
-                        ? "bg-amber-500"
-                        : "bg-rose-500"
-                  }`}
+                  className={calmProgressFillClass(p.pct)}
                   style={{ width: `${Math.min(100, Math.max(0, p.pct))}%` }}
                 />
               </div>
@@ -192,9 +187,9 @@ export default function UnitReportEmbed({
         <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
           <div className="flex items-center gap-2">
             {failingTests.length > 0 ? (
-              <XCircle size={15} className="text-rose-400" />
+              <XCircle size={15} className="text-rose-400/80" />
             ) : (
-              <CheckCircle2 size={15} className="text-emerald-400" />
+              <CheckCircle2 size={15} className="text-emerald-400/75" />
             )}
             <h3 className="text-xs font-semibold text-[var(--color-text)] m-0">
               Failing Unit Tests & Root Causes ({failingTests.length})
@@ -205,7 +200,7 @@ export default function UnitReportEmbed({
               type="button"
               onClick={onRunCoverage}
               disabled={isRunning}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold cursor-pointer"
+              className={TEST_UI.btnPrimary}
             >
               <Play size={11} fill="currentColor" />
               <span>Run Coverage</span>
@@ -236,7 +231,7 @@ export default function UnitReportEmbed({
                           {tc.title || tc.testName}
                         </span>
                         {diag?.label && (
-                          <span className="px-1.5 py-0.5 rounded bg-rose-500/10 border border-rose-500/25 text-[10px] font-mono text-rose-300">
+                          <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[10px] font-mono text-[var(--color-text-secondary)]">
                             {diag.label}
                           </span>
                         )}
@@ -257,12 +252,12 @@ export default function UnitReportEmbed({
                           type="button"
                           onClick={() => onAIFixTestCase(tc, tc.entry)}
                           disabled={fixingTestId === tc.id || isRunning}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-amber-500/35 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-xs font-medium cursor-pointer disabled:opacity-50"
+                          className={TEST_UI.btnSecondary}
                         >
                           {fixingTestId === tc.id ? (
                             <Loader2 size={12} className="animate-spin" />
                           ) : (
-                            <Wand2 size={12} />
+                            <Wrench size={12} className="text-[var(--color-text-muted)]" />
                           )}
                           <span>AI Fix</span>
                         </button>
@@ -272,7 +267,7 @@ export default function UnitReportEmbed({
                           type="button"
                           onClick={() => onRunTestCase(tc, tc.entry)}
                           disabled={isRunning}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-xs text-[var(--color-text)] cursor-pointer disabled:opacity-50"
+                          className={TEST_UI.btnSecondary}
                         >
                           <Play size={11} fill="currentColor" />
                           <span>Rerun</span>
@@ -281,9 +276,9 @@ export default function UnitReportEmbed({
                     </div>
                   </div>
 
-                  <div className="rounded border border-rose-500/25 bg-rose-500/5 px-3 py-2 text-xs space-y-1">
-                    <div className="flex items-start gap-2 text-rose-300">
-                      <AlertTriangle size={13} className="shrink-0 mt-0.5 text-rose-400" />
+                  <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-xs space-y-1">
+                    <div className="flex items-start gap-2 text-[var(--color-text)]">
+                      <AlertTriangle size={13} className="shrink-0 mt-0.5 text-rose-400/75" />
                       <span className="font-medium leading-snug">
                         {diag?.explanation || summary}
                       </span>
@@ -323,7 +318,7 @@ export default function UnitReportEmbed({
             <button
               type="button"
               onClick={() => onNavigateTab("files")}
-              className="text-xs text-[var(--color-primary)] hover:underline cursor-pointer"
+              className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:underline cursor-pointer"
             >
               Inspect in Files & Tests Matrix →
             </button>
@@ -359,7 +354,7 @@ export default function UnitReportEmbed({
                       <button
                         type="button"
                         onClick={() => onOpenFileAnalysis(f)}
-                        className="inline-flex items-center gap-1 text-[11px] font-sans text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] cursor-pointer"
+                        className="inline-flex items-center gap-1 text-[11px] font-sans text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer"
                       >
                         <GitBranch size={11} />
                         <span>CFG</span>

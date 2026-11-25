@@ -20,6 +20,7 @@ function detectedPatch(auto) {
     ...(auto?.llmEnvVars?.length ? { llmEnvVars: auto.llmEnvVars } : {}),
     ...(auto?.bindings && Object.keys(auto.bindings).length ? { bindings: auto.bindings } : {}),
     ...(auto?.conversationMode ? { conversationMode: auto.conversationMode } : {}),
+    ...(auto?.historyFormat !== undefined ? { historyFormat: auto.historyFormat } : {}),
     ...(auto?.responsePointer ? { response: {
       format: auto.responseFormat || 'json',
       answer: auto.responsePointer,
@@ -29,7 +30,7 @@ function detectedPatch(auto) {
 }
 
 function differsFromDetected(config, auto) {
-  if (!auto || config?.executionMode !== 'MANAGED_PROJECT') return false;
+  if (config?.verifiedMapping || !auto || config?.executionMode !== 'MANAGED_PROJECT') return false;
   const patch = detectedPatch(auto);
   return (patch.endpointPath !== undefined && config.endpointPath !== patch.endpointPath)
     || (patch.bindings !== undefined && JSON.stringify(config.bindings) !== JSON.stringify(patch.bindings))
@@ -54,6 +55,7 @@ function initialConfig(audit, external) {
     },
     response: { format: auto.responseFormat || 'json', answer: auto.responsePointer || '/answer', ...(auto.responseConversationIdPointer ? { conversationId: auto.responseConversationIdPointer } : {}) },
     conversationMode: auto.conversationMode || 'messages',
+    ...(auto.historyFormat !== undefined ? { historyFormat: auto.historyFormat } : {}),
     mockGateway: false,
     testEnvironmentConfirmed: false,
     targetVersion: 'v1',
@@ -119,6 +121,7 @@ export default function TargetSetup({ data, api, act, busy, external, navigateVi
     setConfig(applyScan ? {
       ...rest,
       ...detectedPatch(auto),
+      ...(rest.historyFormat !== undefined ? { historyFormat: rest.historyFormat } : {}),
       requestTemplate: { ...(auto.requestTemplate || {}), ...(rest.requestTemplate || {}) },
     } : rest);
     setMissingFields([]);
@@ -196,12 +199,14 @@ export default function TargetSetup({ data, api, act, busy, external, navigateVi
               <Button variant="secondary" size="sm" disabled={busy} onClick={() => begin(target)}>Update from scan</Button>
             </div>
           )}
-          {probe?.targetId === target.id && (
-            <p role="status" className={`flex items-center gap-2 rounded-md border px-4 py-3 text-sm ${probe.error ? 'border-rose-500/20 bg-rose-500/10 text-rose-400' : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-400'}`}>
+          {probe?.targetId === target.id && (<>
+            <p role="status" className={`flex flex-wrap items-center gap-2 rounded-md border px-4 py-3 text-sm ${probe.error ? 'border-rose-500/20 bg-rose-500/10 text-rose-400' : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-400'}`}>
               {probe.error ? <><CircleX className="size-4" aria-hidden="true" />Couldn&apos;t connect: {probe.error}</>
-                : <><CircleCheck className="size-4" aria-hidden="true" />Connected{probe.result.latencyMs != null && <> · <span className="font-mono tabular-nums">{probe.result.latencyMs} ms</span></>}</>}
+                : <><CircleCheck className="size-4" aria-hidden="true" />Connected{probe.result.latencyMs != null && <> · <span className="font-mono tabular-nums">{probe.result.latencyMs} ms</span></>}
+                  {probe.result.adapted && <span> · Settings updated automatically: question field <code>{probe.result.adapted.questionField || '(root)'}</code>, reply field <code>{probe.result.adapted.replyField || '(root)'}</code></span>}</>}
             </p>
-          )}
+            {probe.result?.multiTurn === 'FAILED' && <p className="text-sm text-amber-400">Connected, but the chatbot rejected a follow-up question with history.</p>}
+          </>)}
         </div>
       ) : (
       <form className="space-y-4" onSubmit={event => {

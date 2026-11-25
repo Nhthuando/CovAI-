@@ -17,9 +17,9 @@ import {
   Layers,
   Loader2,
   Play,
+  Plus,
   RefreshCw,
   SlidersHorizontal,
-  Sparkles,
   X,
 } from "lucide-react";
 import { useTheme } from "../../../contexts/ThemeContext";
@@ -80,6 +80,8 @@ import UnitFileMatrixTable from "./UnitFileMatrixTable.jsx";
 import UnitReportEmbed from "./UnitReportEmbed.jsx";
 import UnitTestCaseEditorModal from "./UnitTestCaseEditorModal.jsx";
 import UnitFileAnalysisModal from "./UnitFileAnalysisModal.jsx";
+import ConfirmDialog from "../../common/ConfirmDialog.jsx";
+import { TEST_UI, calmProgressFillClass } from "../shared/testingUiTokens.js";
 import { cleanDisplayPath } from "../CoverageTypeDashboard.jsx";
 import { extractMissingPackageFromError } from "../UnitTestTraceabilityMatrix.jsx";
 import {
@@ -253,6 +255,7 @@ export default function UnitTestWorkspace({
     loadStagedOps("unit", snapshotId),
   );
   const [isApplyingPending, setIsApplyingPending] = useState(false);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
 
   useEffect(() => {
     setPendingUnitOps(loadStagedOps("unit", snapshotId));
@@ -2131,7 +2134,7 @@ export default function UnitTestWorkspace({
       <header className="shrink-0 bg-[var(--color-surface)] border-b border-[var(--color-border)] z-20 relative">
         {isFetching && (
           <div className="absolute top-0 left-0 right-0 h-0.5 bg-[var(--color-surface-secondary)] overflow-hidden">
-            <div className="h-full bg-[var(--color-primary)] animate-pulse w-full" />
+            <div className="h-full bg-[var(--color-text-muted)]/60 animate-pulse w-full" />
           </div>
         )}
 
@@ -2146,7 +2149,7 @@ export default function UnitTestWorkspace({
             <button
               type="button"
               onClick={() => setSetupDrawerOpen(true)}
-              className="px-2 py-0.5 rounded text-[10px] font-mono uppercase bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+              className="px-2 py-0.5 rounded text-[10px] font-mono uppercase bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-muted)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
               title="Click to configure Jest / Vitest runner mode in Test Setup"
             >
               {activeFrameworkBadgeLabel}
@@ -2157,7 +2160,7 @@ export default function UnitTestWorkspace({
             <button
               type="button"
               onClick={() => setSetupDrawerOpen((v) => !v)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors cursor-pointer"
+              className={TEST_UI.btnSecondary}
               title="Inspect runner dependencies and hermetic environment setup"
             >
               <SlidersHorizontal
@@ -2166,7 +2169,7 @@ export default function UnitTestWorkspace({
               />
               <span>Test Setup</span>
               {missingDependencies.length > 0 && (
-                <span className="px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-400 font-mono text-[10px]">
+                <span className={TEST_UI.badgeWarn}>
                   {missingDependencies.length}
                 </span>
               )}
@@ -2176,7 +2179,7 @@ export default function UnitTestWorkspace({
               type="button"
               onClick={() => refetch()}
               disabled={isFetching || isJobActive}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
+              className={TEST_UI.btnSecondary}
             >
               <RefreshCw
                 size={12}
@@ -2193,7 +2196,7 @@ export default function UnitTestWorkspace({
                 isJobActive ||
                 pendingAction === "RUN"
               }
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold transition-colors active:scale-[0.98] cursor-pointer disabled:opacity-50"
+              className={TEST_UI.btnPrimary}
               title="Run Jest / Vitest unit test suite and measure code coverage"
             >
               {pendingAction === "RUN" ||
@@ -2214,7 +2217,7 @@ export default function UnitTestWorkspace({
             <button
               type="button"
               onClick={() => setIsExportModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors cursor-pointer"
+              className={TEST_UI.btnSecondary}
             >
               <Download size={13} />
               <span className="hidden md:inline">Export</span>
@@ -2223,11 +2226,9 @@ export default function UnitTestWorkspace({
             <button
               type="button"
               onClick={() => setDrawerOpen((v) => !v)}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border transition-colors cursor-pointer ${
-                drawerOpen
-                  ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] border-[var(--color-primary)]/30 font-semibold"
-                  : "bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)]"
-              }`}
+              className={
+                drawerOpen ? TEST_UI.btnSecondaryActive : TEST_UI.btnSecondary
+              }
               title="Unit test version history (v1 / v2) and rollback"
             >
               <Clock size={13} />
@@ -2260,15 +2261,11 @@ export default function UnitTestWorkspace({
                     lines
                   </span>
                 </div>
-                <div className="flex-1 max-w-[160px] bg-[var(--color-surface-secondary)] h-1.5 rounded-sm overflow-hidden">
+                <div
+                  className={`flex-1 max-w-[160px] ${TEST_UI.progressTrack}`}
+                >
                   <div
-                    className={`h-full transition-all duration-300 ${
-                      displayLinesPct >= 80
-                        ? "bg-emerald-500"
-                        : displayLinesPct >= 50
-                          ? "bg-amber-500"
-                          : "bg-[var(--color-primary)]"
-                    }`}
+                    className={calmProgressFillClass(displayLinesPct)}
                     style={{
                       width: `${Math.min(100, Math.max(0, displayLinesPct))}%`,
                     }}
@@ -2332,16 +2329,16 @@ export default function UnitTestWorkspace({
                 <span
                   className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                     suiteLoadErrors.length > 0 || displayTestTotals.failed > 0
-                      ? "bg-rose-400/80"
+                      ? "bg-[var(--color-text)]"
                       : !displayHasExecuted
                         ? "bg-[var(--color-text-muted)]"
-                        : "bg-emerald-500/75"
+                        : "bg-[var(--color-text-secondary)]"
                   }`}
                 />
                 <span
                   className={`text-sm font-medium truncate ${
                     suiteLoadErrors.length > 0 || displayTestTotals.failed > 0
-                      ? "text-rose-400"
+                      ? "text-[var(--color-text)]"
                       : "text-[var(--color-text-secondary)]"
                   }`}
                 >
@@ -2387,30 +2384,26 @@ export default function UnitTestWorkspace({
                   role="tab"
                   aria-selected={isActive}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`relative flex items-center gap-1.5 py-2.5 text-xs font-medium transition-colors cursor-pointer border-b-2 -mb-px ${
-                    isActive
-                      ? "border-[var(--color-primary)] text-[var(--color-text)] font-semibold"
-                      : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                  className={`${TEST_UI.tabBase} ${
+                    isActive ? TEST_UI.tabActive : TEST_UI.tabInactive
                   }`}
                 >
                   <Icon
                     size={13}
                     className={
                       isActive
-                        ? "text-[var(--color-primary)]"
+                        ? "text-[var(--color-text)]"
                         : "text-[var(--color-text-muted)]"
                     }
                   />
                   <span>{tab.label}</span>
                   {tab.badge != null && (
                     <span
-                      className={`px-1.5 py-0.2 rounded text-[10px] font-mono tabular-nums ${
+                      className={
                         tab.id === "report" && reportTestStats.failed > 0
-                          ? "bg-rose-500/15 text-rose-400"
-                          : isActive
-                            ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)]"
-                            : "bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)]"
-                      }`}
+                          ? TEST_UI.badgeFail
+                          : TEST_UI.badgeNeutral
+                      }
                     >
                       {tab.badge}
                     </span>
@@ -2421,7 +2414,7 @@ export default function UnitTestWorkspace({
           </div>
 
           {isFetching && (
-            <span className="flex items-center gap-1 text-[11px] font-mono text-[var(--color-primary)]">
+            <span className="flex items-center gap-1 text-[11px] font-mono text-[var(--color-text-muted)]">
               <RefreshCw size={11} className="animate-spin" /> Syncing...
             </span>
           )}
@@ -2432,15 +2425,15 @@ export default function UnitTestWorkspace({
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
         {/* Error / Notice Banners */}
         {error && (
-          <div className="rounded-md border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-xs text-rose-300 flex items-center justify-between gap-3">
+          <div className={TEST_UI.bannerError}>
             <div className="flex items-center gap-2">
-              <AlertTriangle size={14} className="text-rose-400 shrink-0" />
+              <AlertTriangle size={14} className="text-rose-400/80 shrink-0" />
               <span>{error}</span>
             </div>
             <button
               type="button"
               onClick={() => setError("")}
-              className="text-rose-400 hover:text-rose-200 cursor-pointer"
+              className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
             >
               <X size={14} />
             </button>
@@ -2448,12 +2441,12 @@ export default function UnitTestWorkspace({
         )}
 
         {notice && (
-          <div className="rounded-md border border-emerald-500/25 bg-emerald-500/10 px-4 py-2 text-xs text-emerald-300 flex items-center justify-between gap-3">
+          <div className={TEST_UI.bannerSuccess}>
             <span>{notice}</span>
             <button
               type="button"
               onClick={() => setNotice("")}
-              className="text-emerald-400 hover:text-emerald-200 cursor-pointer"
+              className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
             >
               <X size={14} />
             </button>
@@ -2462,10 +2455,13 @@ export default function UnitTestWorkspace({
 
         {/* Suite-Level Load Failure Warning Banner (matches Integration Test) */}
         {suiteLoadErrors.length > 0 && (
-          <div className="rounded-md border border-rose-500/35 bg-rose-500/10 px-4 py-3 text-xs space-y-1.5">
+          <div className="rounded-lg border border-rose-500/20 bg-rose-500/[0.05] px-4 py-3 text-xs space-y-1.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2 font-semibold text-rose-300">
-                <AlertTriangle size={14} className="text-rose-400 shrink-0" />
+              <div className="flex items-center gap-2 font-medium text-rose-300/90">
+                <AlertTriangle
+                  size={14}
+                  className="text-rose-400/80 shrink-0"
+                />
                 <span>
                   {suiteLoadErrors.length} unit test suite
                   {suiteLoadErrors.length === 1 ? "" : "s"} crashed during
@@ -2475,15 +2471,15 @@ export default function UnitTestWorkspace({
               <button
                 type="button"
                 onClick={() => setSetupDrawerOpen(true)}
-                className="px-2.5 py-1 rounded border border-rose-500/35 bg-[var(--color-surface)] hover:bg-[var(--color-surface-secondary)] text-[11px] font-medium text-rose-300 cursor-pointer transition-colors"
+                className={TEST_UI.btnSecondary}
               >
                 Open Test Setup
               </button>
             </div>
-            <div className="space-y-1 pl-5 font-mono text-[11px] text-rose-200/90">
+            <div className="space-y-1 pl-5 font-mono text-[11px] text-[var(--color-text-secondary)]">
               {suiteLoadErrors.slice(0, 3).map((item, i) => (
                 <div key={`${item.testFile}-${i}`} className="truncate">
-                  <span className="text-rose-400">{item.testFile}:</span>{" "}
+                  <span className="text-rose-400/80">{item.testFile}:</span>{" "}
                   {item.message}
                 </div>
               ))}
@@ -2658,10 +2654,6 @@ export default function UnitTestWorkspace({
               onSuggestSelected={(paths) => handleSuggestFiles(paths)}
               onSuggestAllUncovered={() => handleSuggestFiles(null)}
               onApplySelected={(sugs) => handleApplySuggestions(sugs)}
-              onApplySingleDraft={(sug) => handleApplySuggestions([sug])}
-              onRunSelectedFiles={(paths) =>
-                handleRunCoverage({ targetFiles: paths })
-              }
               onRunSelectedTests={(tests) => {
                 const targetFiles = [
                   ...new Set(
@@ -2696,28 +2688,6 @@ export default function UnitTestWorkspace({
                   includeDrafts: includesUnappliedDraft,
                 });
               }}
-              onRunFile={(entry) =>
-                handleRunCoverage({
-                  targetFiles: [
-                    entry.filePath || entry.associatedTestFile,
-                  ].filter(Boolean),
-                  targetKey: entry.filePath,
-                })
-              }
-              onRunTestCase={(tc, entry) =>
-                handleRunCoverage({
-                  targetFiles: [
-                    entry?.filePath || tc.sourceFile || tc.testFile,
-                  ].filter(Boolean),
-                  targetTestNames: [tc.title || tc.testName].filter(Boolean),
-                  targetKey: entry?.filePath || null,
-                  includeDrafts:
-                    (tc?.origin === "AI_DRAFT" && !tc?.isApplied) ||
-                    tc?.origin === "STAGED_ADD" ||
-                    Boolean(tc?.stagedTemp) ||
-                    Boolean(tc?.stagedEdit),
-                })
-              }
               onOpenAddTest={(entry) =>
                 setEditorModalState({
                   isOpen: true,
@@ -2753,18 +2723,12 @@ export default function UnitTestWorkspace({
                 (isJobActive && activeJobType === "RUN")
               }
               fixingTestId={fixingTestId}
-              runningTargetKey={runningTargetKey}
               pendingOpsCount={pendingOpsCount}
               isApplyingPending={isApplyingPending}
               onApplyPendingChanges={() =>
                 flushPendingUnitOps({ reload: true })
               }
-              onDiscardPendingChanges={() => {
-                const cleared = { deletes: [], updates: [], adds: [] };
-                setPendingUnitOps(cleared);
-                saveStagedOps("unit", snapshotId, cleared);
-                setNotice("Discarded temporary unit test edits.");
-              }}
+              onDiscardPendingChanges={() => setShowDiscardConfirm(true)}
             />
           </div>
         )}
@@ -3035,7 +2999,7 @@ export default function UnitTestWorkspace({
           >
             <div className="px-5 py-4 bg-[var(--color-surface-secondary)] border-b border-[var(--color-border)] flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-md bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-primary)] flex items-center justify-center">
+                <div className="w-7 h-7 rounded-md bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-secondary)] flex items-center justify-center">
                   <SlidersHorizontal size={14} />
                 </div>
                 <div>
@@ -3142,8 +3106,8 @@ export default function UnitTestWorkspace({
                         }}
                         className={`p-3 rounded-md border text-left transition-colors duration-150 cursor-pointer flex flex-col justify-between gap-1.5 ${
                           selected
-                            ? "bg-[var(--color-primary)]/10 border-[var(--color-primary)] text-[var(--color-text)]"
-                            : "bg-[var(--color-bg)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-hover)]"
+                            ? "bg-[var(--color-surface-secondary)] border-[var(--color-border-strong)] text-[var(--color-text)]"
+                            : "bg-[var(--color-bg)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-strong)]"
                         }`}
                       >
                         <div className="flex items-center justify-between gap-1.5">
@@ -3151,7 +3115,7 @@ export default function UnitTestWorkspace({
                             {selected && (
                               <Check
                                 size={12}
-                                className="text-[var(--color-primary)]"
+                                className="text-[var(--color-text)]"
                               />
                             )}
                             {opt.title}
@@ -3159,8 +3123,8 @@ export default function UnitTestWorkspace({
                           <span
                             className={`px-1.5 py-0.5 rounded text-[9px] font-mono ${
                               selected
-                                ? "bg-[var(--color-primary)] text-white"
-                                : "bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)]"
+                                ? "bg-[var(--color-text)] text-[var(--color-bg)]"
+                                : "bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)]"
                             }`}
                           >
                             {opt.badge}
@@ -3252,9 +3216,9 @@ export default function UnitTestWorkspace({
                     handleSuggestFiles(null);
                   }}
                   disabled={isJobActive}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-[var(--color-primary)] hover:opacity-90 text-[var(--color-primary-foreground)] text-xs font-semibold cursor-pointer disabled:opacity-50"
+                  className={TEST_UI.btnPrimary}
                 >
-                  <Sparkles size={12} />
+                  <Plus size={12} />
                   <span>Generate Uncovered ({activeFrameworkBadgeLabel})</span>
                 </button>
               </div>
@@ -3361,7 +3325,7 @@ export default function UnitTestWorkspace({
                   setFrameworkPickerModal({ isOpen: false, targetPaths: null });
                   handleSuggestFiles(targets, chosen);
                 }}
-                className="px-3.5 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-primary)] text-white hover:opacity-90 cursor-pointer transition-colors duration-150"
+                className={TEST_UI.btnPrimary}
               >
                 Generate with {pickerChoice === "vitest" ? "Vitest" : "Jest"}
               </button>
@@ -3369,6 +3333,22 @@ export default function UnitTestWorkspace({
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        isOpen={showDiscardConfirm}
+        onClose={() => setShowDiscardConfirm(false)}
+        onConfirm={() => {
+          const cleared = { deletes: [], updates: [], adds: [] };
+          setPendingUnitOps(cleared);
+          saveStagedOps("unit", snapshotId, cleared);
+          setNotice("Discarded temporary unit test edits.");
+          setShowDiscardConfirm(false);
+        }}
+        title="Discard Pending Unit Test Changes"
+        message={`Discard ${pendingOpsCount} staged unit test ${pendingOpsCount === 1 ? "change" : "changes"}? This cannot be undone.`}
+        confirmText="Discard Changes"
+        variant="danger"
+      />
 
       <ExportUnitTestReportModal
         isOpen={isExportModalOpen}

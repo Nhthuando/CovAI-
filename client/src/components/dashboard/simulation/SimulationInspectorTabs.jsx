@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from "react";
 import {
-  Sparkles,
   Cpu,
   ShieldCheck,
   Target,
@@ -11,6 +10,7 @@ import {
   Layers,
   Database,
   Info,
+  BookOpen,
 } from "lucide-react";
 import EducationalGuidanceCard from "./EducationalGuidanceCard.jsx";
 
@@ -100,7 +100,7 @@ export default function SimulationInspectorTabs({
   };
 
   const tabs = [
-    { id: "guidance", label: "Guidance", icon: Sparkles },
+    { id: "guidance", label: "Guidance", icon: BookOpen },
     { id: "variables", label: "Variables & Scope", icon: Cpu },
     { id: "mocks", label: "RAM Mocks", icon: ShieldCheck },
     { id: "assertions", label: "Assertions", icon: Target },
@@ -166,17 +166,17 @@ export default function SimulationInspectorTabs({
                 transition: "all 0.12s ease",
               }}
             >
-              <Icon size={13} className={isActive ? "text-indigo-500" : ""} />
+              <Icon size={13} className={isActive ? "text-[var(--color-text)]" : ""} />
               <span>{tab.label}</span>
               {tab.id === "mocks" && activeMocks.length > 0 && (
                 <span
                   style={{
                     fontSize: 9.5,
                     padding: "1px 5px",
-                    borderRadius: 999,
-                    background: isLight ? "rgba(99, 102, 241, 0.12)" : "rgba(99, 102, 241, 0.25)",
-                    color: isLight ? "#4f46e5" : "#a5b4fc",
-                    fontWeight: 700,
+                    borderRadius: 6,
+                    background: isLight ? "rgba(15, 23, 42, 0.08)" : "rgba(248, 250, 252, 0.1)",
+                    color: isLight ? "#334155" : "#cbd5e1",
+                    fontWeight: 600,
                   }}
                 >
                   {activeMocks.length}
@@ -215,7 +215,7 @@ export default function SimulationInspectorTabs({
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                  <Info size={12} className="text-indigo-400" />
+                  <Info size={12} className="text-[var(--color-text-secondary)]" />
                   <span>Execution Summary:</span>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -254,7 +254,7 @@ export default function SimulationInspectorTabs({
                   marginBottom: 6,
                 }}
               >
-                <Layers size={12} className="text-indigo-400" />
+                <Layers size={12} className="text-[var(--color-text-secondary)]" />
                 <span>Call Stack</span>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -267,7 +267,7 @@ export default function SimulationInspectorTabs({
                       gap: 6,
                       fontSize: 11.5,
                       fontFamily: "var(--font-mono)",
-                      color: idx === callStack.length - 1 ? (isLight ? "#4f46e5" : "#818cf8") : isLight ? "#334155" : "#cbd5e1",
+                      color: idx === callStack.length - 1 ? (isLight ? "#0f172a" : "#f8fafc") : isLight ? "#334155" : "#cbd5e1",
                       fontWeight: idx === callStack.length - 1 ? 700 : 500,
                     }}
                   >
@@ -278,9 +278,9 @@ export default function SimulationInspectorTabs({
                         style={{
                           fontSize: 9,
                           padding: "1px 5px",
-                          borderRadius: 3,
-                          background: isLight ? "rgba(99, 102, 241, 0.1)" : "rgba(99, 102, 241, 0.2)",
-                          color: isLight ? "#4f46e5" : "#a5b4fc",
+                          borderRadius: 4,
+                          background: isLight ? "rgba(15, 23, 42, 0.08)" : "rgba(248, 250, 252, 0.1)",
+                          color: isLight ? "#334155" : "#e2e8f0",
                         }}
                       >
                         active
@@ -481,16 +481,16 @@ export default function SimulationInspectorTabs({
               style={{
                 padding: "8px 12px",
                 borderRadius: 8,
-                background: isLight ? "rgba(16, 185, 129, 0.1)" : "rgba(16, 185, 129, 0.15)",
-                border: "1px solid rgba(16, 185, 129, 0.3)",
+                background: isLight ? "#f8fafc" : "#161b22",
+                border: isLight ? "1px solid #cbd5e1" : "1px solid #30363d",
                 display: "flex",
                 alignItems: "center",
                 gap: 8,
               }}
             >
-              <ShieldCheck size={16} className="text-emerald-500 flex-shrink-0" />
-              <div style={{ fontSize: 11.5, fontWeight: 700, color: isLight ? "#065f46" : "#6ee7b7" }}>
-                🛡️ Universal RAM Mock Isolation: 0 Disk Writes · 0 DB Mutations · Pure RAM Execution
+              <ShieldCheck size={15} className="text-[var(--color-text-secondary)] flex-shrink-0" />
+              <div style={{ fontSize: 11.5, fontWeight: 600, color: isLight ? "#0f172a" : "#e2e8f0" }}>
+                Universal RAM Mock Isolation: 0 Disk Writes · 0 DB Mutations · Pure RAM Execution
               </div>
             </div>
 
@@ -511,7 +511,7 @@ export default function SimulationInspectorTabs({
                 >
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <Database size={13} className="text-indigo-400" />
+                      <Database size={13} className="text-[var(--color-text-secondary)]" />
                       <span style={{ fontSize: 12, fontWeight: 700, color: isLight ? "#0f172a" : "#f1f5f9" }}>
                         {m?.module || "Unknown Module"}
                       </span>
@@ -519,11 +519,12 @@ export default function SimulationInspectorTabs({
                     <span
                       style={{
                         fontSize: 10,
-                        fontWeight: 700,
+                        fontWeight: 600,
                         padding: "1px 6px",
                         borderRadius: 4,
-                        background: isLight ? "rgba(16, 185, 129, 0.12)" : "rgba(16, 185, 129, 0.2)",
-                        color: "#10b981",
+                        background: isLight ? "#f1f5f9" : "#21262d",
+                        border: isLight ? "1px solid #cbd5e1" : "1px solid #30363d",
+                        color: isLight ? "#334155" : "#cbd5e1",
                       }}
                     >
                       {m?.status || "ISOLATED_IN_RAM"}
@@ -546,11 +547,11 @@ export default function SimulationInspectorTabs({
                           margin: 0,
                           fontSize: 10.5,
                           fontFamily: "var(--font-mono)",
-                          color: isLight ? "#047857" : "#34d399",
+                          color: isLight ? "#0f172a" : "#e2e8f0",
                           background: isLight ? "#ffffff" : "#0d1117",
                           padding: "4px 8px",
                           borderRadius: 4,
-                          border: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255, 255, 255, 0.04)",
+                          border: isLight ? "1px solid #f1f5f9" : "1px solid rgba(255, 255, 255, 0.06)",
                           overflowX: "auto",
                           maxHeight: 80,
                         }}
@@ -584,9 +585,9 @@ export default function SimulationInspectorTabs({
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     {assertion.passed ? (
-                      <CheckCircle2 size={16} className="text-emerald-500" />
+                      <CheckCircle2 size={15} className="text-[var(--color-text-secondary)]" />
                     ) : (
-                      <XCircle size={16} className="text-rose-500" />
+                      <XCircle size={15} className="text-rose-400/85" />
                     )}
                     <span style={{ fontSize: 13, fontWeight: 700, color: isLight ? "#0f172a" : "#f1f5f9" }}>
                       Matcher: .{assertion.matcher || "toBe"}()

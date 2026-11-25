@@ -48,7 +48,7 @@ export const targetSchema = z.object({
         header: z.string().regex(/^[A-Za-z][A-Za-z0-9-]{0,63}$/).default('X-API-Key'),
     }).default({ type: 'none', header: 'X-API-Key' }),
     requestTemplate: object.default({}),
-    bindings: z.record(pointer, z.enum(['messages', 'latestUserMessage', 'history', 'conversationId', 'requestId', 'evaluationContext']))
+    bindings: z.record(pointer, z.enum(['messages', 'latestUserMessage', 'history', 'conversationId', 'requestId', 'evaluationContext', 'generatedConversationId', 'uiMessages', 'geminiContents']))
         .default({ '/messages': 'messages', '/conversationId': 'conversationId', '/requestId': 'requestId', '/evaluationContext': 'evaluationContext' }),
     response: z.object({
         format: z.enum(['json', 'sse', 'text']).default('json'),
@@ -61,6 +61,8 @@ export const targetSchema = z.object({
         metadata: pointer.optional(),
     }).default({ format: 'json', answer: '/answer' }),
     conversationMode: z.enum(['messages', 'session']).default('messages'),
+    historyFormat: z.enum(['chat', 'model', 'gemini', 'strings']).optional(),
+    verifiedMapping: z.boolean().optional(),
     llmEnvVars: z.array(z.string().regex(/^[A-Za-z_]\w{0,127}$/)).max(12).default([]),
     environment: z.record(z.string().regex(/^[A-Za-z_]\w{0,127}$/), z.string().max(500).regex(/^[^\r\n\0]*$/)).default({}),
     mockGateway: z.boolean().default(false),
@@ -90,7 +92,7 @@ export const targetSchema = z.object({
         ctx.addIssue({ code: 'custom', path: ['endpoint'], message: 'External URL mode requires a valid HTTPS endpoint' });
     }
     const bindings = Object.values(config.bindings);
-    if (!bindings.includes('messages') && !bindings.includes('latestUserMessage')) {
+    if (!['messages', 'latestUserMessage', 'uiMessages', 'geminiContents'].some(binding => bindings.includes(binding))) {
         ctx.addIssue({ code: 'custom', message: 'A messages or latestUserMessage binding is required' });
     }
     if (config.mockGateway && !bindings.includes('evaluationContext')) {

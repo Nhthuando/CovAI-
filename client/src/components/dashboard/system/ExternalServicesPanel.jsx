@@ -8,6 +8,7 @@ import { Button } from '../../ui/button.jsx';
 import { Input } from '../../ui/input.jsx';
 import { systemEvidenceRequest } from '../../../services/systemTest.service.js';
 import { useToast } from '../ToastContext.jsx';
+import ConfirmDialog from '../../common/ConfirmDialog.jsx';
 import EnvImportDialog from './EnvImportDialog.jsx';
 
 const icons = {
@@ -181,6 +182,7 @@ export default function ExternalServicesPanel({
   const [rejected, setRejected] = useState([]);
   const [saving, setSaving] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [confirmForgetOpen, setConfirmForgetOpen] = useState(false);
   const [error, setError] = useState('');
 
   function update(row, value) {
@@ -196,7 +198,7 @@ export default function ExternalServicesPanel({
   const expiry = secrets?.expiresAt ? 'Keys expire ' + new Date(secrets.expiresAt).toLocaleString() : undefined;
 
   function forgetKeys() {
-    if (window.confirm('Remove all test keys from memory?')) onForget();
+    setConfirmForgetOpen(true);
   }
 
   async function saveKeys() {
@@ -254,5 +256,17 @@ export default function ExternalServicesPanel({
       <Button size="sm" className={buttonMotion} loading={saving} disabled={disabled || saving} onClick={saveKeys}>Save keys</Button>
     </footer>}
     {importOpen && <EnvImportDialog snapshotId={snapshotId} revision={revision} onClose={() => setImportOpen(false)} onImported={onSaved} />}
+    <ConfirmDialog
+      isOpen={confirmForgetOpen}
+      onClose={() => setConfirmForgetOpen(false)}
+      onConfirm={() => {
+        setConfirmForgetOpen(false);
+        onForget();
+      }}
+      title="Remove Test Keys from Memory"
+      message="Remove all in-memory test keys for this session? Tests requiring external API credentials will pause until keys are re-entered."
+      confirmText="Remove Keys"
+      variant="danger"
+    />
   </section>;
 }

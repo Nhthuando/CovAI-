@@ -86,6 +86,7 @@ import {
   cleanStoragePath,
   cleanStorageText,
   canonicalizeFilePath,
+  stripAnsi,
 } from "../utils/pathSanitizer.js";
 import {
   isBusinessLogicSourceFile,
@@ -1006,6 +1007,19 @@ export const detectAndRunPrismaGenerate = async (
 
   preparedPrismaCache.set(resolvedRoot, Date.now());
   return anySuccess;
+};
+
+/** Detects suites that failed while being collected, before any test could run. */
+export const isCollectionFailureOutput = (output) => {
+  const text = stripAnsi(output || "");
+  return (
+    /Failed Suites|failed to load url|failed to parse a file|Failed to resolve import|collectTests|Cannot find module|Test suite failed to run/i.test(
+      text,
+    ) &&
+    /\bTests\s+no tests\b|\bTests:?\s+0 total\b|\bDuration:?[^\n\r]*\bcollect\s+\d+ms[^\n\r]*\btests\s+0ms/i.test(
+      text,
+    )
+  );
 };
 
 /**
@@ -7422,6 +7436,9 @@ export const processRunTestsJob = async (jobId, options = {}) => {
               (runnerResult.exitCode === null
                 ? "Test runner stopped before finishing"
                 : `Test execution failed with exit code ${runnerResult.exitCode}`);
+
+          const isCollectionFailure =
+            !modResError && isCollectionFailureOutput(fullOutput);
 
           if (!modResError && !brokenSuite) {
             const mockExpMatch = fullOutput.match(

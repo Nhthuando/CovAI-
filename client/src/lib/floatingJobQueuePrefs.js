@@ -15,28 +15,28 @@ export const JOB_DOMAIN_TABS = Object.freeze([
 export const JOB_DOMAIN_BADGES = Object.freeze({
   import: {
     label: "Import",
-    textClass: "text-sky-400",
-    bgClass: "bg-sky-500/10 border-sky-500/30",
+    textClass: "text-[var(--color-text-secondary)]",
+    bgClass: "bg-[var(--color-surface-secondary)] border-[var(--color-border)]",
   },
   unit: {
     label: "Unit",
-    textClass: "text-violet-400",
-    bgClass: "bg-violet-500/10 border-violet-500/30",
+    textClass: "text-[var(--color-text-secondary)]",
+    bgClass: "bg-[var(--color-surface-secondary)] border-[var(--color-border)]",
   },
   integration: {
     label: "Integration",
-    textClass: "text-amber-400",
-    bgClass: "bg-amber-500/10 border-amber-500/30",
+    textClass: "text-[var(--color-text-secondary)]",
+    bgClass: "bg-[var(--color-surface-secondary)] border-[var(--color-border)]",
   },
   system: {
     label: "System",
-    textClass: "text-emerald-400",
-    bgClass: "bg-emerald-500/10 border-emerald-500/30",
+    textClass: "text-[var(--color-text-secondary)]",
+    bgClass: "bg-[var(--color-surface-secondary)] border-[var(--color-border)]",
   },
   ai_eval: {
     label: "AI Chatbot",
-    textClass: "text-cyan-400",
-    bgClass: "bg-cyan-500/10 border-cyan-500/30",
+    textClass: "text-[var(--color-text-secondary)]",
+    bgClass: "bg-[var(--color-surface-secondary)] border-[var(--color-border)]",
   },
 });
 

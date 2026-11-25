@@ -147,20 +147,20 @@
   --color-danger: #ef4444;
   --color-info: #38bdf8;
 
-  /* Dark Theme Surfaces & Borders */
-  --color-bg: #0b0f14;
-  --color-surface: #11161d;
-  --color-surface-secondary: #171d25;
-  --color-surface-raised: #1c232e;
-  --color-surface-muted: #222a36;
-  --color-border: #29313d;
-  --color-border-strong: #3f4957;
+  /* Dark Theme Surfaces & Borders — Pure Neutral Obsidian/Graphite */
+  --color-bg: #09090b;
+  --color-surface: #111113;
+  --color-surface-secondary: #18181b;
+  --color-surface-raised: #1e1e22;
+  --color-surface-muted: #27272a;
+  --color-border: #27272a;
+  --color-border-strong: #3f3f46;
 
   /* Dark Theme Typography - Contrast tested */
-  --color-text: #f8fafc;           /* 15.2:1 AAA vs #11161d */
-  --color-text-secondary: #cbd5e1; /* 11.4:1 AAA vs #11161d */
-  --color-text-muted: #94a3b8;     /* 6.9:1 AAA vs #11161d */
-  --color-text-disabled: #64748b;  /* 2.9:1 inactive */
+  --color-text: #fafafa;           /* Pure high-contrast neutral white */
+  --color-text-secondary: #d4d4d8; /* Crisp secondary zinc */
+  --color-text-muted: #a1a1aa;     /* Neutral muted zinc */
+  --color-text-disabled: #71717a;  /* Inactive zinc */
 
   --color-focus: #818cf8;
 
@@ -390,14 +390,14 @@ select:-webkit-autofill:focus {
 }
 
 .file-panel-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(124, 58, 237, 0.8);
+  background: rgba(161, 161, 170, 0.75);
   border: 1px solid transparent;
   background-clip: content-box;
 }
 
 .dark .file-panel-scrollbar,
 [data-theme="dark"] .file-panel-scrollbar {
-  scrollbar-color: rgba(167, 139, 250, 0.4) rgba(255, 255, 255, 0.03);
+  scrollbar-color: rgba(161, 161, 170, 0.35) rgba(255, 255, 255, 0.03);
 }
 
 .dark .file-panel-scrollbar::-webkit-scrollbar-track,
@@ -407,12 +407,12 @@ select:-webkit-autofill:focus {
 
 .dark .file-panel-scrollbar::-webkit-scrollbar-thumb,
 [data-theme="dark"] .file-panel-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(167, 139, 250, 0.45);
+  background: rgba(161, 161, 170, 0.35);
 }
 
 .dark .file-panel-scrollbar::-webkit-scrollbar-thumb:hover,
 [data-theme="dark"] .file-panel-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(167, 139, 250, 0.85);
+  background: rgba(212, 212, 216, 0.65);
 }
 
 /* ── Monaco Editor Function Active Range Decoration & Glow ── */
@@ -492,13 +492,13 @@ select:-webkit-autofill:focus {
 .dark,
 [data-theme="dark"] .unified-dashboard,
 .dark .unified-dashboard {
-  --ud-bg: #0d1117;
-  --ud-surface: #161b22;
-  --ud-surface-2: #1f242c;
-  --ud-border: #30363d;
-  --ud-border-strong: #484f58;
-  --ud-text: #f0f6fc;
-  --ud-text-muted: #8b949e;
+  --ud-bg: #09090b;
+  --ud-surface: #111113;
+  --ud-surface-2: #18181b;
+  --ud-border: #27272a;
+  --ud-border-strong: #3f3f46;
+  --ud-text: #fafafa;
+  --ud-text-muted: #a1a1aa;
   --ud-pass: #3fb950;
   --ud-fail: #f85149;
   --ud-warn: #d29922;

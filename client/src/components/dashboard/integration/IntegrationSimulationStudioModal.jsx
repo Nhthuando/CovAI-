@@ -27,7 +27,7 @@ import IntegrationFlowCanvas from "./IntegrationFlowCanvas.jsx";
 function StatusBadge({ status, code }) {
   if (status === "ERROR" || Number(code) >= 500) {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-rose-500/10 text-rose-400 border border-rose-500/20 tabular-nums">
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono font-medium bg-[var(--color-surface-secondary)] text-rose-300/90 border border-[var(--color-border)] tabular-nums">
         <XCircle className="w-3 h-3" />
         {code ? `HTTP ${code}` : "Error"}
       </span>
@@ -35,7 +35,7 @@ function StatusBadge({ status, code }) {
   }
   if (status === "BLOCKED" || (Number(code) >= 400 && Number(code) < 500)) {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20 tabular-nums">
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono font-medium bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] tabular-nums">
         <AlertTriangle className="w-3 h-3" />
         {code ? `HTTP ${code}` : "Rejected"}
       </span>
@@ -43,14 +43,14 @@ function StatusBadge({ status, code }) {
   }
   if (status === "PASS") {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 tabular-nums">
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono font-medium bg-[var(--color-surface-secondary)] text-[var(--color-text)] border border-[var(--color-border)] tabular-nums">
         <CheckCircle2 className="w-3 h-3" />
         {code ? `HTTP ${code}` : "Pass"}
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-sky-500/10 text-sky-400 border border-sky-500/20 tabular-nums">
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono font-medium bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] tabular-nums">
       <Send className="w-3 h-3" />
       {code ? `HTTP ${code}` : "Request"}
     </span>
@@ -119,7 +119,7 @@ export default function IntegrationSimulationStudioModal({
         <div className="shrink-0 px-4 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)] flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-7 h-7 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] flex items-center justify-center shrink-0">
-              <Network className="w-4 h-4 text-[var(--color-primary)]" />
+              <Network className="w-4 h-4 text-[var(--color-text-secondary)]" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
@@ -132,8 +132,8 @@ export default function IntegrationSimulationStudioModal({
                 <span
                   className={`px-1.5 py-0.5 rounded text-[10px] font-mono border ${
                     isRecorded
-                      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                      : "bg-sky-500/10 text-sky-400 border-sky-500/20"
+                      ? "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
+                      : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
                   }`}
                 >
                   {isRecorded ? "Recorded (Supertest)" : "AST Simulated"}
@@ -182,7 +182,7 @@ export default function IntegrationSimulationStudioModal({
               type="button"
               onClick={actions.resetAndReplay}
               disabled={loading || totalSteps === 0}
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-foreground)] transition-colors duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold bg-[var(--color-text)] text-[var(--color-bg)] hover:opacity-90 transition-all duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer"
             >
               <Play className="w-3.5 h-3.5" />
               <span>Run Simulation</span>
@@ -207,7 +207,7 @@ export default function IntegrationSimulationStudioModal({
             <div className="shrink-0 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between gap-3">
               {loading ? (
                 <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] font-mono">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-primary)]" />
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-secondary)]" />
                   <span>Building shared API flow & scenario trace...</span>
                 </div>
               ) : error ? (
@@ -239,7 +239,7 @@ export default function IntegrationSimulationStudioModal({
             <div className="flex-1 min-h-0 relative">
               {loading && !traceData ? (
                 <div className="w-full h-full flex items-center justify-center bg-[var(--color-bg)] text-xs font-mono text-[var(--color-text-muted)]">
-                  <Loader2 className="w-5 h-5 animate-spin mr-2 text-[var(--color-primary)]" />
+                  <Loader2 className="w-5 h-5 animate-spin mr-2 text-[var(--color-text-secondary)]" />
                   Analyzing Express route, middleware, controller & DB graph...
                 </div>
               ) : (
@@ -300,7 +300,7 @@ export default function IntegrationSimulationStudioModal({
                       {" · "}Actual{" "}
                       <strong
                         className={
-                          outcome.passed ? "text-emerald-400" : "text-rose-400"
+                          outcome.passed ? "text-[var(--color-text)]" : "text-rose-300/90"
                         }
                       >
                         {outcome.actualStatus}
@@ -339,7 +339,7 @@ export default function IntegrationSimulationStudioModal({
                   {/* Branch Condition Evaluation */}
                   {currentStep?.branchEvaluation && (
                     <div className="p-3 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] space-y-1.5">
-                      <div className="flex items-center gap-1.5 text-[10px] font-mono font-semibold uppercase tracking-wider text-amber-400">
+                      <div className="flex items-center gap-1.5 text-[10px] font-mono font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
                         <GitBranch className="w-3.5 h-3.5" />
                         <span>Branch Decision</span>
                       </div>
@@ -358,7 +358,7 @@ export default function IntegrationSimulationStudioModal({
                   {/* Database Operation */}
                   {currentStep?.dbOperation && (
                     <div className="p-3 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] space-y-1.5">
-                      <div className="flex items-center gap-1.5 text-[10px] font-mono font-semibold uppercase tracking-wider text-sky-400">
+                      <div className="flex items-center gap-1.5 text-[10px] font-mono font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
                         <Database className="w-3.5 h-3.5" />
                         <span>Database Interaction ({currentStep.dbOperation.orm})</span>
                       </div>
@@ -444,7 +444,7 @@ export default function IntegrationSimulationStudioModal({
                             onClick={() => actions.jumpToStep(idx)}
                             className={`w-full text-left px-2.5 py-2 flex items-center justify-between gap-2 transition-colors duration-150 cursor-pointer ${
                               isActive
-                                ? "bg-[var(--color-primary)]/10 text-[var(--color-text)]"
+                                ? "bg-[var(--color-surface-secondary)] text-[var(--color-text)]"
                                 : "bg-[var(--color-bg)] hover:bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)]"
                             }`}
                           >
@@ -484,7 +484,7 @@ export default function IntegrationSimulationStudioModal({
                               currentStep.line || 1,
                             )
                           }
-                          className="inline-flex items-center gap-1 text-[10px] text-[var(--color-primary)] hover:underline cursor-pointer shrink-0"
+                          className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:underline cursor-pointer shrink-0"
                         >
                           <ExternalLink className="w-3 h-3" />
                           <span>Open File</span>
@@ -540,7 +540,7 @@ export default function IntegrationSimulationStudioModal({
                         : 0
                   }%`,
                 }}
-                className="h-full rounded bg-[var(--color-primary)] transition-all duration-150"
+                className="h-full rounded bg-[var(--color-text)] transition-all duration-150"
               />
               {steps.map((s, idx) => {
                 const posPct =
@@ -548,12 +548,12 @@ export default function IntegrationSimulationStudioModal({
                 const isActive = idx === currentStepIndex;
                 const dotColor =
                   s.status === "ERROR"
-                    ? "bg-rose-400"
+                    ? "bg-rose-400/80"
                     : s.status === "BLOCKED"
-                      ? "bg-amber-400"
+                      ? "bg-[var(--color-text-muted)]"
                       : s.status === "PASS"
-                        ? "bg-emerald-400"
-                        : "bg-sky-400";
+                        ? "bg-[var(--color-text-secondary)]"
+                        : "bg-[var(--color-text)]";
                 return (
                   <button
                     key={s.stepIndex}
@@ -565,7 +565,7 @@ export default function IntegrationSimulationStudioModal({
                     title={`Step ${idx + 1}: ${s.title}`}
                     style={{ left: `${posPct}%` }}
                     className={`absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[var(--color-surface)] transition-all cursor-pointer ${
-                      isActive ? "w-3.5 h-3.5 ring-2 ring-[var(--color-primary)]/50" : "w-2.5 h-2.5"
+                      isActive ? "w-3.5 h-3.5 ring-2 ring-[var(--color-text)]/40" : "w-2.5 h-2.5"
                     } ${idx <= currentStepIndex ? dotColor : "bg-[var(--color-text-muted)]/40"}`}
                   />
                 );
@@ -599,7 +599,7 @@ export default function IntegrationSimulationStudioModal({
                 onClick={actions.togglePlay}
                 disabled={totalSteps <= 1}
                 title="Play / Pause (Space)"
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-foreground)] disabled:opacity-40 transition-colors duration-150 active:scale-[0.98] cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold bg-[var(--color-text)] text-[var(--color-bg)] hover:opacity-90 disabled:opacity-40 transition-all duration-150 active:scale-[0.98] cursor-pointer"
               >
                 {isPlaying ? (
                   <>
@@ -634,7 +634,7 @@ export default function IntegrationSimulationStudioModal({
                     onClick={() => actions.setPlaybackSpeed(sp)}
                     className={`px-1.5 py-0.5 rounded border text-[10px] tabular-nums transition-colors duration-150 cursor-pointer ${
                       playbackSpeed === sp
-                        ? "bg-[var(--color-primary)]/15 text-[var(--color-primary)] border-[var(--color-primary)]/40 font-semibold"
+                        ? "bg-[var(--color-text)] text-[var(--color-bg)] border-transparent font-semibold"
                         : "bg-[var(--color-bg)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"
                     }`}
                   >
