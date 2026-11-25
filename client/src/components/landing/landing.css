@@ -4,21 +4,21 @@
    ============================================================ */
 
 .lp {
-  --lp-bg: #050608;
-  --lp-surface: #0a0c10;
-  --lp-surface-glass: rgba(10, 12, 16, 0.86);
-  --lp-surface-elevated: #121620;
-  --lp-inset: #06080c;
-  --lp-pill-bg: #090b10;
-  --lp-pill-active: #161b26;
+  --lp-bg: #07080a;
+  --lp-surface: #0f1014;
+  --lp-surface-glass: rgba(12, 13, 18, 0.86);
+  --lp-surface-elevated: #16181f;
+  --lp-inset: #090a0d;
+  --lp-pill-bg: #0c0d12;
+  --lp-pill-active: #181b24;
   --lp-hover: rgba(255, 255, 255, 0.055);
 
-  --lp-line: #181c26;
-  --lp-line-strong: #283042;
+  --lp-line: #20232d;
+  --lp-line-strong: #313646;
 
-  --lp-ink: #f1f5f9;
-  --lp-ink-secondary: #94a3b8;
-  --lp-ink-muted: #64748b;
+  --lp-ink: #fafafa;
+  --lp-ink-secondary: #a1a1aa;
+  --lp-ink-muted: #71717a;
 
   --lp-signal: #38bdf8;
   --lp-signal-bg: rgba(56, 189, 248, 0.08);
@@ -344,4 +344,89 @@
 
 .lp-slider::-webkit-slider-thumb:active {
   cursor: grabbing;
+}
+
+/* Purposeful SVG flow & telemetry animations */
+@keyframes lpFlowDash {
+  to {
+    stroke-dashoffset: -28;
+  }
+}
+
+.lp-flow-edge {
+  stroke-dasharray: 5 5;
+  animation: lpFlowDash 1.4s linear infinite;
+}
+
+@keyframes lpCursorBlink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+.lp-cursor-blink {
+  animation: lpCursorBlink 1.1s step-end infinite;
+}
+
+/* 3D Perspective Stage & Holographic Scan Graphics */
+.lp-stage-perspective {
+  perspective: 1650px;
+}
+
+.lp-preserve-3d {
+  transform-style: preserve-3d;
+}
+
+.lp-z-float-sm {
+  transform: translateZ(26px);
+}
+
+.lp-z-float-md {
+  transform: translateZ(44px);
+}
+
+.lp-z-float-lg {
+  transform: translateZ(62px);
+}
+
+.lp-floor-grid {
+  background-size: 44px 44px;
+  background-image:
+    linear-gradient(to right, rgba(56, 189, 248, 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(56, 189, 248, 0.08) 1px, transparent 1px);
+  transform: perspective(650px) rotateX(62deg);
+  transform-origin: center top;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.7), transparent 90%);
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.7), transparent 90%);
+}
+
+@keyframes lpScanSweep {
+  0% {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.45;
+  }
+  85% {
+    opacity: 0.45;
+  }
+  100% {
+    transform: translateY(560%);
+    opacity: 0;
+  }
+}
+
+.lp-scan-sweep {
+  animation: lpScanSweep 5.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-flow-edge,
+  .lp-cursor-blink,
+  .lp-scan-sweep,
+  .lp-ticker-left,
+  .lp-ticker-right,
+  .lp-beam-frame::before {
+    animation: none !important;
+  }
 }

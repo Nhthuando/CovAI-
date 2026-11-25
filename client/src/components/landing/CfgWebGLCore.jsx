@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
+import { GitBranch, ScanLine } from "lucide-react";
 
 const CFG_NODES = [
   { id: "n0", fn: "settleTransaction(tx, ledger)", pos: [0, 2.5, 0], state: "verified", metric: "Entry" },
@@ -369,22 +370,20 @@ export default function CfgWebGLCore({ scanPulse = 0, repoName = "acme/payment-k
   return (
     <div className="relative w-full h-[460px] sm:h-[540px] rounded-xl lp-machined overflow-hidden select-none">
       {/* Top Technical Telemetry Bar */}
-      <div className="absolute top-0 inset-x-0 z-10 px-4 py-3 border-b border-[var(--lp-line)] bg-[var(--lp-surface-glass)] backdrop-blur-md flex items-center justify-between text-xs lp-mono">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <span className="w-2 h-2 rounded-full bg-[var(--lp-signal)] shrink-0" />
+      <div className="absolute top-0 inset-x-0 z-10 px-4 py-2.5 border-b border-[var(--lp-line)] bg-[var(--lp-surface-glass)] backdrop-blur-md flex items-center justify-between gap-3 text-xs lp-mono">
+        <div className="flex items-center gap-2 min-w-0">
+          <GitBranch className="w-3.5 h-3.5 text-[var(--lp-signal)] shrink-0" />
           <span className="text-[var(--lp-ink)] font-medium truncate">{repoName}</span>
-          <span className="text-[var(--lp-ink-muted)]">/</span>
-          <span className="text-[var(--lp-ink-secondary)] hidden sm:inline">AST Control Flow Graph</span>
         </div>
 
-        <div className="hidden sm:flex items-center gap-4 text-[11px] shrink-0">
+        <div className="flex items-center gap-3 text-[11px] shrink-0 whitespace-nowrap">
           <span className="flex items-center gap-1.5 text-[var(--lp-ink)]">
-            <span className="w-2 h-2 rounded-full bg-[var(--lp-signal)]" />
-            Verified ({resolvedTotal}/12)
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--lp-signal)]" />
+            <span>{resolvedTotal}/12 verified</span>
           </span>
           <span className="flex items-center gap-1.5 text-[var(--lp-ink-secondary)]">
-            <span className="w-2 h-2 rounded-full bg-[var(--lp-fault)]" />
-            Untested ({12 - resolvedTotal})
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--lp-fault)]" />
+            <span>{12 - resolvedTotal} gaps</span>
           </span>
         </div>
       </div>
@@ -417,9 +416,10 @@ export default function CfgWebGLCore({ scanPulse = 0, repoName = "acme/payment-k
               scanWaveRef.current = { active: true, y: 3.1 };
               setManualScan(true);
             }}
-            className="px-3 py-1.5 rounded-md lp-btn-secondary text-xs lp-mono cursor-pointer"
+            className="px-3 py-1.5 rounded-md lp-btn-secondary text-xs lp-mono cursor-pointer inline-flex items-center gap-1.5"
           >
-            Sweep 3D graph
+            <ScanLine className="w-3.5 h-3.5 text-[var(--lp-signal)]" />
+            <span>Sweep 3D graph</span>
           </button>
         </div>
       </div>

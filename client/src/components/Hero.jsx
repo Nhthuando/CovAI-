@@ -1,7 +1,17 @@
 import { useState, Suspense, lazy } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Copy, Check } from "lucide-react";
+import {
+  Copy,
+  Check,
+  GitBranch,
+  FolderGit2,
+  ScanLine,
+  ArrowUpRight,
+  Terminal,
+  Cpu,
+  ShieldCheck,
+} from "lucide-react";
 import TechMarquee from "./landing/TechMarquee";
 
 const CfgWebGLCore = lazy(() => import("./landing/CfgWebGLCore"));
@@ -92,29 +102,31 @@ export default function Hero() {
               transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
               className="lg:col-span-7 text-left space-y-6"
             >
-              <div className="inline-flex items-center gap-2.5 text-xs lp-mono text-[var(--lp-ink-secondary)]">
-                <span className="w-2 h-2 rounded-full bg-[var(--lp-signal)]" />
-                <span>Static AST graph analysis &amp; container-verified test generation</span>
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[var(--lp-surface)] border border-[var(--lp-line)] text-xs lp-mono text-[var(--lp-ink-secondary)]">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--lp-signal)] opacity-60" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-[var(--lp-signal)]" />
+                </span>
+                <GitBranch className="w-3.5 h-3.5 text-[var(--lp-signal)]" />
+                <span>AST branch solver + Docker runner</span>
               </div>
 
-              <h1 className="lp-display text-4xl sm:text-5xl xl:text-[58px] font-bold tracking-tight leading-[1.07] text-[var(--lp-ink)] max-w-[18ch]">
-                Map every untested branch. Ship verified tests in seconds.
+              <h1 className="lp-display text-4xl sm:text-5xl xl:text-[58px] font-bold tracking-tight leading-[1.06] text-[var(--lp-ink)] max-w-[16ch]">
+                Map untested branches. Ship verified tests.
               </h1>
 
-              <p className="text-base sm:text-lg text-[var(--lp-ink-secondary)] leading-relaxed max-w-[60ch]">
-                CovAI parses your source tree into a directed Control Flow Graph,
-                pinpoints decision predicates with zero execution hits, and writes
-                unit, API contract, and Playwright suites validated inside an
-                isolated Docker container.
+              <p className="text-base sm:text-lg text-[var(--lp-ink-secondary)] leading-relaxed max-w-[46ch]">
+                Static Control Flow Graphs pinpoint missing coverage. Isolated Docker containers verify every generated suite.
               </p>
 
               {/* Interactive Repository Scan Simulator */}
-              <div className="p-3 rounded-xl lp-machined max-w-2xl">
+              <div className="p-3.5 rounded-xl lp-machined max-w-2xl">
                 <form
                   onSubmit={handleSimulateScan}
                   className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2"
                 >
                   <div className="flex-1 flex items-center gap-2 px-3.5 py-2.5 rounded-lg bg-[var(--lp-inset)] border border-[var(--lp-line)] focus-within:border-[var(--lp-signal)] transition-colors">
+                    <FolderGit2 className="w-4 h-4 text-[var(--lp-ink-muted)] shrink-0" />
                     <span className="text-xs lp-mono text-[var(--lp-ink-muted)] select-none">
                       github.com/
                     </span>
@@ -130,15 +142,15 @@ export default function Hero() {
 
                   <button
                     type="submit"
-                    className="lp-btn-primary px-5 py-2.5 rounded-lg text-xs sm:text-sm cursor-pointer shrink-0"
+                    className="lp-btn-primary px-4 py-2.5 rounded-lg text-xs sm:text-sm cursor-pointer shrink-0 inline-flex items-center justify-center gap-1.5"
                   >
-                    {isScanning ? "Traversing AST..." : "Simulate CFG scan"}
+                    <ScanLine className={`w-3.5 h-3.5 ${isScanning ? "animate-pulse" : ""}`} />
+                    <span>{isScanning ? "Scanning AST..." : "Simulate scan"}</span>
                   </button>
                 </form>
 
                 <div className="mt-3 px-1 flex flex-wrap items-center justify-between gap-2 text-xs lp-mono">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-[var(--lp-ink-muted)]">Sample targets:</span>
                     {PRESET_REPOS.map((item) => (
                       <button
                         key={item.repo}
@@ -148,7 +160,7 @@ export default function Hero() {
                           setScanResult(item);
                           setScanPulse((p) => p + 1);
                         }}
-                        className={`px-2 py-0.5 rounded border transition-colors cursor-pointer ${
+                        className={`px-2 py-0.5 rounded-md border transition-colors cursor-pointer ${
                           repoInput === item.repo
                             ? "bg-[var(--lp-pill-active)] border-[var(--lp-line-strong)] text-[var(--lp-ink)]"
                             : "bg-transparent border-[var(--lp-line)] text-[var(--lp-ink-muted)] hover:text-[var(--lp-ink)]"
@@ -161,12 +173,12 @@ export default function Hero() {
 
                   <div className="flex items-center gap-2 text-[var(--lp-ink-secondary)]">
                     <span className="text-[var(--lp-fault)]">{scanResult.before}</span>
-                    <span className="text-[var(--lp-ink-muted)]">/</span>
+                    <span className="text-[var(--lp-ink-muted)]">&rarr;</span>
                     <span className="text-[var(--lp-signal)] font-semibold">
                       {scanResult.after}
                     </span>
                     <span className="text-[var(--lp-ink-muted)]">
-                      ({scanResult.branchesFixed} branches resolved in {scanResult.duration})
+                      +{scanResult.branchesFixed} branches ({scanResult.duration})
                     </span>
                   </div>
                 </div>
@@ -177,19 +189,21 @@ export default function Hero() {
                 <Link
                   to="/register"
                   id="hero-cta-btn"
-                  className="lp-btn-primary px-6 py-3 rounded-lg text-sm inline-flex items-center"
+                  className="lp-btn-primary px-5 py-2.5 rounded-lg text-sm inline-flex items-center gap-1.5"
                 >
-                  Connect repository
+                  <span>Connect repository</span>
+                  <ArrowUpRight className="w-4 h-4" />
                 </Link>
 
                 <a
                   href="#ide-preview"
-                  className="lp-btn-secondary px-5 py-3 rounded-lg text-sm font-medium inline-flex items-center"
+                  className="lp-btn-secondary px-4 py-2.5 rounded-lg text-sm font-medium inline-flex items-center gap-1.5"
                 >
-                  Inspect live code sandbox
+                  <Terminal className="w-3.5 h-3.5 text-[var(--lp-signal)]" />
+                  <span>Live sandbox</span>
                 </a>
 
-                <div className="inline-flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg bg-[var(--lp-surface)] border border-[var(--lp-line)] text-xs lp-mono">
+                <div className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--lp-surface)] border border-[var(--lp-line)] text-xs lp-mono">
                   <span className="text-[var(--lp-ink-muted)] select-none">$</span>
                   <code className="text-[var(--lp-ink)] select-all">{cliCommand}</code>
                   <button
@@ -208,29 +222,26 @@ export default function Hero() {
               </div>
 
               {/* Structural Telemetry Readout */}
-              <div className="pt-5 grid grid-cols-3 gap-6 max-w-lg border-t border-[var(--lp-line)]">
-                <div>
-                  <div className="text-xl sm:text-2xl font-bold lp-mono text-[var(--lp-ink)]">
-                    96.4%
-                  </div>
-                  <div className="text-xs text-[var(--lp-ink-muted)] mt-0.5">
-                    Branch coverage target
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xl sm:text-2xl font-bold lp-mono text-[var(--lp-ink)]">
-                    1.4s
-                  </div>
-                  <div className="text-xs text-[var(--lp-ink-muted)] mt-0.5">
-                    Median AST graph build
+              <div className="pt-5 grid grid-cols-3 gap-5 max-w-lg border-t border-[var(--lp-line)]">
+                <div className="flex items-start gap-2.5">
+                  <GitBranch className="w-4 h-4 text-[var(--lp-signal)] mt-1 shrink-0" />
+                  <div>
+                    <div className="text-xl font-bold lp-mono text-[var(--lp-ink)]">96.4%</div>
+                    <div className="text-xs text-[var(--lp-ink-muted)]">Branch target</div>
                   </div>
                 </div>
-                <div>
-                  <div className="text-xl sm:text-2xl font-bold lp-mono text-[var(--lp-ink)]">
-                    0 flaky
+                <div className="flex items-start gap-2.5">
+                  <Cpu className="w-4 h-4 text-[var(--lp-ink-secondary)] mt-1 shrink-0" />
+                  <div>
+                    <div className="text-xl font-bold lp-mono text-[var(--lp-ink)]">1.4s</div>
+                    <div className="text-xs text-[var(--lp-ink-muted)]">AST graph build</div>
                   </div>
-                  <div className="text-xs text-[var(--lp-ink-muted)] mt-0.5">
-                    Container-verified specs
+                </div>
+                <div className="flex items-start gap-2.5">
+                  <ShieldCheck className="w-4 h-4 text-[var(--lp-signal)] mt-1 shrink-0" />
+                  <div>
+                    <div className="text-xl font-bold lp-mono text-[var(--lp-ink)]">0 flaky</div>
+                    <div className="text-xs text-[var(--lp-ink-muted)]">Docker verified</div>
                   </div>
                 </div>
               </div>

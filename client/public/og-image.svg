@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" fill="none">
+  <rect width="1200" height="630" fill="#07080A" />
+  <g opacity="0.16" stroke="#222530" stroke-width="1">
+    <path d="M0 105H1200M0 210H1200M0 315H1200M0 420H1200M0 525H1200" />
+    <path d="M150 0V630M300 0V630M450 0V630M600 0V630M750 0V630M900 0V630M1050 0V630" />
+  </g>
+  <circle cx="900" cy="315" r="260" fill="#38BDF8" opacity="0.08" />
+  <g transform="translate(96, 150)">
+    <rect x="0" y="0" width="44" height="44" rx="10" fill="#111319" stroke="#283042" />
+    <circle cx="14" cy="14" r="3.5" fill="#38BDF8" />
+    <circle cx="30" cy="22" r="3.5" fill="#FAFAFA" />
+    <circle cx="14" cy="30" r="3.5" fill="#F43F5E" />
+    <path d="M17 15.5L27 20.5M17 28.5L27 23.5" stroke="#64748B" stroke-width="2" />
+    <text x="60" y="30" fill="#FAFAFA" font-family="Inter, system-ui, sans-serif" font-size="26" font-weight="700">CovAI</text>
+  </g>
+  <text x="96" y="295" fill="#FAFAFA" font-family="Inter, system-ui, sans-serif" font-size="60" font-weight="800" letter-spacing="-1.8">Map every untested branch.</text>
+  <text x="96" y="368" fill="#FAFAFA" font-family="Inter, system-ui, sans-serif" font-size="60" font-weight="800" letter-spacing="-1.8">Ship verified tests.</text>
+  <text x="96" y="438" fill="#A1A1AA" font-family="Inter, system-ui, sans-serif" font-size="24">AST Control Flow Graphs, multi-tier test synthesis &amp; Docker verification.</text>
+  <rect x="96" y="486" width="230" height="44" rx="8" fill="#111319" stroke="#283042" />
+  <text x="120" y="514" fill="#38BDF8" font-family="monospace" font-size="18">https://covai.tech</text>
+</svg>

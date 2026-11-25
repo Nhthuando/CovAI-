@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, Suspense, lazy } from "react";
 import { Link } from "react-router-dom";
+import { FolderGit2, GitBranch, Cpu, Container, ArrowUpRight } from "lucide-react";
 
 const Pipeline3DStage = lazy(() => import("./landing/Pipeline3DStage"));
 
@@ -7,17 +8,18 @@ const PIPELINE_STEPS = [
   {
     index: 0,
     num: "01",
-    phase: "Repository snapshot",
-    title: "Index source tree and dependency graph",
-    desc: "Import from GitHub or upload a zip archive. CovAI resolves your package structure, TypeScript paths, Prisma models, and test runner configuration.",
+    icon: FolderGit2,
+    phase: "Snapshot",
+    title: "Index source tree & runners",
+    desc: "Resolves workspaces, Prisma schemas, and Vitest/Jest/Playwright configs.",
     telemetry: {
       header: "git@github.com:org/core-api.git @ 3174aaa",
-      badge: "428 files indexed",
-      geometryLabel: "3D Cubic Directory Lattice",
+      badge: "428 files",
+      geometryLabel: "Cubic Directory Lattice",
       code: [
-        "Resolved workspaces: client/, server/, shared/",
-        "Detected runners: Vitest 2.1, Jest ESM, Playwright 1.50",
-        "Indexed 1,842 exported functions and route handlers",
+        "Workspaces: client/, server/, shared/",
+        "Runners: Vitest 2.1, Jest ESM, Playwright 1.50",
+        "Indexed 1,842 functions & route handlers",
       ],
       metricLabel: "Snapshot time",
       metricValue: "420 ms",
@@ -26,13 +28,14 @@ const PIPELINE_STEPS = [
   {
     index: 1,
     num: "02",
-    phase: "AST & CFG construction",
-    title: "Compile functions into Control Flow Graphs",
-    desc: "Each function is parsed with Babel AST into basic blocks and directed decision edges, exposing branches that have zero test hits.",
+    icon: GitBranch,
+    phase: "AST & CFG",
+    title: "Build Control Flow Graphs",
+    desc: "Parses Babel AST edges to pinpoint branches with zero test hits.",
     telemetry: {
       header: "server/src/services/testValidation.service.js",
-      badge: "5 untested predicates",
-      geometryLabel: "3D Directed AST Execution Tree",
+      badge: "5 gaps found",
+      geometryLabel: "Directed AST Tree",
       code: [
         "IfStatement [line 42] -> !token || token.expired (0 hits)",
         "SwitchCase  [line 67] -> case 'RATE_LIMITED'     (0 hits)",
@@ -45,17 +48,18 @@ const PIPELINE_STEPS = [
   {
     index: 2,
     num: "03",
-    phase: "Multi-layer synthesis",
-    title: "Generate targeted unit, API, and E2E suites",
-    desc: "BullMQ workers dispatch the isolated branch predicates to Gemini models, producing runnable specs with deterministic database and network mocks.",
+    icon: Cpu,
+    phase: "Synthesis",
+    title: "Generate Unit, API & E2E suites",
+    desc: "BullMQ dispatches missing predicates to produce runnable specs with mocks.",
     telemetry: {
       header: "BullMQ worker #04 · Synthesis stream",
-      badge: "+32 specs written",
-      geometryLabel: "3D Helical Synthesis Matrix",
+      badge: "+32 specs",
+      geometryLabel: "Helical Synthesis Matrix",
       code: [
-        "Unit: generated 18 branch assertions for testValidation.spec.js",
-        "Integration: generated 8 role-permission contract tests",
-        "System: generated 6 Playwright checkout recovery flows",
+        "Unit: 18 branch assertions for testValidation.spec.js",
+        "Integration: 8 role-permission contract tests",
+        "System: 6 Playwright checkout recovery flows",
       ],
       metricLabel: "Coverage delta",
       metricValue: "44.2% -> 96.8%",
@@ -64,16 +68,17 @@ const PIPELINE_STEPS = [
   {
     index: 3,
     num: "04",
-    phase: "Container verification",
-    title: "Execute in Docker before opening a pull request",
-    desc: "Every generated test suite runs inside an isolated container and passes mutation checks before being committed to your branch.",
+    icon: Container,
+    phase: "Verification",
+    title: "Execute in isolated Docker",
+    desc: "Runs generated suites inside containers and checks mutation kill rates.",
     telemetry: {
       header: "Pull Request #214 · Verification report",
-      badge: "142 / 142 passing",
-      geometryLabel: "3D Verified Geodesic Sphere",
+      badge: "142 / 142 pass",
+      geometryLabel: "Verified Geodesic Core",
       code: [
-        "Container execution: 142 passed, 0 failed, 0 flaky",
-        "Istanbul V8 branch coverage: 96.8% (+52.6% vs base)",
+        "Container run: 142 passed, 0 failed, 0 flaky",
+        "V8 branch coverage: 96.8% (+52.6% vs base)",
         "Mutation fault kill rate: 99.1% verified",
       ],
       metricLabel: "Gate status",
@@ -119,41 +124,42 @@ export default function Workflow() {
       className="relative py-24 md:py-32 border-b border-[var(--lp-line)]"
     >
       <div className="max-w-[1280px] mx-auto px-4 sm:px-6">
-        <div className="max-w-2xl mb-14 space-y-3">
+        <div className="max-w-xl mb-12 space-y-2.5">
           <h2 className="lp-display text-3xl sm:text-4xl font-bold text-[var(--lp-ink)] tracking-tight">
             Four-stage verification pipeline
           </h2>
           <p className="text-sm sm:text-base text-[var(--lp-ink-secondary)]">
-            Scroll or select any stage to morph the 3D topology and inspect how
-            source files move from AST parsing to a verified pull request.
+            Select any stage to morph the 3D topology from AST parsing to verified PR.
           </p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           {/* Left Column: 4 Sequential Stage Cards */}
-          <div className="lg:col-span-5 space-y-5">
+          <div className="lg:col-span-5 space-y-4">
             {PIPELINE_STEPS.map((step, idx) => {
               const isActive = activeStep === idx;
+              const StepIcon = step.icon;
               return (
                 <div
                   key={step.num}
                   id={`workflow-step-${step.num}`}
                   ref={(el) => (stepRefs.current[idx] = el)}
                   onClick={() => setActiveStep(idx)}
-                  className={`p-6 rounded-xl border transition-all duration-200 cursor-pointer ${
+                  className={`p-5 rounded-xl border transition-all duration-200 cursor-pointer ${
                     isActive
                       ? "bg-[var(--lp-surface)] border-[var(--lp-line-strong)] shadow-sm"
                       : "bg-[var(--lp-inset)] border-[var(--lp-line)] opacity-65 hover:opacity-100"
                   }`}
                 >
-                  <div className="flex items-center justify-between text-xs lp-mono mb-2.5">
-                    <span className={isActive ? "text-[var(--lp-signal)] font-semibold" : "text-[var(--lp-ink-muted)]"}>
-                      {step.num} / {step.phase}
+                  <div className="flex items-center justify-between text-xs lp-mono mb-2">
+                    <span className={`inline-flex items-center gap-2 ${isActive ? "text-[var(--lp-signal)] font-semibold" : "text-[var(--lp-ink-muted)]"}`}>
+                      <StepIcon className="w-3.5 h-3.5" />
+                      <span>{step.num} {step.phase}</span>
                     </span>
                     <span className="text-[var(--lp-ink-muted)]">{step.telemetry.badge}</span>
                   </div>
 
-                  <h3 className="lp-display text-lg sm:text-xl font-bold text-[var(--lp-ink)] mb-2">
+                  <h3 className="lp-display text-lg font-bold text-[var(--lp-ink)] mb-1">
                     {step.title}
                   </h3>
                   <p className="text-xs sm:text-sm text-[var(--lp-ink-secondary)] leading-relaxed">
@@ -246,9 +252,10 @@ export default function Workflow() {
                   <Link
                     to="/register"
                     id="workflow-cta"
-                    className="lp-btn-primary px-5 py-2.5 rounded-lg text-xs sm:text-sm"
+                    className="lp-btn-primary px-5 py-2.5 rounded-lg text-xs sm:text-sm inline-flex items-center gap-1.5"
                   >
-                    Run pipeline on your repository
+                    <span>Run on your repo</span>
+                    <ArrowUpRight className="w-3.5 h-3.5" />
                   </Link>
                 </div>
               </div>

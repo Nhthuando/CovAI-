@@ -1,27 +1,28 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Check, Minus } from "lucide-react";
+import { Check, Minus, Layers, ShieldCheck, Building2, ArrowUpRight } from "lucide-react";
 
 const PLANS = [
   {
     id: "community",
     name: "Starter",
+    icon: Layers,
     monthlyPrice: "$0",
     annualPrice: "$0",
     period: "free forever",
-    desc: "Static AST and Control Flow Graph coverage diagnostics for individual developers and open-source projects.",
+    desc: "AST and CFG coverage diagnostics for solo builders.",
     cta: "Create free workspace",
     ctaTo: "/register",
     featured: false,
     features: [
       "Up to 3 active repositories",
-      "GitHub repository sync and zip upload",
-      "Interactive 3D & 2D Control Flow Graph viewer",
-      "60 test suite generations per month",
-      "Statement and branch coverage reports",
+      "GitHub sync and zip upload",
+      "3D & 2D Control Flow Graph viewer",
+      "60 test generations / month",
+      "Branch coverage reports",
     ],
     excluded: [
-      "API contract matrix & Playwright E2E synthesis",
+      "API contract matrix & Playwright E2E",
       "Mutation fault injection guard",
       "Self-hosted container runner pool",
     ],
@@ -29,41 +30,43 @@ const PLANS = [
   {
     id: "pro",
     name: "Team",
+    icon: ShieldCheck,
     monthlyPrice: "$29",
     annualPrice: "$24",
-    period: "per seat / month",
-    desc: "Three-tier test generation, Docker container verification, and Yjs multiplayer editing for engineering teams.",
+    period: "per seat / mo",
+    desc: "Full 3-tier synthesis, Docker runner, and multiplayer IDE.",
     cta: "Start 14-day trial",
     ctaTo: "/register",
     featured: true,
     badge: "Recommended",
     features: [
-      "Unlimited repositories and monorepo workspaces",
-      "Unit CFG, Supertest API matrix, and Playwright E2E",
-      "Unlimited Gemini 2.5 Pro test synthesis",
-      "Isolated Docker container execution & auto-repair",
-      "Mutation fault verification and PR quality gates",
-      "Real-time Yjs multiplayer Monaco editor",
+      "Unlimited repositories & monorepos",
+      "Unit CFG, Supertest API, Playwright E2E",
+      "Gemini 2.5 Pro test synthesis",
+      "Docker container runner & auto-repair",
+      "Mutation verification & PR gates",
+      "Real-time Yjs multiplayer editor",
     ],
     excluded: ["Self-hosted VPC runner cluster"],
   },
   {
     id: "enterprise",
     name: "Enterprise",
+    icon: Building2,
     monthlyPrice: "Custom",
     annualPrice: "Custom",
-    period: "annual agreement",
-    desc: "Private container runners, custom model routing, and role-based access control for large organizations.",
-    cta: "Contact engineering sales",
+    period: "annual",
+    desc: "Private runners, custom model routing, and RBAC.",
+    cta: "Contact sales",
     ctaTo: "/login",
     featured: false,
     features: [
       "Everything in Team",
-      "Self-hosted Kubernetes sandbox runner fleet",
-      "Custom model fine-tuning on internal libraries",
-      "Role permissions (Owner, Editor, Viewer, QA)",
-      "SAML 2.0 SSO and audit telemetry export",
-      "Dedicated solutions architect and SLA",
+      "Self-hosted Kubernetes runner fleet",
+      "Custom model routing & internal specs",
+      "RBAC permissions (Owner, Editor, Viewer)",
+      "SAML 2.0 SSO & audit export",
+      "Dedicated solutions architect",
     ],
     excluded: [],
   },
@@ -85,13 +88,12 @@ export default function Pricing() {
     >
       <div className="max-w-[1280px] mx-auto px-4 sm:px-6">
         {/* Heading */}
-        <div className="max-w-2xl mb-12 space-y-3">
+        <div className="max-w-xl mb-10 space-y-2.5">
           <h2 className="lp-display text-3xl sm:text-4xl font-bold text-[var(--lp-ink)] tracking-tight">
-            Coverage impact estimator and pricing
+            Impact estimator &amp; pricing
           </h2>
           <p className="text-sm sm:text-base text-[var(--lp-ink-secondary)]">
-            Adjust team size and repository scale to estimate monthly engineering
-            hours saved, then choose a workspace plan.
+            Dial your team and codebase size, then pick a workspace tier.
           </p>
         </div>
 
@@ -230,6 +232,7 @@ export default function Pricing() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5 items-stretch">
           {PLANS.map((plan) => {
             const displayPrice = annual ? plan.annualPrice : plan.monthlyPrice;
+            const PlanIcon = plan.icon;
             return (
               <div
                 key={plan.id}
@@ -242,8 +245,9 @@ export default function Pricing() {
               >
                 <div>
                   <div className="flex items-center justify-between gap-2 mb-4">
-                    <h3 className="lp-display text-lg font-bold text-[var(--lp-ink)]">
-                      {plan.name}
+                    <h3 className="lp-display text-lg font-bold text-[var(--lp-ink)] inline-flex items-center gap-2">
+                      <PlanIcon className={`w-4 h-4 ${plan.featured ? "text-[var(--lp-signal)]" : "text-[var(--lp-ink-muted)]"}`} />
+                      <span>{plan.name}</span>
                     </h3>
                     {plan.badge && (
                       <span className="px-2.5 py-0.5 rounded bg-[var(--lp-signal-bg)] border border-[var(--lp-signal-border)] text-[var(--lp-signal)] text-[11px] lp-mono font-medium">
@@ -268,11 +272,12 @@ export default function Pricing() {
                   <Link
                     to={plan.ctaTo}
                     id={`pricing-cta-${plan.id}`}
-                    className={`w-full py-2.5 px-4 rounded-lg text-xs sm:text-sm text-center block mb-7 ${
+                    className={`w-full py-2.5 px-4 rounded-lg text-xs sm:text-sm inline-flex items-center justify-center gap-1.5 mb-7 ${
                       plan.featured ? "lp-btn-primary" : "lp-btn-secondary"
                     }`}
                   >
-                    {plan.cta}
+                    <span>{plan.cta}</span>
+                    <ArrowUpRight className="w-3.5 h-3.5" />
                   </Link>
 
                   <div className="border-t border-[var(--lp-line)] pt-5 space-y-2.5">

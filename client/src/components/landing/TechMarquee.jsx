@@ -1,33 +1,51 @@
+import {
+  Code2,
+  Server,
+  Braces,
+  Terminal,
+  ShieldCheck,
+  Monitor,
+  GitBranch,
+  Container,
+  GitPullRequest,
+  Cpu,
+  Layers,
+  Workflow,
+  Users,
+  Database,
+} from "lucide-react";
+
 const ROW_ONE = [
-  { name: "React 19", detail: "Component AST" },
-  { name: "Node.js ESM", detail: "Isolated runtime" },
-  { name: "TypeScript 5", detail: "Type branch graph" },
-  { name: "Vitest", detail: "In-memory runner" },
-  { name: "Jest", detail: "Istanbul coverage" },
-  { name: "Playwright", detail: "Headless flow trace" },
-  { name: "Python Pytest", detail: "Branch profiler" },
-  { name: "Docker Engine", detail: "Ephemeral containers" },
+  { name: "React 19", detail: "AST", icon: Code2 },
+  { name: "Node.js ESM", detail: "Runtime", icon: Server },
+  { name: "TypeScript 5", detail: "Typed CFG", icon: Braces },
+  { name: "Vitest", detail: "Runner", icon: Terminal },
+  { name: "Jest", detail: "Istanbul", icon: ShieldCheck },
+  { name: "Playwright", detail: "E2E trace", icon: Monitor },
+  { name: "Babel AST", detail: "Flow graph", icon: GitBranch },
+  { name: "Docker", detail: "Sandbox", icon: Container },
 ];
 
 const ROW_TWO = [
-  { name: "GitHub Actions", detail: "Pull request gate" },
-  { name: "Babel Parser", detail: "Control flow graph" },
-  { name: "JUnit 5", detail: "Bytecode branches" },
-  { name: "xUnit .NET", detail: "CLR execution tree" },
-  { name: "Gemini 2.5 Pro", detail: "Test synthesis" },
-  { name: "Mutation Guard", detail: "Fault injection" },
-  { name: "Yjs CRDT", detail: "Multiplayer editor" },
-  { name: "BullMQ + Redis", detail: "Worker orchestration" },
+  { name: "GitHub Actions", detail: "PR Gate", icon: GitPullRequest },
+  { name: "Gemini 2.5 Pro", detail: "Synthesis", icon: Cpu },
+  { name: "Mutation Guard", detail: "Fault check", icon: ShieldCheck },
+  { name: "Yjs CRDT", detail: "Multiplayer", icon: Users },
+  { name: "PostgreSQL", detail: "Contracts", icon: Database },
+  { name: "BullMQ + Redis", detail: "Queue", icon: Workflow },
+  { name: "JUnit 5", detail: "Bytecode", icon: Layers },
+  { name: "xUnit .NET", detail: "CLR tree", icon: Layers },
 ];
 
 function TickerItem({ item }) {
+  const Icon = item.icon;
   return (
-    <div className="group flex items-center gap-3.5 px-5 py-2.5 mx-1.5 rounded-lg bg-[var(--lp-surface)] border border-[var(--lp-line)] hover:border-[var(--lp-line-strong)] transition-colors select-none shrink-0">
-      <span className="w-1.5 h-1.5 rounded-full bg-[var(--lp-signal)] opacity-70 group-hover:opacity-100 transition-opacity" />
+    <div className="group flex items-center gap-2.5 px-4 py-2 mx-1.5 rounded-lg bg-[var(--lp-surface)] border border-[var(--lp-line)] hover:border-[var(--lp-line-strong)] transition-colors select-none shrink-0">
+      <Icon className="w-3.5 h-3.5 text-[var(--lp-signal)] opacity-80 group-hover:opacity-100 transition-opacity shrink-0" />
       <span className="text-xs font-medium text-[var(--lp-ink)] tracking-tight">
         {item.name}
       </span>
-      <span className="text-[11px] lp-mono text-[var(--lp-ink-muted)] border-l border-[var(--lp-line)] pl-3">
+      <span className="text-[11px] lp-mono text-[var(--lp-ink-muted)] border-l border-[var(--lp-line)] pl-2.5">
         {item.detail}
       </span>
     </div>

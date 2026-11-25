@@ -298,8 +298,9 @@ export default function VersionControlWorkspace({ projectId, onSync }) {
     }
   };
 
-  const handleDiscard = async (filePath, isUntracked = false) => {
-    if (!confirm(`Discard all changes in "${filePath}"? This cannot be undone.`)) return;
+  const [pendingDiscard, setPendingDiscard] = useState(null);
+
+  const executeDiscard = async (filePath, isUntracked = false) => {
     setGitActionLoading(true);
     try {
       await gitService.discardChanges(projectId, filePath, isUntracked);
@@ -315,6 +316,10 @@ export default function VersionControlWorkspace({ projectId, onSync }) {
     } finally {
       setGitActionLoading(false);
     }
+  };
+
+  const handleDiscard = (filePath, isUntracked = false) => {
+    setPendingDiscard({ filePath, isUntracked });
   };
 
   const handleCommit = async () => {

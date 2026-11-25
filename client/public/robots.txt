@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /main-editor
+Disallow: /editor
+Disallow: /projects
+Disallow: /invitations/
+Disallow: /auth/
+
+Sitemap: https://covai.tech/sitemap.xml
