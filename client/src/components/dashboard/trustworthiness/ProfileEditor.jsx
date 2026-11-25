@@ -129,6 +129,9 @@ function ProfileVersionEditor({
   const preparationStatus = preparationProgress?.status || 'RUNNING';
   const generating = preparationProgress && ['QUEUED', 'RUNNING'].includes(preparationStatus);
   const missingDocuments = definition.sourceIds.length === 0;
+  const onlyChatbotProfiles = !missingDocuments && definition.sourceIds.every(id =>
+    data.sources.find(source => source.id === id)?.provenance?.type === 'CHATBOT_PROFILE',
+  );
   const renderGenerate = (variant, centered = false) => (
     <div className={`flex flex-col gap-2 ${centered ? 'items-center text-center' : 'items-start'}`}>
     <Button variant={variant}
@@ -143,7 +146,7 @@ function ProfileVersionEditor({
     </Button>
     {(missingDocuments || !definition.judge.generationConsent) && (
       <p className="text-xs text-[var(--color-text-secondary)]">
-        {missingDocuments ? 'Pick at least one document in Settings → Documents.' : 'Allow AI to read your documents first.'}{' '}
+        {missingDocuments ? 'Pick at least one document or chatbot profile in Settings → Documents.' : 'Allow AI to read your documents first.'}{' '}
         <button type="button" className="cursor-pointer text-[var(--color-primary)] underline underline-offset-2"
           onClick={() => {
             setSettingsTab(missingDocuments ? 'documents' : 'privacy');
@@ -188,7 +191,9 @@ function ProfileVersionEditor({
 
       {!cases.length && !generating && (
         <EmptyState icon={Sparkles} title="No questions yet"
-          description="AI reads your documents and writes test questions. You can check and edit every question before approving."
+          description={onlyChatbotProfiles
+            ? 'AI reads your chatbot profile and writes questions about its role, safety and memory. You can check and edit every question before approving.'
+            : 'AI reads your documents and writes test questions. You can check and edit every question before approving.'}
           action={draft ? renderGenerate('default', true) : null} />
       )}
 

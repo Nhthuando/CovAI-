@@ -5,7 +5,7 @@ import { cn } from '../../../lib/utils';
 import RunDiagnostics from './RunDiagnostics';
 import { numberText, percentText, interactive } from './evaluationTheme';
 import { criterionLabel } from './criterionLabels';
-import { questionGroup, questionResult, reportVerdict, seconds, verdictChecks } from './reportHelpers';
+import { questionGroup, questionResult, reportVerdict, representativeScore, seconds, verdictChecks } from './reportHelpers';
 import { ReportMetric } from './reportUi';
 import { groupIcon } from './questionIcons';
 
@@ -70,7 +70,8 @@ export default function RunReport({ run, api, act, busy, actions, notices }) {
   const needsCalibration = Object.values(corrections).some(item => item?.status === 'NOT_ENOUGH_CALIBRATION');
   const lower = interval?.lower ?? interval?.low;
   const upper = interval?.upper ?? interval?.high;
-  const score = gradedChecks > 0 && Number.isFinite(summary.score) ? summary.score : null;
+  const scoreInfo = representativeScore(summary);
+  const score = gradedChecks > 0 ? scoreInfo.value : null;
 
   const groupRows = (summary.tasks || []).map(row => {
     const value = passRate(cases.filter(item => questionGroup(item.testCase?.taskType) === questionGroup(row.taskType)).map(questionResult));
@@ -87,12 +88,19 @@ export default function RunReport({ run, api, act, busy, actions, notices }) {
       <section className={cn('flex flex-wrap items-center gap-x-6 gap-y-5 rounded-lg border bg-[var(--color-surface)] p-5', heroTone[verdict.tone] || 'border-[var(--color-border)]')}>
         <ProgressCircle value={score ?? 0} radius={46} strokeWidth={7} color={toneColor[verdict.tone] || 'primary'}>
           <span className="font-mono text-2xl font-semibold tabular-nums">{score != null ? numberText(score, 0) : '—'}</span>
-          <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">score</span>
+          <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">{scoreInfo.partial && score != null ? 'partial' : 'score'}</span>
         </ProgressCircle>
         <div className="min-w-[220px] flex-1 space-y-1.5">
           <h2 className="text-lg font-semibold tracking-tight">{verdict.title}</h2>
           <p className="max-w-2xl break-words text-sm text-[var(--color-text-muted)]">{verdict.body}</p>
           <p className="text-xs text-[var(--color-text-muted)]">Pass mark <span className="font-mono tabular-nums text-[var(--color-text-secondary)]">{verdict.passMark ?? '—'}</span></p>
+          {scoreInfo.partial && (
+            <p className="text-xs text-amber-400">
+              {score == null ? 'Not scored yet: only ' : 'Partial score: '}
+              <span className="font-mono tabular-nums">{scoreInfo.scored}</span> of{' '}
+              <span className="font-mono tabular-nums">{scoreInfo.applicable}</span> checks graded.
+            </p>
+          )}
         </div>
         {actions}
       </section>
@@ -175,7 +183,9 @@ export default function RunReport({ run, api, act, busy, actions, notices }) {
         </summary>
         <ul className="mt-3 list-disc space-y-1.5 pl-5 text-sm text-[var(--color-text-muted)]">
           <li>Questions written by AI and grades from the grading AI are a reference, not a replacement for an expert check.</li>
-          <li><span className="font-mono tabular-nums">{run.unverifiedReferenceCount ?? 0}</span> questions use a quote that wasn't found word for word in your documents.</li>
+          {run.groundingMode !== 'BEHAVIOR' && (
+            <li><span className="font-mono tabular-nums">{run.unverifiedReferenceCount ?? 0}</span> questions use a quote that wasn't found word for word in your documents.</li>
+          )}
           <li><span className="font-mono tabular-nums">{verdict.errors}</span> checks couldn't be graded.</li>
           {run.knowledgeProbeSkipped && <li>The document readiness check was skipped for this run.</li>}
           {(run.limitations || []).map((limitation, index) => <li key={index}>{limitation}</li>)}

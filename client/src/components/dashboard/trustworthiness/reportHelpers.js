@@ -30,6 +30,26 @@ export function questionResult(item) {
   return item.verdict === 'PASSED' ? 'PASSED' : 'ERROR';
 }
 export function seconds(value) { return Number.isFinite(value) ? (value / 1000).toFixed(1) : '—'; }
+export function representativeScore(summary) {
+  const raw = Number.isFinite(summary?.score) ? summary.score : null;
+  const completeness = summary?.completeness;
+  const scored = Number.isFinite(completeness?.scored) ? completeness.scored : 0;
+  const applicable = Number.isFinite(completeness?.applicable) ? completeness.applicable : 0;
+  const partial = summary?.partial === true || (applicable > 0 && scored < applicable);
+  const hidden = raw === null || (partial && applicable > 0 && (
+    scored / applicable < 0.8 || (summary.tasks || []).some(task => task.applicable > 0 && task.score == null)
+  ));
+  return { value: hidden ? null : raw, raw, partial, hidden, scored, applicable };
+}
+
+const isUngraded = item => !['PASSED', 'FAILED'].includes(questionResult(item));
+const rateLimitMessage = "Your chatbot's AI key hit its request limit (429).";
+
+export function rateLimited(run) {
+  return (run.cases || []).some(isUngraded) && (run.summary?.rateLimit?.hits > 0 ||
+    (run.evidence || []).some(record => /\b429\b|quota|rate.?limit|RESOURCE_EXHAUSTED/i.test(record.payload?.errorMessage)));
+}
+
 export function reportVerdict(run) {
   const summary = run.summary || {};
   const cases = run.cases || [];
@@ -38,6 +58,8 @@ export function reportVerdict(run) {
   const insufficient = checks.filter(check => check.status === 'INSUFFICIENT_EVIDENCE').length;
   const passMark = summary.passMark ?? summary.passThreshold ?? run.manifest?.scoring?.threshold ?? run.profileVersion?.config?.passThreshold;
   const failed = cases.filter(item => questionResult(item) === 'FAILED').length;
+  const ungraded = cases.filter(isUngraded).length;
+  const limited = rateLimited(run);
   const blockingReason = Array.isArray(summary.blockingReasons) ? summary.blockingReasons.find(reason => typeof reason === 'string' || reason?.reason) : null;
   const reason = typeof blockingReason === 'string' ? blockingReason : blockingReason?.reason;
   if (['ERROR', 'FAILED', 'CANCELED', 'CANCELLED'].includes(run.executionStatus)) return {
@@ -47,12 +69,16 @@ export function reportVerdict(run) {
     title: 'Your chatbot passed', body: `It met the pass mark of ${passMark ?? '—'}/100 across ${cases.length} questions.`, tone: 'emerald', passMark, errors,
   };
   if ((summary.verdict || run.verdict) === 'FAILED') return {
-    title: "Your chatbot didn't pass", body: `${failed} ${failed === 1 ? 'question' : 'questions'} failed.${reason ? ` ${reason}` : ''}`, tone: 'rose', passMark, errors,
+    title: "Your chatbot didn't pass", tone: 'rose', passMark, errors,
+    body: [`${failed} ${failed === 1 ? 'question' : 'questions'} failed.`, reason,
+      ungraded ? `${ungraded} ${ungraded === 1 ? 'question' : 'questions'} couldn't be graded.` : '',
+      limited ? rateLimitMessage : ''].filter(Boolean).join(' '),
   };
   return {
     title: 'No verdict yet', tone: 'amber', passMark, errors,
     body: [errors ? `${errors} checks couldn't be graded because the grading AI was busy or unavailable.` : '',
       insufficient ? `${insufficient} checks had too few answers because your chatbot returned errors.` : '',
-      'Try again later, when the AI service is less busy.'].filter(Boolean).join(' '),
+      limited ? `${rateLimitMessage} Wait a minute and run again, or use a key with a higher limit.`
+        : 'Try again later, when the AI service is less busy.'].filter(Boolean).join(' '),
   };
 }

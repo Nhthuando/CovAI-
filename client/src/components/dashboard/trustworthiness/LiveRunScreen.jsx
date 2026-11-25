@@ -13,7 +13,7 @@ import { EmptyState, Field, SecretInput } from './ui';
 import { inputClass, numberText } from './evaluationTheme';
 import RunProgress from './RunProgress';
 import RunReport from './RunReport';
-import { runDate, runStatus } from './reportHelpers';
+import { representativeScore, runDate, runStatus } from './reportHelpers';
 
 const effectiveStatus = (record, live) => (record && !isEvaluationActive(record.executionStatus) ? record.executionStatus : live?.executionStatus || record?.executionStatus);
 
@@ -65,7 +65,7 @@ export default function LiveRunScreen({
                     </span>
                     <span className="block font-mono text-xs tabular-nums text-[var(--color-text-muted)]">{runDate(item.createdAt)}</span>
                   </span>
-                  {Number.isFinite(item.summary?.score) && <span className="font-mono text-sm tabular-nums text-[var(--color-text-secondary)]">{numberText(item.summary.score, 0)}</span>}
+                  <RunScore summary={item.summary} className="font-mono text-sm tabular-nums text-[var(--color-text-secondary)]" />
                 </button>
               </li>
             );
@@ -326,6 +326,16 @@ function RunNotices({ run, data, api, act, busy, navigateView, live }) {
   );
 }
 
+function RunScore({ summary, className, outOf100 = false }) {
+  const { value, hidden, partial, scored, applicable } = representativeScore(summary);
+  return (
+    <span className={className} title={hidden ? `Only ${scored} of ${applicable} checks graded` : undefined}>
+      {hidden ? '—' : outOf100 ? `${numberText(value)}/100` : numberText(value, 0)}
+      {!hidden && partial && <span className="text-[var(--color-text-muted)]"> partial</span>}
+    </span>
+  );
+}
+
 function RunComparison({ runs, api, act, busy }) {
   const [ids, setIds] = useState([]);
   const [comparison, setComparison] = useState(null);
@@ -344,7 +354,7 @@ function RunComparison({ runs, api, act, busy }) {
                   setIds(event.target.checked ? [...ids, run.id].slice(-4) : ids.filter(id => id !== run.id));
                 }} />
               <span className="font-mono text-xs tabular-nums text-[var(--color-text-secondary)]">{runDate(run.createdAt)}</span>
-              {Number.isFinite(run.summary?.score) && <Badge variant="outline" className="ml-auto font-mono tabular-nums">{numberText(run.summary.score, 0)}</Badge>}
+              <Badge variant="outline" className="ml-auto font-mono tabular-nums"><RunScore summary={run.summary} /></Badge>
             </label>
           ))}
         </div>
@@ -360,7 +370,7 @@ function RunComparison({ runs, api, act, busy }) {
             {comparison.runs.map(run => (
               <p key={run.id} className="flex gap-3 font-mono tabular-nums">
                 <span className="text-[var(--color-text-muted)]">{run.id.slice(-6)}</span>
-                <span>{Number.isFinite(run.summary?.score) ? `${numberText(run.summary.score)}/100` : '—'}</span>
+                <RunScore summary={run.summary} outOf100 />
                 <span className="text-[var(--color-text-muted)]">{runStatus(run).label}</span>
               </p>
             ))}

@@ -58,6 +58,8 @@ export function createEvaluationRouter({ db = prisma, auth = authMiddleware, enq
         return next();
     });
 
+    router.post('/sources/from-project', requireRun, controller.createProfileSource);
+
     // Read-only endpoints (OWNER, EDITOR, VIEWER)
     router.get('/', requireRead, controller.getWorkspace);
     router.get('/design-audit', requireRead, controller.getDesignAudit);

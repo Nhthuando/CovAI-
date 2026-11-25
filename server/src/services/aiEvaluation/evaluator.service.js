@@ -2,6 +2,7 @@ import {
     CANONICAL_CRITERIA_KEYS,
     CRITERIA_APPLICABILITY_MATRIX,
     getPointer,
+    isBehaviorOnly,
     same,
     redact,
     SCENARIO_CATEGORIES,
@@ -144,6 +145,7 @@ export async function evaluateCase(testCase, definition, observations, evidence,
                 {
                     signal,
                     provider,
+                    behaviorOnly: isBehaviorOnly(definition.sources),
                     quota: quota ? { ...quota, key: `${quota.key}:judge` } : undefined,
                 },
             );
