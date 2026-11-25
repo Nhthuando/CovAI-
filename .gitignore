@@ -13,6 +13,7 @@
 !package.json
 !package-lock.json
 !README.md
+!deploy.sh
 
 # Whitelist các THƯ MỤC duy nhất được phép ở root
 !.agents/

@@ -18,7 +18,7 @@ echo "⏳ Đang đợi server khởi động hoàn tất..."
 sleep 5
 
 echo "🗄️ Đang đồng bộ Prisma Schema vào Database..."
-docker compose -f docker-compose.prod.yml exec -T server npx prisma generate
+docker compose -f docker-compose.prod.yml exec -T server npx prisma db push
 
 echo "📊 TRẠNG THÁI HỆ THỐNG:"
 docker compose -f docker-compose.prod.yml ps
