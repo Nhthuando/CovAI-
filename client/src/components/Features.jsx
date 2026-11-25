@@ -1,4 +1,16 @@
 import { useState, Suspense, lazy } from "react";
+import {
+  Layers,
+  GitBranch,
+  ShieldCheck,
+  Users,
+  Container,
+  Monitor,
+  Webhook,
+  Code2,
+  CheckCircle2,
+  Terminal,
+} from "lucide-react";
 
 const Pyramid3DCanvas = lazy(() => import("./landing/Pyramid3DCanvas"));
 
@@ -6,23 +18,26 @@ const PYRAMID_LAYERS = [
   {
     id: "system",
     name: "System E2E flows",
-    metric: "95.6% coverage",
-    engine: "Playwright Headless + V8 DOM trace",
-    desc: "Exercises multi-page checkout journeys, iframe challenges, and network recovery paths in a real browser.",
+    metric: "95.6%",
+    engine: "Playwright + V8 trace",
+    icon: Monitor,
+    desc: "Multi-page browser journeys and network recovery.",
   },
   {
     id: "integration",
-    name: "Integration & API contracts",
-    metric: "97.8% coverage",
-    engine: "Supertest + ephemeral PostgreSQL",
-    desc: "Verifies HTTP status codes, role permissions (Owner, Editor, Viewer), and database transaction locks.",
+    name: "API contract matrix",
+    metric: "97.8%",
+    engine: "Supertest + PostgreSQL",
+    icon: Webhook,
+    desc: "HTTP contracts, RBAC permissions, and DB locks.",
   },
   {
     id: "unit",
-    name: "Unit AST & branch predicates",
-    metric: "98.4% coverage",
-    engine: "Babel AST + Vitest & Jest",
-    desc: "Solves cyclomatic decision nodes and guard clauses with deterministic mocks.",
+    name: "Unit branch solver",
+    metric: "98.4%",
+    engine: "Babel AST + Vitest",
+    icon: Code2,
+    desc: "Cyclomatic decision nodes with deterministic mocks.",
   },
 ];
 
@@ -60,14 +75,12 @@ export default function Features() {
       className="relative py-24 md:py-32 border-b border-[var(--lp-line)]"
     >
       <div className="max-w-[1280px] mx-auto px-4 sm:px-6">
-        <div className="max-w-2xl mb-14 space-y-3">
+        <div className="max-w-xl mb-12 space-y-2.5">
           <h2 className="lp-display text-3xl sm:text-4xl font-bold text-[var(--lp-ink)] tracking-tight">
-            Built around static graph analysis and container execution
+            Graph intelligence. Verified execution.
           </h2>
-          <p className="text-sm sm:text-base text-[var(--lp-ink-secondary)] leading-relaxed">
-            Instead of prompting an LLM blindly on raw files, CovAI extracts the
-            Abstract Syntax Tree, computes branch complexity, and verifies every
-            generated assertion against mutation faults.
+          <p className="text-sm sm:text-base text-[var(--lp-ink-secondary)]">
+            AST branch mapping paired with mutation checks and isolated containers.
           </p>
         </div>
 
@@ -76,16 +89,18 @@ export default function Features() {
           <BentoCard id="bento-pyramid" className="lg:col-span-7">
             <div className="relative z-10">
               <div className="flex items-center justify-between gap-2 mb-3 text-xs lp-mono text-[var(--lp-ink-secondary)]">
-                <span>Three-tier test architecture</span>
-                <span className="text-[var(--lp-signal)] font-semibold">{selectedLayer.metric}</span>
+                <span className="inline-flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-[var(--lp-signal)]" />
+                  <span>Three-tier test architecture</span>
+                </span>
+                <span className="text-[var(--lp-signal)] font-semibold">{selectedLayer.metric} cov</span>
               </div>
 
-              <h3 className="lp-display text-xl sm:text-2xl font-bold text-[var(--lp-ink)] mb-2">
-                Correlated unit, API contract, and browser coverage
+              <h3 className="lp-display text-xl sm:text-2xl font-bold text-[var(--lp-ink)] mb-1.5">
+                Unit, API contract, and browser coverage
               </h3>
               <p className="text-xs sm:text-sm text-[var(--lp-ink-secondary)] mb-5">
-                Select any layer to elevate its 3D stratum and inspect how
-                branch coverage maps across the stack.
+                {selectedLayer.desc}
               </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center">
@@ -104,19 +119,27 @@ export default function Features() {
                 <div className="sm:col-span-6 space-y-2">
                   {PYRAMID_LAYERS.map((layer) => {
                     const isSelected = selectedLayer.id === layer.id;
+                    const LayerIcon = layer.icon;
                     return (
                       <button
                         key={layer.id}
                         type="button"
                         onClick={() => setSelectedLayer(layer)}
-                        className={`w-full p-3.5 rounded-lg border text-left transition-colors cursor-pointer ${
+                        className={`w-full p-3 rounded-lg border text-left transition-colors cursor-pointer ${
                           isSelected
                             ? "bg-[var(--lp-pill-active)] border-[var(--lp-line-strong)] text-[var(--lp-ink)] shadow-xs"
                             : "bg-[var(--lp-inset)] border-[var(--lp-line)] text-[var(--lp-ink-secondary)] hover:text-[var(--lp-ink)]"
                         }`}
                       >
                         <div className="flex items-center justify-between text-xs font-semibold">
-                          <span>{layer.name}</span>
+                          <span className="inline-flex items-center gap-2">
+                            <LayerIcon
+                              className={`w-3.5 h-3.5 ${
+                                isSelected ? "text-[var(--lp-signal)]" : "text-[var(--lp-ink-muted)]"
+                              }`}
+                            />
+                            <span>{layer.name}</span>
+                          </span>
                           <span
                             className={`lp-mono ${
                               isSelected ? "text-[var(--lp-signal)]" : "text-[var(--lp-ink-muted)]"
@@ -125,7 +148,7 @@ export default function Features() {
                             {layer.metric}
                           </span>
                         </div>
-                        <div className="text-[11px] lp-mono text-[var(--lp-ink-muted)] mt-1">
+                        <div className="text-[11px] lp-mono text-[var(--lp-ink-muted)] mt-1 pl-5.5">
                           {layer.engine}
                         </div>
                       </button>
@@ -134,39 +157,38 @@ export default function Features() {
                 </div>
               </div>
             </div>
-
-            <div className="relative z-10 mt-4 pt-3.5 border-t border-[var(--lp-line)] text-xs text-[var(--lp-ink-secondary)]">
-              {selectedLayer.desc}
-            </div>
           </BentoCard>
 
-          {/* CARD 2: Directed Control Flow Graph Schematic */}
+          {/* CARD 2: Animated Directed Control Flow Graph Schematic */}
           <BentoCard id="feature-cfg-analysis" className="lg:col-span-5">
             <div className="relative z-10">
               <div className="flex items-center justify-between gap-2 mb-3 text-xs lp-mono text-[var(--lp-ink-secondary)]">
-                <span>Babel AST graph solver</span>
-                <span>McCabe complexity M = 4</span>
+                <span className="inline-flex items-center gap-2">
+                  <GitBranch className="w-4 h-4 text-[var(--lp-signal)]" />
+                  <span>Babel AST solver</span>
+                </span>
+                <span>Complexity M = 4</span>
               </div>
 
-              <h3 className="lp-display text-xl sm:text-2xl font-bold text-[var(--lp-ink)] mb-2">
-                Control Flow Graph predicate isolation
+              <h3 className="lp-display text-xl sm:text-2xl font-bold text-[var(--lp-ink)] mb-1.5">
+                Predicate branch isolation
               </h3>
               <p className="text-xs sm:text-sm text-[var(--lp-ink-secondary)] mb-5">
-                Traces every conditional fork, ternary expression, and exception
-                clause so generated tests target exact line predicates.
+                Traces forks and exception paths to target exact untested lines.
               </p>
 
               <div className="p-4 rounded-lg bg-[var(--lp-inset)] border border-[var(--lp-line)]">
                 <svg
                   viewBox="0 0 360 175"
                   className="w-full h-40 overflow-visible"
-                  aria-label="Control Flow Graph execution tree"
+                  aria-label="Animated Control Flow Graph execution tree"
                 >
                   <path
                     d="M180 26 C180 55, 95 55, 95 85"
                     fill="none"
                     stroke="var(--lp-signal)"
                     strokeWidth="1.5"
+                    className="lp-flow-edge"
                   />
                   <path
                     d="M180 26 C180 55, 265 55, 265 85"
@@ -179,19 +201,21 @@ export default function Features() {
                     fill="none"
                     stroke="var(--lp-signal)"
                     strokeWidth="1.5"
+                    className="lp-flow-edge"
                   />
                   <path
                     d="M95 85 C95 120, 145 125, 145 150"
                     fill="none"
                     stroke="var(--lp-signal)"
                     strokeWidth="1.5"
+                    className="lp-flow-edge"
                   />
                   <path
                     d="M265 85 C265 120, 225 125, 225 150"
                     fill="none"
                     stroke="var(--lp-fault)"
                     strokeWidth="1.5"
-                    strokeDasharray="3 3"
+                    className="lp-flow-edge"
                   />
                   <path
                     d="M265 85 C265 120, 305 125, 305 150"
@@ -276,6 +300,20 @@ export default function Features() {
                     { x: 305, label: "Commit", fault: false },
                   ].map((leaf, i) => (
                     <g key={i} transform={`translate(${leaf.x}, 150)`}>
+                      {leaf.fault && (
+                        <rect
+                          x="-36"
+                          y="-15"
+                          width="72"
+                          height="30"
+                          rx="6"
+                          fill="none"
+                          stroke="var(--lp-fault)"
+                          strokeWidth="1"
+                          opacity="0.45"
+                          className="animate-pulse"
+                        />
+                      )}
                       <rect
                         x="-32"
                         y="-11"
@@ -312,19 +350,21 @@ export default function Features() {
           <BentoCard id="feature-coverage-metrics" className="lg:col-span-4">
             <div className="relative z-10">
               <div className="flex items-center justify-between gap-2 mb-3 text-xs lp-mono text-[var(--lp-ink-secondary)]">
-                <span>Mutation verification</span>
-                <span className="text-[var(--lp-signal)] font-semibold">99.2% kill rate</span>
+                <span className="inline-flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-[var(--lp-signal)]" />
+                  <span>Mutation guard</span>
+                </span>
+                <span className="text-[var(--lp-signal)] font-semibold">99.2% killed</span>
               </div>
 
-              <h3 className="lp-display text-xl font-bold text-[var(--lp-ink)] mb-2">
-                Guard against hollow assertions
+              <h3 className="lp-display text-xl font-bold text-[var(--lp-ink)] mb-1.5">
+                Zero hollow assertions
               </h3>
-              <p className="text-xs text-[var(--lp-ink-secondary)] mb-5">
-                Flips relational operators and boolean guards in memory to verify
-                that your test suite fails when logic breaks.
+              <p className="text-xs text-[var(--lp-ink-secondary)] mb-4">
+                In-memory fault injection verifies every test catches logic breaks.
               </p>
 
-              <div className="p-3.5 rounded-lg bg-[var(--lp-inset)] border border-[var(--lp-line)] space-y-2">
+              <div className="p-3 rounded-lg bg-[var(--lp-inset)] border border-[var(--lp-line)] space-y-2">
                 {mutants.map((m, idx) => (
                   <button
                     key={idx}
@@ -337,8 +377,9 @@ export default function Features() {
                     }`}
                   >
                     <span className="truncate">{m.op}</span>
-                    <span className="text-[var(--lp-signal)] text-[10px] shrink-0 ml-2">
-                      Killed ({m.time})
+                    <span className="inline-flex items-center gap-1 text-[var(--lp-signal)] text-[10px] shrink-0 ml-2">
+                      <CheckCircle2 className="w-3 h-3" />
+                      <span>{m.time}</span>
                     </span>
                   </button>
                 ))}
@@ -350,22 +391,27 @@ export default function Features() {
           <BentoCard id="feature-test-synthesis" className="lg:col-span-4">
             <div className="relative z-10">
               <div className="flex items-center justify-between gap-2 mb-3 text-xs lp-mono text-[var(--lp-ink-secondary)]">
-                <span>Yjs CRDT sync</span>
-                <span>Monaco editor</span>
+                <span className="inline-flex items-center gap-2">
+                  <Users className="w-4 h-4 text-[var(--lp-signal)]" />
+                  <span>Yjs CRDT sync</span>
+                </span>
+                <span>Monaco</span>
               </div>
 
-              <h3 className="lp-display text-xl font-bold text-[var(--lp-ink)] mb-2">
-                Multiplayer test editing
+              <h3 className="lp-display text-xl font-bold text-[var(--lp-ink)] mb-1.5">
+                Multiplayer suite editor
               </h3>
-              <p className="text-xs text-[var(--lp-ink-secondary)] mb-5">
-                Engineers and QA leads co-edit test suites alongside the CovAI
-                worker with conflict-free cursor synchronization.
+              <p className="text-xs text-[var(--lp-ink-secondary)] mb-4">
+                Co-edit specs live alongside CovAI workers with synced cursors.
               </p>
 
-              <div className="p-3.5 rounded-lg bg-[var(--lp-inset)] border border-[var(--lp-line)] lp-mono text-[11px] space-y-2">
+              <div className="p-3 rounded-lg bg-[var(--lp-inset)] border border-[var(--lp-line)] lp-mono text-[11px] space-y-2">
                 <div className="flex items-center justify-between text-[10px] text-[var(--lp-ink-muted)] pb-1.5 border-b border-[var(--lp-line)]">
                   <span>session.spec.ts</span>
-                  <span>2 active cursors</span>
+                  <span className="inline-flex items-center gap-1.5 text-[var(--lp-signal)]">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[var(--lp-signal)] animate-pulse" />
+                    2 live
+                  </span>
                 </div>
 
                 <div className="text-[var(--lp-ink-secondary)]">
@@ -373,7 +419,10 @@ export default function Features() {
                 </div>
 
                 <div className="pl-2.5 py-1 bg-[var(--lp-hover)] border-l-2 border-[var(--lp-ink)] text-[var(--lp-ink)] flex items-center justify-between">
-                  <span>const res = await rotateToken(cookie);</span>
+                  <span>
+                    const res = await rotateToken(c);
+                    <span className="inline-block w-1.5 h-3.5 align-middle ml-0.5 bg-[var(--lp-ink)] lp-cursor-blink" />
+                  </span>
                   <span className="px-1.5 py-0.5 rounded bg-[var(--lp-ink)] text-[var(--lp-bg)] text-[9px] font-semibold">
                     Thuan
                   </span>
@@ -395,31 +444,36 @@ export default function Features() {
           <BentoCard id="feature-sandbox-execution" className="lg:col-span-4">
             <div className="relative z-10">
               <div className="flex items-center justify-between gap-2 mb-3 text-xs lp-mono text-[var(--lp-ink-secondary)]">
-                <span>Ephemeral Docker runner</span>
-                <span>Auto-mocking</span>
+                <span className="inline-flex items-center gap-2">
+                  <Container className="w-4 h-4 text-[var(--lp-signal)]" />
+                  <span>Docker runner</span>
+                </span>
+                <span>Auto-mock</span>
               </div>
 
-              <h3 className="lp-display text-xl font-bold text-[var(--lp-ink)] mb-2">
-                Pre-commit container verification
+              <h3 className="lp-display text-xl font-bold text-[var(--lp-ink)] mb-1.5">
+                Isolated container verification
               </h3>
-              <p className="text-xs text-[var(--lp-ink-secondary)] mb-5">
-                Every generated spec runs inside an isolated container before it
-                is presented in your workspace—broken imports are repaired
-                automatically.
+              <p className="text-xs text-[var(--lp-ink-secondary)] mb-4">
+                Runs every suite in sandboxed containers and auto-repairs imports.
               </p>
 
-              <div className="p-3.5 rounded-lg bg-[var(--lp-inset)] border border-[var(--lp-line)] lp-mono text-[11px] space-y-1.5">
-                <div className="text-[var(--lp-ink-muted)]">
-                  $ covai runner:exec --isolated
+              <div className="p-3 rounded-lg bg-[var(--lp-inset)] border border-[var(--lp-line)] lp-mono text-[11px] space-y-2">
+                <div className="flex items-center gap-2 text-[var(--lp-ink-muted)] pb-1.5 border-b border-[var(--lp-line)]">
+                  <Terminal className="w-3.5 h-3.5 shrink-0" />
+                  <span>covai runner:exec --isolated</span>
                 </div>
-                <div className="text-[var(--lp-ink)]">
-                  Detected Vite 8 + Prisma 7 environment
+                <div className="text-[var(--lp-ink)] flex items-center gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-[var(--lp-signal)] shrink-0" />
+                  <span>Vite 8 + Prisma 7 mounted</span>
                 </div>
-                <div className="text-[var(--lp-ink-secondary)]">
-                  Stubbed external Stripe &amp; Redis sockets
+                <div className="text-[var(--lp-ink-secondary)] flex items-center gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-[var(--lp-signal)] shrink-0" />
+                  <span>Stripe &amp; Redis sockets stubbed</span>
                 </div>
-                <div className="text-[var(--lp-signal)] font-semibold pt-1">
-                  24 passed, 0 failed (1.18s)
+                <div className="text-[var(--lp-signal)] font-semibold pt-1 flex items-center justify-between">
+                  <span>24 passed, 0 failed</span>
+                  <span className="text-[10px] text-[var(--lp-ink-muted)]">1.18s</span>
                 </div>
               </div>
             </div>

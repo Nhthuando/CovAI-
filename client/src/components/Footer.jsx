@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { ArrowUpRight } from "lucide-react";
 import CovaiLogo from "./common/CovaiLogo";
 
 const FOOTER_COLS = [
@@ -68,14 +69,12 @@ export default function Footer() {
           />
 
           <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-8">
-            <div className="max-w-xl space-y-3">
+            <div className="max-w-xl space-y-2.5">
               <h2 className="lp-display text-3xl sm:text-4xl font-bold text-[var(--lp-ink)] tracking-tight leading-[1.12]">
-                Inspect your repository&apos;s Control Flow Graph today.
+                Inspect your Control Flow Graph today.
               </h2>
-              <p className="text-sm sm:text-base text-[var(--lp-ink-secondary)] leading-relaxed">
-                Import a repository from GitHub or upload an archive to locate
-                untested branch predicates and run container-verified test
-                synthesis.
+              <p className="text-sm sm:text-base text-[var(--lp-ink-secondary)]">
+                Connect GitHub or upload a zip to run container-verified tests.
               </p>
             </div>
 
@@ -90,9 +89,10 @@ export default function Footer() {
                   style={{
                     transform: `translate3d(${magOffset.x}px, ${magOffset.y}px, 0)`,
                   }}
-                  className="lp-btn-primary px-6 py-3.5 rounded-lg text-sm inline-block transition-transform duration-150"
+                  className="lp-btn-primary px-6 py-3.5 rounded-lg text-sm inline-flex items-center gap-1.5 transition-transform duration-150"
                 >
-                  Create workspace
+                  <span>Create workspace</span>
+                  <ArrowUpRight className="w-4 h-4" />
                 </Link>
               </div>
 

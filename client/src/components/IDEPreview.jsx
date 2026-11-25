@@ -1,464 +1,425 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
-import { Copy, Check, RotateCcw } from "lucide-react";
+import {
+  motion,
+  AnimatePresence,
+  useMotionValue,
+  useSpring,
+  useTransform,
+} from "framer-motion";
+import {
+  Play,
+  RotateCcw,
+  FileCode2,
+  FlaskConical,
+  Network,
+  BarChart3,
+  Layers,
+  GitBranch,
+  MessageSquare,
+  ShieldCheck,
+  ArrowUpRight,
+  Sparkles,
+  Pause,
+} from "lucide-react";
+import CovaiLogo from "./common/CovaiLogo";
+import {
+  EditorExplorerSidebar,
+  ScreenEditorView,
+  ScreenUnitMatrixView,
+  ScreenIntegrationFlowView,
+  ScreenReportQueueView,
+} from "./landing/StudioScreenViews";
 
-const SANDBOX_TIERS = {
-  unit: {
+const STUDIO_SCREENS = [
+  {
+    id: "editor",
+    label: "Code & AST Gutters",
+    workspaceTab: "unit",
+    icon: FileCode2,
+    caption: "Line-level coverage markers + live AST tree",
+    metricLabel: "Branch coverage",
+    metricBefore: "58.3%",
+    metricAfter: "98.4%",
+  },
+  {
     id: "unit",
-    label: "Unit branch coverage",
-    fileName: "src/services/paymentSettlement.ts",
-    testFileName: "tests/unit/paymentSettlement.spec.ts",
-    runner: "Vitest 2.1 · Babel CFG",
-    initialCov: 42.0,
-    healedCov: 96.4,
-    complexity: "Cyclomatic complexity: 6",
-    sourceLines: [
-      { num: 1, code: "export async function settleInvoice(invoice, wallet) {", state: "covered" },
-      { num: 2, code: "  if (!invoice || invoice.amount <= 0) {", state: "covered" },
-      { num: 3, code: "    throw new RangeError('ERR_INVALID_INVOICE_AMOUNT');", state: "fault" },
-      { num: 4, code: "  }", state: "covered" },
-      { num: 5, code: "  const fxRate = wallet.currency === 'USD' ? 1 : wallet.fx;", state: "covered" },
-      { num: 6, code: "  if (!fxRate || fxRate <= 0) {", state: "fault" },
-      { num: 7, code: "    throw new Error('ERR_STALE_FX_ORACLE');", state: "fault" },
-      { num: 8, code: "  }", state: "fault" },
-      { num: 9, code: "  const required = invoice.amount * fxRate;", state: "covered" },
-      { num: 10, code: "  if (wallet.availableBalance < required) {", state: "covered" },
-      { num: 11, code: "    return { status: 'DECLINED', deficit: required - wallet.availableBalance };", state: "fault" },
-      { num: 12, code: "  }", state: "covered" },
-      { num: 13, code: "  return { status: 'SETTLED', txHash: '0x9f8c...31a', net: required };", state: "covered" },
-      { num: 14, code: "}", state: "covered" },
-    ],
-    synthesizedLines: [
-      "describe('settleInvoice() branch suite', () => {",
-      "  it('rejects non-positive invoice amounts (line 3)', async () => {",
-      "    await expect(settleInvoice({ amount: -15 }, { currency: 'USD' }))",
-      "      .rejects.toThrow('ERR_INVALID_INVOICE_AMOUNT');",
-      "  });",
-      "",
-      "  it('guards missing or zero FX oracle rate (lines 6-8)', async () => {",
-      "    const wallet = { currency: 'EUR', fx: 0, availableBalance: 500 };",
-      "    await expect(settleInvoice({ amount: 100 }, wallet))",
-      "      .rejects.toThrow('ERR_STALE_FX_ORACLE');",
-      "  });",
-      "",
-      "  it('returns exact deficit when balance is insufficient (line 11)', async () => {",
-      "    const res = await settleInvoice({ amount: 200 }, {",
-      "      currency: 'USD', availableBalance: 125",
-      "    });",
-      "    expect(res).toEqual({ status: 'DECLINED', deficit: 75 });",
-      "  });",
-      "});",
-    ],
-    cfgNodes: [
-      { id: "B1", label: "Entry: settleInvoice", before: "verified", after: "verified" },
-      { id: "B2", label: "amount <= 0", before: "fault", after: "verified" },
-      { id: "B3", label: "fxRate <= 0", before: "fault", after: "verified" },
-      { id: "B4", label: "balance < required", before: "fault", after: "verified" },
-      { id: "B5", label: "Exit: settled receipt", before: "verified", after: "verified" },
-    ],
+    label: "Unit Test Matrix",
+    workspaceTab: "unit",
+    icon: FlaskConical,
+    caption: "File coverage metrics, assertions & AI repair",
+    metricLabel: "Suite pass rate",
+    metricBefore: "120/122",
+    metricAfter: "122/122",
   },
-  integration: {
+  {
     id: "integration",
-    label: "API contract matrix",
-    fileName: "src/routes/v1/webhooks.controller.ts",
-    testFileName: "tests/integration/webhooks.matrix.test.ts",
-    runner: "Supertest · Ephemeral PostgreSQL",
-    initialCov: 48.5,
-    healedCov: 97.8,
-    complexity: "12 endpoints · 3 auth roles",
-    sourceLines: [
-      { num: 1, code: "router.post('/v1/webhooks/stripe', verifyHmac, async (req, res) => {", state: "covered" },
-      { num: 2, code: "  const sig = req.headers['stripe-signature'];", state: "covered" },
-      { num: 3, code: "  if (!sig || !isValidTimestamp(sig)) {", state: "covered" },
-      { num: 4, code: "    return res.status(401).json({ code: 'REPLAY_ATTACK_BLOCKED' });", state: "fault" },
-      { num: 5, code: "  }", state: "covered" },
-      { num: 6, code: "  const duplicate = await prisma.webhookEvent.findUnique({", state: "covered" },
-      { num: 7, code: "    where: { eventId: req.body.id }, select: { id: true }", state: "covered" },
-      { num: 8, code: "  });", state: "covered" },
-      { num: 9, code: "  if (duplicate) {", state: "fault" },
-      { num: 10, code: "    return res.status(200).json({ idempotent: true, skipped: true });", state: "fault" },
-      { num: 11, code: "  }", state: "fault" },
-      { num: 12, code: "  await queue.add('ledger:sync', { eventId: req.body.id });", state: "covered" },
-      { num: 13, code: "  return res.status(202).json({ queued: true });", state: "covered" },
-      { num: 14, code: "});", state: "covered" },
-    ],
-    synthesizedLines: [
-      "describe('POST /v1/webhooks/stripe contract suite', () => {",
-      "  it('returns 401 when HMAC timestamp is expired (line 4)', async () => {",
-      "    const res = await request(app)",
-      "      .post('/v1/webhooks/stripe')",
-      "      .set('stripe-signature', 't=1600000,v1=expired_sig')",
-      "      .send({ id: 'evt_replay_01' });",
-      "    expect(res.status).toBe(401);",
-      "    expect(res.body.code).toBe('REPLAY_ATTACK_BLOCKED');",
-      "  });",
-      "",
-      "  it('short-circuits duplicate eventId with 200 idempotent flag (line 10)', async () => {",
-      "    await seedWebhookEvent('evt_dup_99');",
-      "    const res = await request(app)",
-      "      .post('/v1/webhooks/stripe')",
-      "      .set('stripe-signature', signValidPayload('evt_dup_99'))",
-      "      .send({ id: 'evt_dup_99' });",
-      "    expect(res.status).toBe(200);",
-      "    expect(res.body).toEqual({ idempotent: true, skipped: true });",
-      "  });",
-      "});",
-    ],
-    cfgNodes: [
-      { id: "A1", label: "POST /webhooks/stripe", before: "verified", after: "verified" },
-      { id: "A2", label: "401 replay guard", before: "fault", after: "verified" },
-      { id: "A3", label: "200 idempotency check", before: "fault", after: "verified" },
-      { id: "A4", label: "202 BullMQ dispatch", before: "verified", after: "verified" },
-      { id: "A5", label: "Response schema check", before: "verified", after: "verified" },
-    ],
+    label: "Integration Flow Studio",
+    workspaceTab: "integration",
+    icon: Network,
+    caption: "Animated request lifecycle & contract assertions",
+    metricLabel: "API contracts",
+    metricBefore: "HTTP 200",
+    metricAfter: "13/13 pass",
   },
-  system: {
-    id: "system",
-    label: "System E2E flow",
-    fileName: "e2e/flows/checkoutRecovery.flow.ts",
-    testFileName: "tests/system/checkoutRecovery.e2e.spec.ts",
-    runner: "Playwright Headless · V8 Coverage",
-    initialCov: 39.2,
-    healedCov: 95.6,
-    complexity: "5 user flows · DOM + network",
-    sourceLines: [
-      { num: 1, code: "export async function executeCheckoutFlow(page, session) {", state: "covered" },
-      { num: 2, code: "  await page.goto('/checkout?plan=enterprise');", state: "covered" },
-      { num: 3, code: "  await page.fill('[data-testid=\"card-input\"]', session.card);", state: "covered" },
-      { num: 4, code: "  if (session.requires3DSecure) {", state: "fault" },
-      { num: 5, code: "    const frame = page.frameLocator('#three-ds-challenge');", state: "fault" },
-      { num: 6, code: "    await frame.locator('button:has-text(\"Approve\")').click();", state: "fault" },
-      { num: 7, code: "  }", state: "fault" },
-      { num: 8, code: "  if (session.simulateNetworkDrop) {", state: "covered" },
-      { num: 9, code: "    await page.getByRole('button', { name: 'Retry Payment' }).click();", state: "fault" },
-      { num: 10, code: "  }", state: "covered" },
-      { num: 11, code: "  await page.waitForURL('**/workspace/onboarding');", state: "covered" },
-      { num: 12, code: "  return page.locator('[data-testid=\"receipt-badge\"]').textContent();", state: "covered" },
-      { num: 13, code: "}", state: "covered" },
-    ],
-    synthesizedLines: [
-      "test('completes 3DS iframe challenge and recovers from network drop', async ({ page }) => {",
-      "  await page.route('**/api/charge', route => route.fulfill({",
-      "    status: 200, body: JSON.stringify({ requires3DS: true })",
-      "  }));",
-      "  await page.goto('/checkout?plan=enterprise');",
-      "  const challenge = page.frameLocator('#three-ds-challenge');",
-      "  await challenge.getByRole('button', { name: 'Approve' }).click();",
-      "",
-      "  await expect(page.getByText('Connection restored')).toBeVisible();",
-      "  await page.getByRole('button', { name: 'Retry Payment' }).click();",
-      "  await expect(page).toHaveURL(/.*\\/workspace\\/onboarding/);",
-      "});",
-    ],
-    cfgNodes: [
-      { id: "S1", label: "Mount /checkout", before: "verified", after: "verified" },
-      { id: "S2", label: "3DS iframe approval", before: "fault", after: "verified" },
-      { id: "S3", label: "Offline retry action", before: "fault", after: "verified" },
-      { id: "S4", label: "Onboarding redirect", before: "verified", after: "verified" },
-      { id: "S5", label: "V8 coverage merge", before: "verified", after: "verified" },
-    ],
+  {
+    id: "report",
+    label: "Quality Report & Queue",
+    workspaceTab: "system",
+    icon: BarChart3,
+    caption: "Executive PDF export & background job queue",
+    metricLabel: "Quality score",
+    metricBefore: "Grade A",
+    metricAfter: "94 / 100",
   },
-};
+];
 
 export default function IDEPreview() {
-  const [activeTierKey, setActiveTierKey] = useState("unit");
-  const [isHealing, setIsHealing] = useState(false);
-  const [isHealed, setIsHealed] = useState(false);
-  const [streamedLineCount, setStreamedLineCount] = useState(5);
-  const [displayCov, setDisplayCov] = useState(SANDBOX_TIERS.unit.initialCov);
-  const [copied, setCopied] = useState(false);
-  const timerRef = useRef(null);
+  const [activeId, setActiveId] = useState("editor");
+  const [healed, setHealed] = useState(true);
+  const [autoPlay, setAutoPlay] = useState(true);
+  const stageRef = useRef(null);
 
-  const tier = SANDBOX_TIERS[activeTierKey];
+  // Smooth 3D mouse-tracking tilt springs
+  const mouseX = useMotionValue(0);
+  const mouseY = useMotionValue(0);
+  const smoothX = useSpring(mouseX, { stiffness: 130, damping: 22 });
+  const smoothY = useSpring(mouseY, { stiffness: 130, damping: 22 });
+  const rotateY = useTransform(smoothX, [-0.5, 0.5], [-6, 6]);
+  const rotateX = useTransform(smoothY, [-0.5, 0.5], [4.5, -4.5]);
 
   useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, []);
+    if (!autoPlay) return undefined;
+    const timer = setInterval(() => {
+      setActiveId((prev) => {
+        const idx = STUDIO_SCREENS.findIndex((s) => s.id === prev);
+        return STUDIO_SCREENS[(idx + 1) % STUDIO_SCREENS.length].id;
+      });
+    }, 5200);
+    return () => clearInterval(timer);
+  }, [autoPlay]);
 
-  const handleSelectTier = (tierId) => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    setActiveTierKey(tierId);
-    setIsHealing(false);
-    setIsHealed(false);
-    setStreamedLineCount(5);
-    setDisplayCov(SANDBOX_TIERS[tierId].initialCov);
+  const handleMouseMove = (e) => {
+    const el = stageRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const nx = (e.clientX - rect.left) / rect.width - 0.5;
+    const ny = (e.clientY - rect.top) / rect.height - 0.5;
+    mouseX.set(nx);
+    mouseY.set(ny);
   };
 
-  const handleRunAutoHeal = () => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    setIsHealing(true);
-    setIsHealed(false);
-    setStreamedLineCount(1);
-
-    const totalLines = tier.synthesizedLines.length;
-    const startCov = tier.initialCov;
-    const endCov = tier.healedCov;
-    let step = 0;
-
-    timerRef.current = setInterval(() => {
-      step += 1;
-      const progress = Math.min(1, step / totalLines);
-      setStreamedLineCount(Math.min(totalLines, step + 1));
-      const currentCov = startCov + (endCov - startCov) * progress;
-      setDisplayCov(Number(currentCov.toFixed(1)));
-
-      if (step >= totalLines) {
-        clearInterval(timerRef.current);
-        setIsHealing(false);
-        setIsHealed(true);
-        setDisplayCov(endCov);
-      }
-    }, 80);
+  const handleMouseLeave = () => {
+    mouseX.set(0);
+    mouseY.set(0);
   };
 
-  const handleReset = () => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    setIsHealing(false);
-    setIsHealed(false);
-    setStreamedLineCount(5);
-    setDisplayCov(tier.initialCov);
-  };
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(tier.synthesizedLines.join("\n"));
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+  const activeScreen =
+    STUDIO_SCREENS.find((s) => s.id === activeId) || STUDIO_SCREENS[0];
 
   return (
     <section
       id="ide-preview"
-      className="relative py-24 md:py-32 border-b border-[var(--lp-line)]"
+      className="relative py-24 md:py-32 border-b border-[var(--lp-line)] overflow-hidden bg-[#050608]"
     >
+      {/* Dark Atmospheric Graphic Layers */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2 w-[960px] h-[440px] rounded-full blur-[150px] opacity-20"
+        style={{
+          background:
+            "radial-gradient(ellipse at center, rgba(56, 189, 248, 0.45), rgba(99, 102, 241, 0.18) 45%, transparent 72%)",
+        }}
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-72 lp-floor-grid opacity-55"
+      />
+
       <div className="relative max-w-[1280px] mx-auto px-4 sm:px-6">
+        {/* Concise Section Header */}
         <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 mb-10">
-          <div className="space-y-2">
+          <div className="space-y-2 max-w-xl">
             <h2 className="lp-display text-3xl sm:text-4xl font-bold text-[var(--lp-ink)] tracking-tight">
-              Interactive branch synthesis sandbox
+              Inside CovAI Studio
             </h2>
-            <p className="text-sm sm:text-base text-[var(--lp-ink-secondary)] max-w-2xl">
-              Select a testing layer below and run the synthesizer to watch
-              untested branches resolve into passing specifications.
+            <p className="text-sm sm:text-base text-[var(--lp-ink-secondary)]">
+              Explore the post-login workspace: coverage gutters, test matrices,
+              API flow traces, and quality reports.
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            {isHealed && (
-              <button
-                type="button"
-                onClick={handleReset}
-                className="px-3.5 py-2 rounded-lg lp-btn-secondary text-xs lp-mono flex items-center gap-1.5 cursor-pointer"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Reset state</span>
-              </button>
-            )}
-
             <button
               type="button"
-              onClick={handleRunAutoHeal}
-              disabled={isHealing}
-              className="lp-btn-primary px-5 py-2.5 rounded-lg text-xs sm:text-sm cursor-pointer disabled:opacity-50"
+              onClick={() => setAutoPlay((v) => !v)}
+              className="px-3.5 py-2 rounded-lg lp-btn-secondary text-xs lp-mono inline-flex items-center gap-1.5 cursor-pointer"
             >
-              {isHealing
-                ? "Writing test assertions..."
-                : isHealed
-                  ? "Re-run branch synthesis"
-                  : "Generate missing tests"}
+              {autoPlay ? (
+                <>
+                  <Pause className="w-3.5 h-3.5 text-[var(--lp-signal)]" />
+                  <span>Auto-tour on</span>
+                </>
+              ) : (
+                <>
+                  <Play className="w-3.5 h-3.5" />
+                  <span>Auto-tour paused</span>
+                </>
+              )}
             </button>
+
+            {activeId === "editor" && (
+              <button
+                type="button"
+                onClick={() => {
+                  setAutoPlay(false);
+                  setHealed((v) => !v);
+                }}
+                className="lp-btn-primary px-4 py-2 rounded-lg text-xs inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                {healed ? (
+                  <>
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Show fault lines</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Verify branches</span>
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Tier Selector Bar */}
+        {/* 3D Interactive Workspace Stage */}
         <div
-          role="tablist"
-          aria-label="Testing layer tabs"
-          className="inline-flex flex-wrap items-center gap-1 p-1 rounded-lg bg-[var(--lp-pill-bg)] border border-[var(--lp-line)] mb-4"
+          ref={stageRef}
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+          className="lp-stage-perspective relative py-4"
         >
-          {Object.values(SANDBOX_TIERS).map((item) => {
-            const active = activeTierKey === item.id;
+          <motion.div
+            style={{ rotateX, rotateY }}
+            className="lp-preserve-3d relative mx-auto max-w-[1140px]"
+          >
+            {/* Floating 3D Parallax Telemetry Card (Top-Right Foreground) */}
+            <div className="hidden xl:flex lp-z-float-lg absolute -top-5 -right-5 z-30 items-center gap-3 px-4 py-2.5 rounded-lg bg-[#0d0e13]/95 border border-white/15 shadow-[0_20px_50px_rgba(0,0,0,0.85)] backdrop-blur-md">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-70" />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-sky-400" />
+              </span>
+              <div className="lp-mono">
+                <div className="text-[10px] text-zinc-400">
+                  {activeScreen.metricLabel}
+                </div>
+                <div className="text-xs font-bold text-zinc-100">
+                  {activeId === "editor" && !healed
+                    ? activeScreen.metricBefore
+                    : activeScreen.metricAfter}
+                </div>
+              </div>
+            </div>
+
+            {/* Floating 3D Parallax Card (Bottom-Left Foreground) */}
+            <div className="hidden xl:flex lp-z-float-md absolute -bottom-5 -left-5 z-30 items-center gap-2.5 px-3.5 py-2 rounded-lg bg-[#0d0e13]/95 border border-white/15 shadow-[0_20px_50px_rgba(0,0,0,0.85)] backdrop-blur-md text-xs lp-mono text-zinc-200">
+              <ShieldCheck className="w-4 h-4 text-sky-400 shrink-0" />
+              <span>Isolated Docker Runner · 0 flaky</span>
+            </div>
+
+            {/* Main Studio Window Frame */}
+            <div className="relative rounded-xl lp-beam-frame bg-[#090a0d] border border-white/[0.12] shadow-[0_36px_90px_-20px_rgba(0,0,0,0.95)] overflow-hidden">
+              {/* Subtle animated holographic scan sweep */}
+              <div
+                aria-hidden="true"
+                className="lp-scan-sweep pointer-events-none absolute inset-x-0 top-0 h-20 z-20"
+                style={{
+                  background:
+                    "linear-gradient(to bottom, transparent, rgba(56, 189, 248, 0.06), transparent)",
+                }}
+              />
+
+              {/* Authentic Post-Login Global Studio Header */}
+              <div className="px-4 h-11 border-b border-white/[0.08] bg-[#0e0f13] flex items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <CovaiLogo size={20} />
+                  <span className="font-semibold text-zinc-100 hidden sm:inline">
+                    CovAI Studio
+                  </span>
+                  <span className="text-zinc-600 hidden sm:inline">/</span>
+                  <span className="lp-mono text-[11px] text-zinc-400 truncate">
+                    Projects / payment-kernel
+                  </span>
+                  <span className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white/[0.05] border border-white/[0.08] text-[10px] lp-mono text-zinc-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                    Engine Ready
+                  </span>
+                </div>
+
+                {/* Top Center Workspace Switcher */}
+                <div className="hidden md:flex items-center gap-1 p-0.5 rounded-md bg-[#090a0d] border border-white/[0.08]">
+                  {[
+                    { id: "unit", label: "Unit Test", icon: FlaskConical },
+                    {
+                      id: "integration",
+                      label: "Integration Test",
+                      icon: Network,
+                    },
+                    { id: "system", label: "System Test", icon: Layers },
+                  ].map((tab) => {
+                    const TabIcon = tab.icon;
+                    const active = activeScreen.workspaceTab === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => {
+                          setAutoPlay(false);
+                          setActiveId(
+                            tab.id === "unit"
+                              ? "unit"
+                              : tab.id === "integration"
+                                ? "integration"
+                                : "report",
+                          );
+                        }}
+                        className={`px-2.5 py-1 rounded text-[11px] inline-flex items-center gap-1.5 transition-colors cursor-pointer ${
+                          active
+                            ? "bg-white/[0.1] text-zinc-100 font-medium"
+                            : "text-zinc-400 hover:text-zinc-200"
+                        }`}
+                      >
+                        <TabIcon className="w-3 h-3" />
+                        <span>{tab.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-white/[0.08] bg-white/[0.03] text-[11px] text-zinc-300">
+                    <MessageSquare className="w-3 h-3 text-sky-400" />
+                    <span>AI Assistant</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Studio Body: Activity Rail + Explorer + Active Viewport */}
+              <div className="flex min-h-[360px]">
+                {/* Left Activity Rail */}
+                <div className="hidden sm:flex flex-col items-center py-3 gap-3 w-11 shrink-0 border-r border-white/[0.07] bg-[#0b0c10]">
+                  {STUDIO_SCREENS.map((item) => {
+                    const RailIcon = item.icon;
+                    const active = activeId === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          setAutoPlay(false);
+                          setActiveId(item.id);
+                        }}
+                        title={item.label}
+                        aria-label={item.label}
+                        className={`w-8 h-8 rounded-md flex items-center justify-center transition-colors cursor-pointer ${
+                          active
+                            ? "bg-white/[0.1] text-sky-400 border border-white/[0.14]"
+                            : "text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.04]"
+                        }`}
+                      >
+                        <RailIcon className="w-4 h-4" />
+                      </button>
+                    );
+                  })}
+                  <div className="mt-auto">
+                    <GitBranch className="w-3.5 h-3.5 text-zinc-600" />
+                  </div>
+                </div>
+
+                {/* Explorer Sidebar */}
+                <EditorExplorerSidebar activeScreen={activeId} />
+
+                {/* Main Animated Screen Canvas */}
+                <div className="flex-1 min-w-0 relative overflow-hidden">
+                  <AnimatePresence mode="wait">
+                    <motion.div
+                      key={`${activeId}-${healed}`}
+                      initial={{ opacity: 0, y: 8, scale: 0.99 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -6, scale: 0.99 }}
+                      transition={{ duration: 0.22, ease: "easeOut" }}
+                      className="h-full"
+                    >
+                      {activeId === "editor" && (
+                        <ScreenEditorView healed={healed} />
+                      )}
+                      {activeId === "unit" && <ScreenUnitMatrixView />}
+                      {activeId === "integration" && (
+                        <ScreenIntegrationFlowView />
+                      )}
+                      {activeId === "report" && <ScreenReportQueueView />}
+                    </motion.div>
+                  </AnimatePresence>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+
+        {/* 3D Perspective Screen Switcher Cards */}
+        <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+          {STUDIO_SCREENS.map((screen) => {
+            const Icon = screen.icon;
+            const active = activeId === screen.id;
             return (
               <button
-                key={item.id}
+                key={screen.id}
                 type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => handleSelectTier(item.id)}
-                className={`px-4 py-2 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                onClick={() => {
+                  setAutoPlay(false);
+                  setActiveId(screen.id);
+                }}
+                className={`group text-left p-4 rounded-xl border transition-all duration-200 cursor-pointer ${
                   active
-                    ? "bg-[var(--lp-pill-active)] text-[var(--lp-ink)] border border-[var(--lp-line-strong)] shadow-xs"
-                    : "text-[var(--lp-ink-secondary)] hover:text-[var(--lp-ink)] border border-transparent"
+                    ? "bg-[#12141b] border-sky-400/45 shadow-[0_12px_32px_-12px_rgba(56,189,248,0.28)] -translate-y-0.5"
+                    : "bg-[#0b0c10] border-[var(--lp-line)] hover:border-[var(--lp-line-strong)] hover:-translate-y-0.5"
                 }`}
               >
-                {item.label}
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div
+                    className={`w-8 h-8 rounded-lg border flex items-center justify-center ${
+                      active
+                        ? "bg-sky-500/10 border-sky-400/30 text-sky-400"
+                        : "bg-white/[0.03] border-white/[0.08] text-zinc-400 group-hover:text-zinc-200"
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" />
+                  </div>
+                  <span className="text-[11px] lp-mono text-zinc-400">
+                    {screen.metricAfter}
+                  </span>
+                </div>
+                <div className="text-sm font-semibold text-zinc-100">
+                  {screen.label}
+                </div>
+                <div className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                  {screen.caption}
+                </div>
               </button>
             );
           })}
         </div>
 
-        {/* Architectural IDE Frame */}
-        <div className="rounded-xl lp-machined overflow-hidden">
-          <div className="px-4 py-3 bg-[var(--lp-surface)] border-b border-[var(--lp-line)] flex flex-wrap items-center justify-between gap-3 text-xs lp-mono">
-            <div className="flex items-center gap-3">
-              <span className="text-[var(--lp-ink)] font-medium">{tier.fileName}</span>
-              <span className="text-[var(--lp-ink-muted)]">/</span>
-              <span className="text-[var(--lp-ink-muted)]">{tier.complexity}</span>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <span className="text-[var(--lp-ink-secondary)]">Branch coverage</span>
-              <span
-                className={`text-sm font-bold ${
-                  isHealed ? "text-[var(--lp-signal)]" : "text-[var(--lp-fault)]"
-                }`}
-              >
-                {displayCov.toFixed(1)}%
-              </span>
-              <div className="hidden sm:block w-28 h-1.5 rounded-full bg-[var(--lp-line)] overflow-hidden">
-                <div
-                  className={`h-full transition-all duration-150 ${
-                    isHealed ? "bg-[var(--lp-signal)]" : "bg-[var(--lp-fault)]"
-                  }`}
-                  style={{ width: `${displayCov}%` }}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-12 min-h-[430px]">
-            {/* Left Pane: Source AST */}
-            <div className="lg:col-span-6 bg-[var(--lp-inset)] p-4 border-b lg:border-b-0 lg:border-r border-[var(--lp-line)] flex flex-col justify-between">
-              <div className="lp-mono text-xs leading-[1.75] overflow-x-auto">
-                {tier.sourceLines.map((line) => {
-                  const isFault = !isHealed && line.state === "fault";
-
-                  return (
-                    <div
-                      key={line.num}
-                      className={`flex items-center px-2.5 py-0.5 transition-colors duration-200 ${
-                        isFault
-                          ? "bg-[var(--lp-fault-bg)] border-l-2 border-[var(--lp-fault)]"
-                          : isHealed && line.state === "fault"
-                            ? "bg-[var(--lp-signal-bg)] border-l-2 border-[var(--lp-signal)]"
-                            : "border-l-2 border-transparent"
-                      }`}
-                    >
-                      <div className="w-7 text-right pr-3 text-[var(--lp-ink-muted)] select-none text-[11px] shrink-0">
-                        {line.num}
-                      </div>
-                      <pre
-                        className={`m-0 whitespace-pre font-mono ${
-                          isFault ? "text-[var(--lp-fault-ink)]" : "text-[var(--lp-ink)]"
-                        }`}
-                      >
-                        {line.code}
-                      </pre>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Control Flow Nodes Strip */}
-              <div className="mt-4 pt-3 border-t border-[var(--lp-line)]">
-                <div className="text-[11px] lp-mono text-[var(--lp-ink-muted)] mb-2 flex items-center justify-between">
-                  <span>Control flow predicates</span>
-                  <span className="text-[var(--lp-ink-secondary)]">
-                    {isHealed ? "5 of 5 verified" : "2 of 5 verified"}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
-                  {tier.cfgNodes.map((node) => {
-                    const resolved = isHealed || node.before === "verified";
-                    return (
-                      <div
-                        key={node.id}
-                        className={`px-2.5 py-1.5 rounded border text-[11px] lp-mono truncate transition-colors ${
-                          resolved
-                            ? "bg-[var(--lp-surface)] border-[var(--lp-line-strong)] text-[var(--lp-ink)]"
-                            : "bg-[var(--lp-fault-bg)] border-[var(--lp-fault-border)] text-[var(--lp-fault)]"
-                        }`}
-                      >
-                        <span className="text-[var(--lp-ink-muted)] mr-1.5">{node.id}</span>
-                        <span>{node.label}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            {/* Right Pane: Synthesized Spec Stream */}
-            <div className="lg:col-span-6 bg-[var(--lp-surface)] p-4 flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between pb-3 mb-3 border-b border-[var(--lp-line)] text-xs lp-mono">
-                  <div className="flex items-center gap-2.5">
-                    <span
-                      className={`w-2 h-2 rounded-full ${
-                        isHealed ? "bg-[var(--lp-signal)]" : "bg-[var(--lp-ink-muted)]"
-                      }`}
-                    />
-                    <span className="text-[var(--lp-ink)]">{tier.testFileName}</span>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={handleCopy}
-                    className="px-2.5 py-1 rounded lp-btn-secondary text-xs lp-mono flex items-center gap-1.5 cursor-pointer"
-                  >
-                    {copied ? (
-                      <>
-                        <Check className="w-3.5 h-3.5 text-[var(--lp-signal)]" />
-                        <span>Copied</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>Copy test file</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-
-                <div className="p-3.5 rounded-lg bg-[var(--lp-inset)] border border-[var(--lp-line)] lp-mono text-xs leading-[1.7] min-h-[270px] overflow-x-auto">
-                  {tier.synthesizedLines
-                    .slice(
-                      0,
-                      isHealed ? tier.synthesizedLines.length : streamedLineCount
-                    )
-                    .map((line, idx) => (
-                      <div key={idx} className="flex items-center">
-                        <span className="w-6 text-right pr-3 text-[var(--lp-ink-muted)] select-none text-[10px]">
-                          {idx + 1}
-                        </span>
-                        <span
-                          className={
-                            line.includes("expect(")
-                              ? "text-[var(--lp-signal)] font-medium"
-                              : line.includes("it(") || line.includes("test(")
-                                ? "text-[var(--lp-ink)] font-semibold"
-                                : "text-[var(--lp-ink-secondary)]"
-                          }
-                        >
-                          {line || " "}
-                        </span>
-                      </div>
-                    ))}
-                </div>
-              </div>
-
-              <div className="mt-4 pt-3 border-t border-[var(--lp-line)] flex flex-wrap items-center justify-between gap-3 text-xs lp-mono text-[var(--lp-ink-secondary)]">
-                <span>Runner: {tier.runner}</span>
-                <Link
-                  to="/register"
-                  className="text-[var(--lp-ink)] hover:text-[var(--lp-signal)] underline underline-offset-4 transition-colors"
-                >
-                  Open full editor workspace
-                </Link>
-              </div>
-            </div>
-          </div>
+        {/* Bottom Workspace CTA */}
+        <div className="mt-8 flex justify-center">
+          <Link
+            to="/register"
+            className="inline-flex items-center gap-1.5 text-xs lp-mono text-zinc-400 hover:text-sky-400 transition-colors"
+          >
+            <span>Open interactive workspace on your repository</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
+          </Link>
         </div>
       </div>
     </section>
