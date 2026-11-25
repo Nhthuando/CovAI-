@@ -1,5 +1,6 @@
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 import { detectSupertest } from "./supertestDetection.service.js";
+import { applyIntegrationFileCoverage } from "./integrationFileCoverage.service.js";
 import { scenarioArtifactVersion } from "./scenarioManager.service.js";
 import fs from "fs";
 import path from "path";
@@ -1276,7 +1277,7 @@ const executeBuildIntegrationWorkspace = async (
   const [
     testRuns,
     coverageSummary,
-    coverageFiles,
+    sharedCoverageFiles,
     aiTests,
     snapshot,
     jobs,
@@ -1334,6 +1335,7 @@ const executeBuildIntegrationWorkspace = async (
               .catch(() => null)
           : Promise.resolve(null),
     ]);
+  const coverageFiles = applyIntegrationFileCoverage(sharedCoverageFiles, jobs);
   const dbTime = Date.now() - startDb;
   const latestRun = (testRuns && testRuns[0]) || null;
   const resolvedSnapshotRoot = snapshot?.rootDir

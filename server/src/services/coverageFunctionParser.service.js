@@ -5,6 +5,7 @@ import path from "path";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { canonicalizeFilePath } from "../utils/pathSanitizer.js";
+import { isBusinessLogicSourceFile } from "../utils/businessLogicFileDetector.js";
 
 const assertStringField = (value, fieldName) => {
     if (!value || typeof value !== "string" || value.trim().length === 0) {
@@ -201,6 +202,7 @@ export const parseCoverageFunctionsForSnapshot = async ({
     coverageReport,
     userId,
     preserveOtherFiles = false,
+    preserveUnitRows = false,
 }) => {
     assertStringField(projectId, "projectId");
     assertStringField(snapshotId, "snapshotId");
@@ -245,7 +247,20 @@ export const parseCoverageFunctionsForSnapshot = async ({
     const uniqueFunctionRows = Array.from(dedupedFuncsMap.values());
 
     const persist = async tx => {
-        if (preserveOtherFiles && uniqueFunctionRows.length > 0) {
+        let rowsToWrite = uniqueFunctionRows;
+        if (preserveUnitRows) {
+            const existing = await tx.coverageFunction.findMany({
+                where: { snapshotId },
+                select: { filePath: true },
+                distinct: ["filePath"],
+            });
+            const ownedByUnit = new Set(existing.map((row) => row.filePath).filter((filePath) => isBusinessLogicSourceFile(filePath)));
+            rowsToWrite = uniqueFunctionRows.filter((row) => !ownedByUnit.has(row.filePath));
+            const touchedFiles = [...new Set(rowsToWrite.map((row) => row.filePath).filter(Boolean))];
+            if (touchedFiles.length > 0) {
+                await tx.coverageFunction.deleteMany({ where: { snapshotId, filePath: { in: touchedFiles } } });
+            }
+        } else if (preserveOtherFiles && uniqueFunctionRows.length > 0) {
             const touchedFiles = [...new Set(uniqueFunctionRows.map(r => r.filePath).filter(Boolean))];
             if (touchedFiles.length > 0) {
                 await tx.coverageFunction.deleteMany({
@@ -258,9 +273,9 @@ export const parseCoverageFunctionsForSnapshot = async ({
             });
         }
 
-        if (uniqueFunctionRows.length > 0) {
+        if (rowsToWrite.length > 0) {
             await tx.coverageFunction.createMany({
-                data: uniqueFunctionRows,
+                data: rowsToWrite,
                 skipDuplicates: true,
             });
         }

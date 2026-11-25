@@ -1781,7 +1781,7 @@ export const getCoverageSummary = async (req, res) => {
                 functions: { total: 100, covered: Math.round(curCov.functions || 0), pct: curCov.functions || 0 },
                 statements: { total: 100, covered: Math.round(curCov.statements || 0), pct: curCov.statements || 0 },
               },
-              fileCoverages: dbFilesForPeak,
+              fileCoverages: dbFilesForPeak.filter((f) => isBusinessLogicSourceFile(f.filePath)),
               testStats: latestTestRun
                 ? {
                     total: latestTestRun.totalTests || 0,

@@ -425,7 +425,8 @@ export default function VersionControlWorkspace({ projectId, onSync }) {
     setGitSubTab("diff");
     try {
       const res = await gitService.getDiff(projectId, filePath, staged);
-      setDiffContent(res?.data || "(No textual diff or file is binary)");
+      const diff = res?.data?.diff;
+      setDiffContent(typeof diff === "string" && diff.trim() ? diff : "(No textual diff or file is binary)");
     } catch (err) {
       setDiffContent(`Error loading diff: ${err.message}`);
     } finally {
@@ -519,6 +520,7 @@ export default function VersionControlWorkspace({ projectId, onSync }) {
     );
   });
   const currentSnapshot = snapshots.find((s) => s.isCurrent) || snapshots[0];
+  const canConnectGit = Boolean(gitStatus?.isGitHubProject || gitStatus?.repoUrl);
 
   return (
     <div className="flex flex-col h-full w-full overflow-hidden bg-[var(--color-bg)] select-none">
@@ -662,34 +664,30 @@ export default function VersionControlWorkspace({ projectId, onSync }) {
                   <FolderGit2 size={24} />
                 </div>
                 <h3 className="text-base font-semibold text-[var(--color-text)]">
-                  {gitStatus?.isGitHubProject || gitStatus?.repoUrl
+                  {canConnectGit
                     ? "Reconnecting Git Repository..."
-                    : "Git Repository Not Initialized"}
+                    : "Git Is Not Available"}
                 </h3>
                 <p className="text-xs text-[var(--color-text-secondary)] mt-1.5 max-w-md leading-relaxed">
-                  {gitStatus?.isGitHubProject || gitStatus?.repoUrl
+                  {canConnectGit
                     ? `This project is linked to GitHub repository (${gitStatus?.repoUrl || "remote"}). Reconnecting and syncing local Git state...`
-                    : "This project was imported from a file upload without a local Git repository. You can initialize a local Git repo now to track branches, commit history, and connect to GitHub."}
+                    : gitStatus?.message || "Git operations are only available for projects imported from GitHub. This project was uploaded from an archive. Use Snapshots & Checkpoints to save versions."}
                 </p>
-                <button
-                  type="button"
-                  disabled={gitActionLoading || !projectAccess.can("files.write")}
-                  onClick={handleInitRepo}
-                  className="mt-5 px-4 py-2 rounded-[var(--radius-md)] bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-semibold cursor-pointer border-0 shadow-sm transition-colors flex items-center gap-2"
-                >
-                  {gitActionLoading ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : (
-                    <Plus size={14} />
-                  )}
-                  <span>
-                    {gitActionLoading
-                      ? "Connecting Git..."
-                      : gitStatus?.isGitHubProject || gitStatus?.repoUrl
-                      ? "Connect & Sync Git"
-                      : "Initialize Git Repository"}
-                  </span>
-                </button>
+                {canConnectGit && (
+                  <button
+                    type="button"
+                    disabled={gitActionLoading || !projectAccess.can("files.write")}
+                    onClick={handleInitRepo}
+                    className="mt-5 px-4 py-2 rounded-[var(--radius-md)] bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-semibold cursor-pointer border-0 shadow-sm transition-colors flex items-center gap-2"
+                  >
+                    {gitActionLoading ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <Plus size={14} />
+                    )}
+                    <span>{gitActionLoading ? "Connecting Git..." : "Connect & Sync Git"}</span>
+                  </button>
+                )}
               </div>
             ) : (
               <div className="flex flex-col gap-5">
@@ -1215,17 +1213,17 @@ export default function VersionControlWorkspace({ projectId, onSync }) {
                             >
                               <div className="flex items-center justify-between gap-2 mb-1">
                                 <span className="font-mono text-[11px] font-bold text-[var(--color-primary)]">
-                                  {c.hash.slice(0, 7)}
+                                  {c.shortHash || c.hash?.slice(0, 7)}
                                 </span>
                                 <span className="text-[11px] text-[var(--color-text-muted)] font-mono">
-                                  {new Date(c.date).toLocaleDateString()} {new Date(c.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                  {c.date}
                                 </span>
                               </div>
                               <p className="font-medium text-[var(--color-text)] text-xs leading-snug">
                                 {c.message}
                               </p>
                               <div className="flex items-center gap-2 mt-2 text-[11px] text-[var(--color-text-muted)]">
-                                <span>{c.author_name}</span>
+                                <span>{c.author}</span>
                                 {c.refs && (
                                   <span className="px-1.5 py-0.2 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] font-mono text-[10px]">
                                     {c.refs}

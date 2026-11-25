@@ -1378,13 +1378,20 @@ export const processSupertestCoverageJob = async (jobId) => {
       }),
     );
     const coverageReport = JSON.parse(fs.readFileSync(finalPath, "utf8"));
-    await withOperationPublishGuard(() =>
+    // A unit run owns business-logic rows in the shared coverage tables.
+    const unitRun = await prisma.testRun.findFirst({
+      where: { snapshotId, type: { in: ["JEST", "VITEST"] } },
+      select: { id: true },
+    });
+    const preserveUnitRows = Boolean(unitRun);
+    const integrationFiles = await withOperationPublishGuard(() =>
       parseCoverageFilesForSnapshot({
         projectId,
         snapshotId,
         coverageReport,
         userId,
         testType: "INTEGRATION",
+        preserveUnitRows,
       }),
     );
     await withOperationPublishGuard(() =>
@@ -1393,6 +1400,7 @@ export const processSupertestCoverageJob = async (jobId) => {
         snapshotId,
         coverageReport,
         userId,
+        preserveUnitRows,
       }),
     );
 
@@ -1453,6 +1461,10 @@ export const processSupertestCoverageJob = async (jobId) => {
     }
 
     await markJobSuccess(jobId, {
+      fileCoverages: (integrationFiles?.files || []).map(
+        ({ filePath, linesPct, branchesPct, funcsPct, stmtsPct }) =>
+          ({ filePath, linesPct, branchesPct, funcsPct, stmtsPct }),
+      ),
       coverage: {
         lines: summaryResult.total.lines.pct,
         branches: summaryResult.total.branches.pct,

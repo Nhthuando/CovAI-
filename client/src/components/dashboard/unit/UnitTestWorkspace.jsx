@@ -1465,7 +1465,7 @@ export default function UnitTestWorkspace({
     : totalFilesCount;
   const displayFunctionsCount = isScopedDisplay
     ? Number(lastScopedAnalysis.total?.functions?.total ?? 0)
-    : functionsList.length;
+    : fileEntries.reduce((sum, entry) => sum + (entry.functions || []).length, 0);
   const displaySuitesCount = isScopedDisplay
     ? Number(
         lastScopedAnalysis.suitesCount ??

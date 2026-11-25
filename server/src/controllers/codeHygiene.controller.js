@@ -44,11 +44,7 @@ export const getProjectStats = async (req, res) => {
         const project = await prisma.project.findFirst({ where: { id: req.params.projectId, ...membershipWhere(req.user.id) } });
         if (!project) return res.status(404).json({ error: 'Project not found' });
 
-        const summaries = await prisma.codeHygieneSummary.findMany({
-            where: { snapshot: { projectId: project.id } },
-            orderBy: { createdAt: 'desc' },
-            take: 10
-        });
+        const summaries = await service.listProjectCodeHygieneSummaries(project.id);
         return res.json(summaries);
     } catch (error) {
         return res.status(500).json({ error: error.message });

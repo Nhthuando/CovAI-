@@ -1,6 +1,7 @@
 import fs from 'fs';
 import { markJobRunning, markJobSuccess, markJobFailed, updateJobProgress, getJobById } from './job.service.js';
 import { runCodeHygieneAnalysis } from './codeHygiene.orchestrator.js';
+import { buildCodeHygieneResult } from './codeHygiene.service.js';
 
 export const processCodeHygieneJob = async (jobId) => {
     try {
@@ -15,7 +16,7 @@ export const processCodeHygieneJob = async (jobId) => {
         await updateJobProgress(jobId, 20);
         const report = await runCodeHygieneAnalysis(job.snapshotId, rootDir);
         await updateJobProgress(jobId, 100);
-        await markJobSuccess(jobId, { snapshotId: job.snapshotId, summary: report.summary });
+        await markJobSuccess(jobId, buildCodeHygieneResult(job.snapshotId, report.summary, report.issues));
         console.log(`[Job ${jobId}] Code Hygiene job completed.`);
     } catch (error) {
         console.error(`[Job ${jobId}] Code Hygiene job failed:`, error);
