@@ -231,4 +231,45 @@ describe("GitHub OAuth Connect & Callback Routes", () => {
       expect(prismaMock.user.create).not.toHaveBeenCalled();
     });
   });
+
+  describe("GET /api/auth/github/repositories", () => {
+    it("requests sort=pushed, disables caching, and orders repos by pushed_at desc", async () => {
+      prismaMock.user.findUnique.mockResolvedValueOnce({
+        githubAccessTokenEnc: "enc:gho_repos_token",
+      });
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [
+          {
+            id: 1,
+            name: "older-repo",
+            language: "JavaScript",
+            pushed_at: "2026-11-10T10:00:00Z",
+            updated_at: "2026-11-24T10:00:00Z",
+          },
+          {
+            id: 2,
+            name: "just-pushed-repo",
+            language: "TypeScript",
+            pushed_at: "2026-11-25T12:25:00Z",
+            updated_at: "2026-11-25T12:25:00Z",
+          },
+        ],
+      });
+
+      const res = await request(app).get("/api/auth/github/repositories");
+
+      expect(res.status).toBe(200);
+      expect(res.headers["cache-control"]).toMatch(/no-store/i);
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining("sort=pushed&direction=desc"),
+        expect.objectContaining({ cache: "no-store" }),
+      );
+      expect(res.body.map((r) => r.name)).toEqual([
+        "just-pushed-repo",
+        "older-repo",
+      ]);
+    });
+  });
 });

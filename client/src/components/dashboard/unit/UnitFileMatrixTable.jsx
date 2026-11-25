@@ -70,13 +70,20 @@ function getFileRowStatus(entry, caseCov = null) {
   const funcsPct = Number(entry.funcsPct ?? 0);
   const branchesPct = Number(entry.branchesPct ?? 0);
   const branchesTotal = Number(entry.branchesTotal || 0);
-  const funcsTotal = Number(entry.funcsTotal ?? (entry.functions || []).length ?? 0);
+  const fnCov = caseCov?.functionCoverage;
+  const funcsTotal = Number(
+    fnCov?.totalFunctions ?? entry.funcsTotal ?? (entry.functions || []).length ?? 0,
+  );
   const funcsCovered = Number(
-    entry.funcsCovered ??
+    fnCov?.coveredFunctions ??
+      entry.funcsCovered ??
       (entry.functions || []).filter((f) => Number(f.hit || 0) > 0).length ??
       0,
   );
-  const allFuncsCovered = funcsTotal === 0 || funcsCovered >= funcsTotal || funcsPct >= 100;
+  const effectiveFuncsPct =
+    funcsTotal > 0 ? (funcsCovered / funcsTotal) * 100 : funcsPct;
+  const allFuncsCovered =
+    funcsTotal === 0 || funcsCovered >= funcsTotal || effectiveFuncsPct >= 100;
 
   if (hasFailures) return "FAIL";
   if (
@@ -86,7 +93,15 @@ function getFileRowStatus(entry, caseCov = null) {
   ) {
     return "PASS";
   }
-  // If all unit functions are covered cleanly with >= 80% line & branch coverage and passing tests, mark Covered
+  // If all x/x unit functions are covered cleanly without failures, mark Covered
+  if (
+    funcsTotal > 0 &&
+    funcsCovered >= funcsTotal &&
+    (linesPct > 0 || Number(caseCov?.passedCount || 0) > 0)
+  ) {
+    return "PASS";
+  }
+  // For files with 0 extracted functions, require >= 80% line & branch coverage with passing tests
   if (
     allFuncsCovered &&
     linesPct >= 80 &&
@@ -351,7 +366,6 @@ const UnitFileMatrixTable = forwardRef(function UnitFileMatrixTable(
   };
 
   const toggleSelectFile = (filePath) => {
-    setConfirmBulkDelete(false);
     const targetEntry = enrichedEntries.find((e) => e.filePath === filePath);
     const next = toggleParentSelection({
       parentKey: filePath,
@@ -369,7 +383,6 @@ const UnitFileMatrixTable = forwardRef(function UnitFileMatrixTable(
   };
 
   const toggleSelectAllFiles = () => {
-    setConfirmBulkDelete(false);
     if (filteredEntries.length === 0) return;
     const allSelected = filteredEntries.every((e) => selectedFiles.has(e.filePath));
     const next = toggleAllParentsSelection({
@@ -391,7 +404,6 @@ const UnitFileMatrixTable = forwardRef(function UnitFileMatrixTable(
   };
 
   const toggleSelectTest = (testKey, entry = null, legacyId = null) => {
-    setConfirmBulkDelete(false);
     const next = toggleChildSelection({
       childKey: testKey,
       legacyChildKey: legacyId ? String(legacyId) : null,
@@ -1049,7 +1061,9 @@ const UnitFileMatrixTable = forwardRef(function UnitFileMatrixTable(
                                         className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border font-mono text-[10px] cursor-pointer transition-colors ${
                                           fn.failed
                                             ? "bg-rose-500/[0.07] text-rose-400/90 border-rose-500/20 hover:bg-rose-500/15"
-                                            : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"
+                                            : fn.passed
+                                              ? "bg-emerald-500/[0.07] text-emerald-300/90 border-emerald-500/25 hover:bg-emerald-500/15"
+                                              : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"
                                         }`}
                                       >
                                         <span

@@ -415,9 +415,17 @@ export const streamJobStatus = async (req, res) => {
     polling = true;
     try {
       await withProjectGuard({projectId:access.project.id,userId,capability:'project.read'}, async tx => {
-        const job = await tx.job.findUnique({where:{id:jobId},select:{status:true,logs:true,errorMessage:true}});
+        const job = await tx.job.findUnique({
+          where:{id:jobId},
+          select:{
+            status:true,
+            progress:true,
+            logs:{orderBy:{createdAt:'asc'}},
+            errorMessage:true,
+          },
+        });
         if (!job) return close({error:'Job not found'});
-        if (!ended) res.write(`data: ${JSON.stringify({status:job.status,logs:job.logs || [],errorMessage:job.errorMessage})}\n\n`);
+        if (!ended) res.write(`data: ${JSON.stringify({status:job.status,progress:job.progress ?? 0,logs:job.logs || [],errorMessage:job.errorMessage})}\n\n`);
         if (['SUCCESS','FAILED','CANCELED'].includes(job.status)) close();
       });
     } catch (error) { close({type:'ACCESS_REVOKED',code:error.code || 'STREAM_FAILED'}); }

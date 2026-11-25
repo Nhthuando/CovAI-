@@ -517,7 +517,6 @@ const IntegrationRouteMatrixTable = forwardRef(
               if (scKey) children.add(scKey);
             }
           }
-          setConfirmBulkDelete(false);
           setSelectedEndpointKeys(parents);
           setSelectedScenarioKeys(children);
         },
@@ -526,7 +525,6 @@ const IntegrationRouteMatrixTable = forwardRef(
     );
 
     const toggleSelectEndpoint = (epKey) => {
-      setConfirmBulkDelete(false);
       const targetEp = enrichedEndpoints.find(
         (ep) => getEpIdentityKey(ep) === epKey,
       );
@@ -543,7 +541,6 @@ const IntegrationRouteMatrixTable = forwardRef(
     };
 
     const toggleSelectAllFiltered = () => {
-      setConfirmBulkDelete(false);
       const filteredKeys = filteredEndpoints.map(getEpIdentityKey);
       const allSelected =
         filteredKeys.length > 0 &&
@@ -575,7 +572,6 @@ const IntegrationRouteMatrixTable = forwardRef(
     );
 
     const toggleSelectScenario = (scKey, ep = null) => {
-      setConfirmBulkDelete(false);
       const epKey = ep ? getEpIdentityKey(ep) : null;
       const next = toggleChildSelection({
         childKey: scKey,

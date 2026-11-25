@@ -130,6 +130,14 @@ describe('deleteProject service', () => {
     mockPrisma.project.delete.mockRejectedValueOnce(
       Object.assign(new Error('Foreign key constraint violation'), { code: 'P2003' }),
     );
+    mockPrisma.systemMutationRun = { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) };
+    mockPrisma.systemAssertionBinding = { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) };
+    mockPrisma.systemTestFile = { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) };
+    mockPrisma.systemSuiteState = { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) };
+    mockPrisma.systemSuiteVersion = {
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    };
 
     await deleteProject(projectId, userId);
 
@@ -137,6 +145,25 @@ describe('deleteProject service', () => {
       where: { id: projectId },
     });
     expect(mockPrisma.$transaction).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.systemMutationRun.deleteMany).toHaveBeenCalledWith({
+      where: { assessment: { snapshot: { projectId } } },
+    });
+    expect(mockPrisma.systemAssertionBinding.deleteMany).toHaveBeenCalledWith({
+      where: { revision: { snapshot: { projectId } } },
+    });
+    expect(mockPrisma.systemTestFile.deleteMany).toHaveBeenCalledWith({
+      where: { testRun: { snapshot: { projectId } } },
+    });
+    expect(mockPrisma.systemSuiteState.deleteMany).toHaveBeenCalledWith({
+      where: { snapshot: { projectId } },
+    });
+    expect(mockPrisma.systemSuiteVersion.updateMany).toHaveBeenCalledWith({
+      where: { snapshot: { projectId } },
+      data: { parentVersionId: null, restoredFromVersionId: null },
+    });
+    expect(mockPrisma.systemSuiteVersion.deleteMany).toHaveBeenCalledWith({
+      where: { snapshot: { projectId } },
+    });
   });
 
   it('keeps metadata after cleanup fails and allows a subsequent deletion retry', async () => {

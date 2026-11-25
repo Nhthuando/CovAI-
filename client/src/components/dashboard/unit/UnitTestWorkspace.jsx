@@ -1474,7 +1474,7 @@ export default function UnitTestWorkspace({
         filePaths: paths,
         projectId,
         framework: frameworkToSend,
-        validationMode: "full",
+        validationMode: "fast",
         async: true,
       });
       const payload = res?.data || res;

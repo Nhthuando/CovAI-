@@ -499,6 +499,27 @@ export const convertJestMocksAndStaticImportsToEsm = (code, { testFilePath = "te
         .replace(/(?:\.(?:partial|redundant|coverage|vitest|jest|unit))*\.(?:test|spec|steps?)\.[cm]?[jt]sx?$/i, "")
         .toLowerCase();
 
+    const sourceTextForPkgCheck = Array.isArray(sourceCode)
+        ? sourceCode.map((f) => String(f?.content || "")).join("\n")
+        : String(sourceCode || "");
+    const isPackageReferencedInSource = (spec) => {
+        if (!spec || spec.startsWith(".")) return false;
+        const pkg = spec.startsWith("@") ? spec.split("/").slice(0, 2).join("/") : spec.split("/")[0];
+        const escaped = pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const refRe = new RegExp(`(?:from|import|require)\\s*\\(?\\s*['"]${escaped}(?:/[^'"]*)?['"]`);
+        if (refRe.test(sourceTextForPkgCheck)) return true;
+        if (rootDir && targetSourceFile) {
+            try {
+                const absSrc = path.resolve(rootDir, targetSourceFile);
+                if (fs.existsSync(absSrc) && fs.statSync(absSrc).isFile()) {
+                    const diskSrc = fs.readFileSync(absSrc, "utf8");
+                    if (refRe.test(diskSrc)) return true;
+                }
+            } catch (_) {}
+        }
+        return false;
+    };
+
     const isUnresolvableEsmMockSpecifier = (specVal) => {
         if (!specVal || typeof specVal !== "string") return false;
         const normSutNoExt = String(targetSourceFile || "").replace(/\\/g, "/").replace(/^\/+/, "").replace(/\.[cm]?[jt]sx?$/i, "").toLowerCase();
@@ -551,7 +572,7 @@ export const convertJestMocksAndStaticImportsToEsm = (code, { testFilePath = "te
                     return false;
                 }
             });
-            if (!existsInNodeModules) {
+            if (!existsInNodeModules && !isPackageReferencedInSource(specVal)) {
                 return true;
             }
         }

@@ -82,6 +82,7 @@ export async function processUnitTestSuggestJob(jobId) {
   );
 
   try {
+    let lastReportedPct = 10;
     const result = await withJobHeartbeat(jobId, 'UNIT_TEST_SUGGEST', () =>
       suggestUnitTestcases({
         projectId,
@@ -92,6 +93,20 @@ export async function processUnitTestSuggestJob(jobId) {
         userId,
         framework: payload.framework,
         selectedAiModel: payload.selectedAiModel,
+        shouldCancel: () => isJobCanceled(jobId),
+        onProgress: async ({ completedCount, totalCount, currentFile, failed }) => {
+          if (isJobCanceled(jobId) || !totalCount) return;
+          const pct = Math.min(95, 10 + Math.round((completedCount / totalCount) * 85));
+          await addJobLog(
+            jobId,
+            failed ? 'WARN' : 'INFO',
+            `[${completedCount}/${totalCount}] ${failed ? 'Skipped' : 'Generated'} ${currentFile}`
+          ).catch(() => {});
+          if (pct > lastReportedPct) {
+            lastReportedPct = pct;
+            await updateJobProgress(jobId, pct).catch(() => {});
+          }
+        },
       })
     );
 

@@ -1025,12 +1025,14 @@ function LayoutInner() {
 
   const handleDeleteProject = async (projectId) => {
     if (project?.id === projectId && !projectAccess.can("project.delete"))
-      return;
+      return false;
     try {
-      const { deleteProjectApi } =
+      const { deleteProjectApi, invalidateFileContentCache } =
         await import("../../services/project.service");
       await deleteProjectApi(projectId);
+      invalidateFileContentCache(projectId);
       queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: ["projectsPortfolio"] });
       showToast({ type: "success", title: "Project deleted" });
       if (project?.id === projectId) {
         setFileTree([]);

@@ -118,6 +118,23 @@ const clients = new Map();
 
 const VALID_MODELS = GEMINI_MODEL_IDS;
 const exhaustedModels = new Map();
+const overloadedModels = new Map();
+const OVERLOADED_MODEL_COOLDOWN_MS = 60_000;
+
+function markModelOverloaded(modelName, configuration) {
+  if (!modelName) return;
+  const key = `${configuration?.credentialId || 'default'}:${modelName}`;
+  overloadedModels.set(key, Date.now() + OVERLOADED_MODEL_COOLDOWN_MS);
+}
+
+function isModelOverloaded(modelName, configuration) {
+  const key = `${configuration?.credentialId || 'default'}:${modelName}`;
+  const until = overloadedModels.get(key);
+  if (!until) return false;
+  if (until > Date.now()) return true;
+  overloadedModels.delete(key);
+  return false;
+}
 
 const ALLOWED_GENERATION_CONFIG_KEYS = new Set([
   "candidateCount",
@@ -157,7 +174,7 @@ function getModelQuotaError(modelName, configuration) {
  * Normalizes model names, replacing deprecated or quota-exhausted models
  * with the currently active and verified models.
  */
-function resolveModelName(requestedModel, configuration) {
+function resolveModelName(requestedModel, configuration, { strictModel = false } = {}) {
   const preferred = (requestedModel && requestedModel.trim()) || configuration?.model || process.env.GEMINI_MODEL || AI_MODELS[0].id;
   const normalized = normalizeModelId(preferred);
   if (!VALID_MODELS.includes(normalized)) {
@@ -170,6 +187,15 @@ function resolveModelName(requestedModel, configuration) {
   }
   const blocked = getModelQuotaError(normalized, configuration);
   if (blocked) throw blocked;
+  if (!strictModel && isModelOverloaded(normalized, configuration)) {
+    const healthy = AI_MODELS.find(
+      ({ id }) => id !== normalized && !getModelQuotaError(id, configuration) && !isModelOverloaded(id, configuration),
+    );
+    if (healthy) {
+      console.warn(`[Gemini API] Skipping overloaded model ${normalized} during cooldown; using ${healthy.id}`);
+      return healthy.id;
+    }
+  }
   return normalized;
 }
 
@@ -367,7 +393,7 @@ export const generateMultimodalText = async (
     }
   }
 
-  const primaryModelName = resolveModelName(modelName, configuration);
+  const primaryModelName = resolveModelName(modelName, configuration, { strictModel: strictModel === true });
   const triedModels = new Set([primaryModelName]);
   let currentModelName = primaryModelName;
   const budget = currentAiJobBudget();
@@ -521,9 +547,11 @@ export const generateMultimodalText = async (
     if ((status >= 400 && status < 500) || /(?:^|\[|\bHTTP\s+|\bstatus(?:\s+code)?\s*[:=]?\s*)4\d{2}\b/i.test(message)) return;
     if (status !== 503 && !/503|Service Unavailable|high demand|overloaded|UNAVAILABLE/i.test(message)) return;
 
-    const fallback = AI_MODELS.find(({ id }) => !triedModels.has(id) && !getModelQuotaError(id, configuration));
+    const fallback = AI_MODELS.find(({ id }) => !triedModels.has(id) && !getModelQuotaError(id, configuration) && !isModelOverloaded(id, configuration))
+      || AI_MODELS.find(({ id }) => !triedModels.has(id) && !getModelQuotaError(id, configuration));
     if (!fallback) return;
     const previousModel = currentModelName;
+    markModelOverloaded(previousModel, configuration);
     triedModels.add(fallback.id);
     currentModelName = fallback.id;
     console.warn(`[Gemini API] ${previousModel} is overloaded; retrying once with ${fallback.id}`);

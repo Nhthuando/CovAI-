@@ -142,6 +142,7 @@ export async function getGithubRepositoriesApi() {
   try {
     const res = await editorAwareFetch(`${BASE_URL}/auth/github/repositories`, {
       headers: getAuthHeaders(),
+      cache: "no-store",
     });
     if (!res.ok) {
       return [];

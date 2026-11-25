@@ -1417,12 +1417,16 @@ class ProjectController {
         },
       });
 
-      // Update project with repoUrl
+      // Update project with repoUrl & activate newly imported snapshot
       const repoUrl = `https://github.com/${owner}/${repo}`;
       await prisma.project
         .update({
           where: { id: projectId },
-          data: { repoUrl },
+          data: {
+            repoUrl,
+            activeSnapshotId: snapshot.id,
+            workspaceRevision: { increment: 1 },
+          },
         })
         .catch((err) => console.error("Error updating project repoUrl:", err));
 

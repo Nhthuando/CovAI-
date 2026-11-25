@@ -1,12 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Search,
   FolderGit2,
   Lock,
-  User,
   Loader2,
   ChevronLeft,
   ChevronRight,
+  RefreshCw,
 } from "lucide-react";
 import {
   getGithubRepositoriesApi,
@@ -215,10 +215,79 @@ export default function RepoList({ onClose, onSuccess, hasGithub }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [repos, setRepos] = useState([]);
   const [loading, setLoading] = useState(hasGithub !== false);
+  const [refreshing, setRefreshing] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const reposPerPage = 10;
   const { showToast } = useToast();
+
+  const mapRepositories = useCallback((data) => {
+    if (!Array.isArray(data)) return [];
+    return data
+      .map((r) => {
+        const hasJsOrTs =
+          r.hasJsOrTs ??
+          (!r.language ||
+            r.language === "JavaScript" ||
+            r.language === "TypeScript" ||
+            (Array.isArray(r.languages) &&
+              r.languages.some(
+                (l) =>
+                  l.toLowerCase() === "javascript" ||
+                  l.toLowerCase() === "typescript",
+              )) ||
+            ["HTML", "CSS", "Vue", "Unknown"].includes(r.language));
+
+        const rawTimestamp =
+          r.pushed_at || r.pushedAt || r.updated_at || r.updatedAt || null;
+        const parsedDate = rawTimestamp ? new Date(rawTimestamp) : null;
+        const pushedAtMs =
+          parsedDate && !Number.isNaN(parsedDate.getTime())
+            ? parsedDate.getTime()
+            : 0;
+
+        return {
+          id: r.id,
+          name: r.name,
+          language: r.language || "Unknown",
+          langColor: getLangColor(r.language),
+          pushedAtMs,
+          updatedAt:
+            pushedAtMs > 0
+              ? parsedDate.toLocaleString([], {
+                  year: "numeric",
+                  month: "numeric",
+                  day: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })
+              : "Unknown",
+          isPrivate: r.private,
+          owner: r.owner?.login,
+          languages: r.languages || [],
+          hasJsOrTs,
+        };
+      })
+      .sort((a, b) => b.pushedAtMs - a.pushedAtMs);
+  }, []);
+
+  const fetchRepositories = useCallback(
+    async ({ manual = false } = {}) => {
+      if (manual) setRefreshing(true);
+      else setLoading(true);
+      setErrorMsg("");
+      try {
+        const data = await getGithubRepositoriesApi();
+        setRepos(mapRepositories(data));
+      } catch (err) {
+        setErrorMsg(err.message || "Failed to load repositories.");
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [mapRepositories],
+  );
 
   useEffect(() => {
     if (hasGithub !== true) {
@@ -228,37 +297,8 @@ export default function RepoList({ onClose, onSuccess, hasGithub }) {
     getGithubRepositoriesApi()
       .then((data) => {
         if (cancelled) return;
-        const mapped = Array.isArray(data)
-          ? data.map((r) => {
-              const hasJsOrTs =
-                r.hasJsOrTs ??
-                (!r.language ||
-                  r.language === "JavaScript" ||
-                  r.language === "TypeScript" ||
-                  (Array.isArray(r.languages) &&
-                    r.languages.some(
-                      (l) =>
-                        l.toLowerCase() === "javascript" ||
-                        l.toLowerCase() === "typescript",
-                    )) ||
-                  ["HTML", "CSS", "Vue", "Unknown"].includes(r.language));
-
-              return {
-                id: r.id,
-                name: r.name,
-                language: r.language || "Unknown",
-                langColor: getLangColor(r.language),
-                updatedAt: new Date(
-                  r.updated_at || new Date(),
-                ).toLocaleDateString(),
-                isPrivate: r.private,
-                owner: r.owner?.login,
-                languages: r.languages || [],
-                hasJsOrTs,
-              };
-            })
-          : [];
-        setRepos(mapped);
+        setErrorMsg("");
+        setRepos(mapRepositories(data));
       })
       .catch((err) => {
         if (!cancelled) {
@@ -271,7 +311,7 @@ export default function RepoList({ onClose, onSuccess, hasGithub }) {
     return () => {
       cancelled = true;
     };
-  }, [hasGithub]);
+  }, [hasGithub, mapRepositories]);
 
   const isLoading = hasGithub !== false && loading;
 
@@ -285,19 +325,16 @@ export default function RepoList({ onClose, onSuccess, hasGithub }) {
     currentPage * reposPerPage,
   );
 
-  const ownerName =
-    repos[0]?.owner || (isLoading ? "Checking GitHub..." : "GitHub Account");
-
   return (
     <div className="flex flex-col h-full gap-3">
       {/* Header & Search */}
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
           <div className="w-6 h-6 rounded-md bg-[var(--ps-surface-2)] border border-[var(--ps-line)] flex items-center justify-center shrink-0">
-            <User size={12} className="text-[var(--ps-ink-secondary)]" />
+            <FolderGit2 size={12} className="text-[var(--ps-ink-secondary)]" />
           </div>
           <span className="text-xs font-medium text-[var(--ps-ink)] truncate">
-            {ownerName}
+            {isLoading ? "Checking GitHub..." : "GitHub Repositories"}
           </span>
           {!isLoading && (
             <span className="text-[11px] text-[var(--ps-ink-muted)] ps-mono shrink-0">
@@ -306,22 +343,35 @@ export default function RepoList({ onClose, onSuccess, hasGithub }) {
           )}
         </div>
 
-        <div className="relative w-44 sm:w-52">
-          <Search
-            size={13}
-            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--ps-ink-muted)] pointer-events-none"
-          />
-          <input
-            type="text"
-            placeholder="Filter repositories..."
-            value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
-              setCurrentPage(1);
-            }}
-            className="w-full h-8 pl-8 pr-2.5 text-xs rounded-lg bg-[var(--ps-inset)] border border-[var(--ps-line)] focus:border-[var(--ps-cobalt)] outline-none text-[var(--ps-ink)] placeholder:text-[var(--ps-ink-muted)] transition-colors"
-            id="repo-search-input"
-          />
+        <div className="flex items-center gap-1.5">
+          <div className="relative w-44 sm:w-52">
+            <Search
+              size={13}
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--ps-ink-muted)] pointer-events-none"
+            />
+            <input
+              type="text"
+              placeholder="Filter repositories..."
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="w-full h-8 pl-8 pr-2.5 text-xs rounded-lg bg-[var(--ps-inset)] border border-[var(--ps-line)] focus:border-[var(--ps-cobalt)] outline-none text-[var(--ps-ink)] placeholder:text-[var(--ps-ink-muted)] transition-colors"
+              id="repo-search-input"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => fetchRepositories({ manual: true })}
+            disabled={isLoading || refreshing}
+            title="Refresh GitHub repositories"
+            aria-label="Refresh GitHub repositories"
+            id="repo-refresh-btn"
+            className="h-8 w-8 rounded-md border border-[var(--ps-line)] bg-[var(--ps-inset)] hover:bg-[var(--ps-surface-2)] text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] flex items-center justify-center transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shrink-0"
+          >
+            <RefreshCw size={13} className={refreshing ? "animate-spin" : ""} />
+          </button>
         </div>
       </div>
 

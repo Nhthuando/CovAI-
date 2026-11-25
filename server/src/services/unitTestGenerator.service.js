@@ -246,7 +246,11 @@ ${nativeHarnessExample}
   const isCjsSource =
     !/^\s*(?:import|export)\s+/m.test(sourceCode || "") &&
     /(?:module\.exports|exports\.)/.test(sourceCode || "");
-  const isEsmJest = Boolean(!isVitest && !isCjsSource && (isEsm || /^\s*(?:import|export)\s+/m.test(sourceCode || "")));
+  const isEsmJest = Boolean(
+    !isVitest &&
+    !isCjsSource &&
+    (isEsm || /^\s*(?:import|export)\s+/m.test(sourceCode || "")),
+  );
   let importExample = `import { ... } from '${cleanImportPath}';`;
   if (isCjsSource && !isVitest) {
     if (defaultRuntimeSym && namedRuntimeSyms.length === 0) {
@@ -408,7 +412,12 @@ Schema evidence: ${JSON.stringify(analyzeMongooseSchemas(sourceCode))}`;
 
   const businessFunctionTargets = [];
   const seenBusinessFnNames = new Set();
-  const addBusinessFnTarget = (name, line = 1, kind = "exported", callers = []) => {
+  const addBusinessFnTarget = (
+    name,
+    line = 1,
+    kind = "exported",
+    callers = [],
+  ) => {
     const cleanName = String(name || "")
       .trim()
       .replace(/\(\)$/, "")
@@ -433,7 +442,11 @@ Schema evidence: ${JSON.stringify(analyzeMongooseSchemas(sourceCode))}`;
   for (const sym of runtimeSymbols) {
     const resolvedName =
       sym.name === "default" ? sym.localName || "defaultExport" : sym.name;
-    addBusinessFnTarget(resolvedName, sym.line || sym.startLine || 1, "exported");
+    addBusinessFnTarget(
+      resolvedName,
+      sym.line || sym.startLine || 1,
+      "exported",
+    );
   }
   for (const fn of coverageFunctions) {
     const fnName = fn?.realName || fn?.functionName || fn?.name;
@@ -1268,7 +1281,11 @@ export const parseAndSanitizeAiTestResponse = ({
   // Enforce runner imports before previewing or applying AI-generated code.
   const shouldUseEsmJest = Boolean(
     framework === "jest" &&
-    (isEsm === true || (isEsm == null && rootDir && cleanSource && isProjectEsm(rootDir, cleanSource)))
+    (isEsm === true ||
+      (isEsm == null &&
+        rootDir &&
+        cleanSource &&
+        isProjectEsm(rootDir, cleanSource))),
   );
   for (const field of ["suggestedTestCode", "fullUpdatedContent"]) {
     if (parsedJson[field]) {
@@ -1280,12 +1297,17 @@ export const parseAndSanitizeAiTestResponse = ({
           filePath: cleanSource,
         });
       } else if (shouldUseEsmJest) {
-        parsedJson[field] = convertJestMocksAndStaticImportsToEsm(parsedJson[field], {
-          testFilePath: targetTestFile || cleanSource || "tests/unit.test.js",
-          sourceCode: sourceCode ? [{ path: cleanSource || "src/target.js", content: sourceCode }] : [],
-          rootDir: rootDir || null,
-          targetSourceFile: cleanSource || null,
-        });
+        parsedJson[field] = convertJestMocksAndStaticImportsToEsm(
+          parsedJson[field],
+          {
+            testFilePath: targetTestFile || cleanSource || "tests/unit.test.js",
+            sourceCode: sourceCode
+              ? [{ path: cleanSource || "src/target.js", content: sourceCode }]
+              : [],
+            rootDir: rootDir || null,
+            targetSourceFile: cleanSource || null,
+          },
+        );
       }
     }
   }
@@ -1569,16 +1591,16 @@ export const generateAiUnitTestSuite = async ({
         (sourceCode || "").length > 6000;
       const aiResponse = await Promise.race([
         generateText(prompt, selectedAiModel, {
-          requestTimeoutMs: 45000,
-          totalTimeoutMs: 90000,
+          requestTimeoutMs: 35000,
+          totalTimeoutMs: 65000,
           maxAttempts: 2,
           maxOutputTokens: needsExtendedTokens ? 8192 : 4096,
         }),
         new Promise((_, reject) => {
           generationTimer = setTimeout(
             () =>
-              reject(new Error("AI generation timed out (90s limit reached)")),
-            90000,
+              reject(new Error("AI generation timed out (65s limit reached)")),
+            65000,
           );
         }),
       ]).finally(() => {
@@ -1694,7 +1716,9 @@ export const generateAiUnitTestSuite = async ({
       const seenNewTitles = new Set();
       const duplicateBlocks = [];
       for (const b of rawNewBlocks) {
-        const normT = String(b.title || "").trim().toLowerCase();
+        const normT = String(b.title || "")
+          .trim()
+          .toLowerCase();
         if (seenNewTitles.has(normT)) {
           duplicateBlocks.push(b);
         } else {
@@ -1794,7 +1818,9 @@ export const generateAiUnitTestSuite = async ({
     if (projectUsesEsm && framework === "jest") {
       rebasedProposed = convertJestMocksAndStaticImportsToEsm(rebasedProposed, {
         testFilePath: testFile,
-        sourceCode: sourceCode ? [{ path: cleanSource, content: sourceCode }] : [],
+        sourceCode: sourceCode
+          ? [{ path: cleanSource, content: sourceCode }]
+          : [],
         rootDir: snapshot.rootDir,
         targetSourceFile: cleanSource,
       });
@@ -2135,7 +2161,13 @@ const withRootRunnerLock = async (rootDir, taskFn) => {
   const current = new Promise((resolve) => {
     release = resolve;
   });
-  rootRunnerLocks.set(key, prev.then(() => current, () => current));
+  rootRunnerLocks.set(
+    key,
+    prev.then(
+      () => current,
+      () => current,
+    ),
+  );
   await prev;
   try {
     return await taskFn();
@@ -2164,10 +2196,14 @@ export const verifyAndRefineUnitTestDraft = async ({
   generateTextFn = null,
 } = {}) => {
   if (!suggestion || suggestion.isFullyCovered) return suggestion;
-  const cleanSource = String(suggestion.sourceFile || suggestion.targetSourceFile || "")
+  const cleanSource = String(
+    suggestion.sourceFile || suggestion.targetSourceFile || "",
+  )
     .replace(/\\/g, "/")
     .replace(/^\/+/, "");
-  const cleanTestFile = String(suggestion.testFile || suggestion.targetTestFile || "")
+  const cleanTestFile = String(
+    suggestion.testFile || suggestion.targetTestFile || "",
+  )
     .replace(/\\/g, "/")
     .replace(/^\/+/, "");
   const initialCode = String(
@@ -2197,11 +2233,13 @@ export const verifyAndRefineUnitTestDraft = async ({
       : "");
   const projectUsesEsm = Boolean(
     (rootDir && isProjectEsm(rootDir, cleanSource)) ||
-      /^\s*(?:import|export)\s+/m.test(effectiveSource),
+    /^\s*(?:import|export)\s+/m.test(effectiveSource),
   );
   const existingUserTitles = new Set(
     extractUnitTestBlocks(suggestion.originalCode || "").map((b) =>
-      String(b.title || "").trim().toLowerCase(),
+      String(b.title || "")
+        .trim()
+        .toLowerCase(),
     ),
   );
 
@@ -2212,11 +2250,10 @@ export const verifyAndRefineUnitTestDraft = async ({
       const absCovDir = path.join(rootDir, ".covai-temp", verifyId);
       let draftState = null;
       try {
-        const {
-          runJestCoverage,
-          materializeDraftTestsForRun,
-        } = await import("./runTestsJob.service.js");
-        const { parseJestResults, parseVitestResults } = await import("./testResultParser.service.js");
+        const { runJestCoverage, materializeDraftTestsForRun } =
+          await import("./runTestsJob.service.js");
+        const { parseJestResults, parseVitestResults } =
+          await import("./testResultParser.service.js");
 
         draftState = materializeDraftTestsForRun(rootDir, [
           {
@@ -2229,19 +2266,33 @@ export const verifyAndRefineUnitTestDraft = async ({
 
         let parsedRun = null;
         if (framework === "vitest") {
-          const { runVitestCoverage } = await import("./vitestRunner.service.js");
-          await runVitestCoverage(`verify-${verifyId}`, rootDir, snapshot?.vitestCommand, [cleanTestFile], {
-            coverageDir: relCovDir,
-            targetSourceFiles: [cleanSource],
-            useHermeticMock: true,
-          });
+          const { runVitestCoverage } =
+            await import("./vitestRunner.service.js");
+          await runVitestCoverage(
+            `verify-${verifyId}`,
+            rootDir,
+            snapshot?.vitestCommand,
+            [cleanTestFile],
+            {
+              coverageDir: relCovDir,
+              targetSourceFiles: [cleanSource],
+              useHermeticMock: true,
+            },
+          );
           parsedRun = parseVitestResults(absCovDir, { rootDir });
         } else {
-          await runJestCoverage(`verify-${verifyId}`, rootDir, null, [cleanTestFile], snapshot?.jestCommand, {
-            coverageDir: relCovDir,
-            targetSourceFiles: [cleanSource],
-            useHermeticMock: true,
-          });
+          await runJestCoverage(
+            `verify-${verifyId}`,
+            rootDir,
+            null,
+            [cleanTestFile],
+            snapshot?.jestCommand,
+            {
+              coverageDir: relCovDir,
+              targetSourceFiles: [cleanSource],
+              useHermeticMock: true,
+            },
+          );
           parsedRun = parseJestResults(absCovDir, { rootDir });
         }
 
@@ -2262,15 +2313,23 @@ export const verifyAndRefineUnitTestDraft = async ({
           for (const [k, v] of Object.entries(obj)) {
             if (k === "total") continue;
             const normK = k.replace(/\\/g, "/").toLowerCase();
-            if (normK === normTarget || normK.endsWith("/" + normTarget) || normTarget.endsWith("/" + normK)) {
+            if (
+              normK === normTarget ||
+              normK.endsWith("/" + normTarget) ||
+              normTarget.endsWith("/" + normK)
+            ) {
               return v;
             }
           }
           return null;
         };
 
-        const sumJson = sumPath ? JSON.parse(fs.readFileSync(sumPath, "utf8")) : null;
-        const finalJson = finalPath ? JSON.parse(fs.readFileSync(finalPath, "utf8")) : null;
+        const sumJson = sumPath
+          ? JSON.parse(fs.readFileSync(sumPath, "utf8"))
+          : null;
+        const finalJson = finalPath
+          ? JSON.parse(fs.readFileSync(finalPath, "utf8"))
+          : null;
         const sumEntry = matchEntry(sumJson);
         const finalEntry = matchEntry(finalJson);
 
@@ -2281,19 +2340,31 @@ export const verifyAndRefineUnitTestDraft = async ({
           for (const [fnId, fnMeta] of Object.entries(finalEntry.fnMap || {})) {
             const hits = Number(finalEntry.f?.[fnId] || 0);
             const fnName = String(fnMeta?.name || "").trim();
-            if (hits === 0 && fnName && !isTrivialCallbackFunctionName(fnName)) {
+            if (
+              hits === 0 &&
+              fnName &&
+              !isTrivialCallbackFunctionName(fnName)
+            ) {
               uncoveredFns.push({
                 name: fnName,
-                line: fnMeta?.decl?.start?.line || fnMeta?.loc?.start?.line || fnMeta?.line || 1,
+                line:
+                  fnMeta?.decl?.start?.line ||
+                  fnMeta?.loc?.start?.line ||
+                  fnMeta?.line ||
+                  1,
               });
             }
           }
-          for (const [sId, loc] of Object.entries(finalEntry.statementMap || {})) {
+          for (const [sId, loc] of Object.entries(
+            finalEntry.statementMap || {},
+          )) {
             if (Number(finalEntry.s?.[sId] || 0) === 0 && loc?.start?.line) {
               uncoveredLinesSet.add(loc.start.line);
             }
           }
-          for (const [bId, bMeta] of Object.entries(finalEntry.branchMap || {})) {
+          for (const [bId, bMeta] of Object.entries(
+            finalEntry.branchMap || {},
+          )) {
             const arr = finalEntry.b?.[bId] || [];
             if (Array.isArray(arr) && arr.some((h) => Number(h || 0) === 0)) {
               const bLine = bMeta?.line || bMeta?.loc?.start?.line;
@@ -2302,15 +2373,25 @@ export const verifyAndRefineUnitTestDraft = async ({
           }
         }
 
-        const scenarios = Array.isArray(parsedRun?.scenarios) ? parsedRun.scenarios : [];
+        const scenarios = Array.isArray(parsedRun?.scenarios)
+          ? parsedRun.scenarios
+          : [];
         const failedScenarios = scenarios
-          .filter((s) => String(s?.status || "").toLowerCase() === "failed" || s?.isSuiteLevelFailure)
+          .filter(
+            (s) =>
+              String(s?.status || "").toLowerCase() === "failed" ||
+              s?.isSuiteLevelFailure,
+          )
           .map((s) => ({
             title: s.title || s.suiteName || cleanTestFile,
-            error: Array.isArray(s.failureMessages) ? s.failureMessages.join("\n").slice(0, 1200) : "",
+            error: Array.isArray(s.failureMessages)
+              ? s.failureMessages.join("\n").slice(0, 1200)
+              : "",
           }));
         const passedTests = Number(parsedRun?.passedTests || 0);
-        const failedTests = Number(parsedRun?.failedTests || failedScenarios.length || 0);
+        const failedTests = Number(
+          parsedRun?.failedTests || failedScenarios.length || 0,
+        );
         const linesPct = Number(sumEntry?.lines?.pct ?? 0);
         const branchesPct = Number(sumEntry?.branches?.pct ?? 0);
         const funcsPct = Number(sumEntry?.functions?.pct ?? 0);
@@ -2326,17 +2407,21 @@ export const verifyAndRefineUnitTestDraft = async ({
           stmtsPct,
           uncoveredFns,
           uncoveredLines: Array.from(uncoveredLinesSet).sort((a, b) => a - b),
-          uncoveredBranchLines: Array.from(uncoveredBranchLines).sort((a, b) => a - b),
+          uncoveredBranchLines: Array.from(uncoveredBranchLines).sort(
+            (a, b) => a - b,
+          ),
         };
       } finally {
         if (draftState) {
           try {
-            const { restoreDraftTestsForRun } = await import("./runTestsJob.service.js");
+            const { restoreDraftTestsForRun } =
+              await import("./runTestsJob.service.js");
             restoreDraftTestsForRun(draftState);
           } catch {}
         }
         try {
-          if (fs.existsSync(absCovDir)) fs.rmSync(absCovDir, { recursive: true, force: true });
+          if (fs.existsSync(absCovDir))
+            fs.rmSync(absCovDir, { recursive: true, force: true });
         } catch {}
       }
     });
@@ -2345,8 +2430,17 @@ export const verifyAndRefineUnitTestDraft = async ({
   const evaluateFn = runEvaluator || defaultEvaluateCandidate;
   const scoreEval = (ev) => {
     if (!ev) return -1;
-    const passBonus = ev.failedTests === 0 && ev.passedTests > 0 ? 100000 : ev.passedTests * 25 - ev.failedTests * 200;
-    return passBonus + ev.funcsPct * 3 + ev.linesPct * 2 + ev.branchesPct * 2 + ev.stmtsPct;
+    const passBonus =
+      ev.failedTests === 0 && ev.passedTests > 0
+        ? 100000
+        : ev.passedTests * 25 - ev.failedTests * 200;
+    return (
+      passBonus +
+      ev.funcsPct * 3 +
+      ev.linesPct * 2 +
+      ev.branchesPct * 2 +
+      ev.stmtsPct
+    );
   };
 
   let bestCode = initialCode;
@@ -2354,7 +2448,10 @@ export const verifyAndRefineUnitTestDraft = async ({
   try {
     bestEval = await evaluateFn(bestCode);
   } catch (evalErr) {
-    console.warn(`[verifyAndRefineUnitTestDraft] Initial evaluation skipped for ${cleanSource}:`, evalErr.message);
+    console.warn(
+      `[verifyAndRefineUnitTestDraft] Initial evaluation skipped for ${cleanSource}:`,
+      evalErr.message,
+    );
     return suggestion;
   }
 
@@ -2409,7 +2506,10 @@ export const verifyAndRefineUnitTestDraft = async ({
         maxAttempts: 1,
         maxOutputTokens: 8192,
       });
-      const respText = typeof rawResp === "object" && rawResp?.text !== undefined ? rawResp.text : rawResp;
+      const respText =
+        typeof rawResp === "object" && rawResp?.text !== undefined
+          ? rawResp.text
+          : rawResp;
       const parsed = parseAndSanitizeAiTestResponse({
         rawResponse: respText,
         framework,
@@ -2421,7 +2521,9 @@ export const verifyAndRefineUnitTestDraft = async ({
       });
       if (!parsed.success || !parsed.parsed) continue;
       let candidate = normalizeTestFrameworkCode(
-        parsed.parsed.fullUpdatedContent || parsed.parsed.suggestedTestCode || "",
+        parsed.parsed.fullUpdatedContent ||
+          parsed.parsed.suggestedTestCode ||
+          "",
         { framework, filePath: cleanTestFile },
       );
       candidate = rebaseGeneratedTestModulePaths(candidate, {
@@ -2432,31 +2534,47 @@ export const verifyAndRefineUnitTestDraft = async ({
       if (projectUsesEsm && framework === "jest") {
         candidate = convertJestMocksAndStaticImportsToEsm(candidate, {
           testFilePath: cleanTestFile,
-          sourceCode: effectiveSource ? [{ path: cleanSource, content: effectiveSource }] : [],
+          sourceCode: effectiveSource
+            ? [{ path: cleanSource, content: effectiveSource }]
+            : [],
           rootDir: rootDir || "",
           targetSourceFile: cleanSource,
         });
       }
-      if (!candidate.trim() || !parseJavaScriptCode(candidate, { filePath: cleanTestFile }).success) {
+      if (
+        !candidate.trim() ||
+        !parseJavaScriptCode(candidate, { filePath: cleanTestFile }).success
+      ) {
         continue;
       }
 
       const nextEval = await evaluateFn(candidate);
       const isStrictImprovement =
         nextEval.failedTests < bestEval.failedTests ||
-        (nextEval.failedTests === bestEval.failedTests && scoreEval(nextEval) > scoreEval(bestEval));
+        (nextEval.failedTests === bestEval.failedTests &&
+          scoreEval(nextEval) > scoreEval(bestEval));
       if (isStrictImprovement) {
         bestCode = candidate;
         bestEval = nextEval;
       }
     } catch (refineErr) {
-      console.warn(`[verifyAndRefineUnitTestDraft] Pass ${pass} warning for ${cleanSource}:`, refineErr.message);
+      console.warn(
+        `[verifyAndRefineUnitTestDraft] Pass ${pass} warning for ${cleanSource}:`,
+        refineErr.message,
+      );
       break;
     }
   }
 
   const nextTestCases = extractUnitTestBlocks(bestCode)
-    .filter((b) => !existingUserTitles.has(String(b.title || "").trim().toLowerCase()))
+    .filter(
+      (b) =>
+        !existingUserTitles.has(
+          String(b.title || "")
+            .trim()
+            .toLowerCase(),
+        ),
+    )
     .map((b) => {
       const def = classifyUnitTestCase({ title: b.title });
       return {
@@ -2482,7 +2600,9 @@ export const verifyAndRefineUnitTestDraft = async ({
       ...(suggestion.validation || {}),
       status: bestEval.failedTests === 0 ? "VERIFIED_DRAFT" : "NEEDS_REVIEW",
       coverageGoalStatus:
-        bestEval.failedTests === 0 && bestEval.linesPct >= 100 && bestEval.funcsPct >= 100
+        bestEval.failedTests === 0 &&
+        bestEval.linesPct >= 100 &&
+        bestEval.funcsPct >= 100
           ? "MET"
           : "PARTIAL",
       passedTests: bestEval.passedTests,

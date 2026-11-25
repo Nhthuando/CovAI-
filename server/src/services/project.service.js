@@ -5,6 +5,7 @@ import {
   membershipWhere,
   resolveProjectAccess,
   withProjectGuard,
+  invalidateProjectAccessCache,
 } from "./projectAccess.service.js";
 import { assertEditorSnapshotChangeAllowed } from "./projectEditorBridge.service.js";
 import {
@@ -1453,10 +1454,34 @@ export const deleteProject = async (projectId, userId) => {
     throw new ServiceError("You are not allowed to delete this project", 403);
   }
 
-  const activeJob = await prisma.job.findFirst({
-    where: { projectId, status: { in: ["QUEUED", "RUNNING"] } },
-    select: { id: true },
-  });
+  // Fetch active job guard, snapshots, and evaluation runs in a single parallel roundtrip.
+  const [initialActiveJob, snapshots, evaluations] = await Promise.all([
+    prisma.job.findFirst({
+      where: { projectId, status: { in: ["QUEUED", "RUNNING"] } },
+      select: { id: true },
+    }),
+    prisma.projectSnapshot.findMany({
+      where: { projectId },
+      select: { id: true, rootDir: true, storagePath: true },
+    }),
+    prisma.aiEvaluationProjectRun?.findMany
+      ? prisma.aiEvaluationProjectRun.findMany({ where: { projectId }, select: { id: true } })
+      : Promise.resolve([]),
+  ]);
+
+  let activeJob = initialActiveJob;
+  if (activeJob && typeof prisma.job?.findMany === "function") {
+    try {
+      const { cleanupStaleJobsForProject } = await import("./job.service.js");
+      await cleanupStaleJobsForProject(projectId, prisma);
+      activeJob = await prisma.job.findFirst({
+        where: { projectId, status: { in: ["QUEUED", "RUNNING"] } },
+        select: { id: true },
+      });
+    } catch (err) {
+      console.warn(`[DeleteProject] Stale job cleanup check failed for ${projectId}:`, err?.message);
+    }
+  }
   if (activeJob) {
     throw new ServiceError(
       "This project is still processing. Wait for its jobs to finish before deleting it.",
@@ -1464,21 +1489,23 @@ export const deleteProject = async (projectId, userId) => {
     );
   }
 
-  // Keep ownership and snapshot IDs available until all storage is removed.
-  const snapshots = await prisma.projectSnapshot.findMany({
-    where: { projectId },
-    select: { id: true, rootDir: true, storagePath: true },
-  });
-  const evaluations = await prisma.aiEvaluationProjectRun.findMany({ where: { projectId }, select: { id: true } });
-  await cleanupProjectStorageAsync(projectId, snapshots, { evaluationIds: evaluations.map(row => row.id) });
+  // Run storage cleanup and Docker container reclamation in parallel;
+  // storage errors must fail deletion so metadata stays retryable, while Docker errors warn only.
+  const cleanupDockerPromise = (async () => {
+    try {
+      const { cleanupProjectRunnerContainers } = await import("./dockerRunner.service.js");
+      await cleanupProjectRunnerContainers(projectId);
+    } catch (err) {
+      console.warn(`[DeleteProject] Warning cleaning up runner containers for ${projectId}:`, err?.message);
+    }
+  })();
 
-  // Docker runner cleanup
-  try {
-    const { cleanupProjectRunnerContainers } = await import("./dockerRunner.service.js");
-    await cleanupProjectRunnerContainers(projectId);
-  } catch (err) {
-    console.warn(`[DeleteProject] Warning cleaning up runner containers for ${projectId}:`, err?.message);
-  }
+  await Promise.all([
+    cleanupProjectStorageAsync(projectId, snapshots, {
+      evaluationIds: evaluations.map(row => row.id),
+    }),
+    cleanupDockerPromise,
+  ]);
 
   // Invalidate in-memory manifest cache for deleted snapshots
   for (const snap of snapshots) {
@@ -1492,7 +1519,6 @@ export const deleteProject = async (projectId, userId) => {
 
   // Fast DB deletion:
   // Primary attempt: Native PostgreSQL ON DELETE CASCADE via prisma.project.delete.
-  // Takes only 1 single SQL query (~10-50ms) instead of separate slow queries.
   try {
     await withProjectGuard(
       { projectId, userId, capability: "project.delete" },
@@ -1504,90 +1530,116 @@ export const deleteProject = async (projectId, userId) => {
       `[DeleteProject] Direct cascade delete failed for project ${projectId}, falling back to manual cascade transaction:`,
       error?.message,
     );
+    const del = (model, where) =>
+      typeof model?.deleteMany === "function" ? model.deleteMany({ where }) : Promise.resolve();
+
     await withProjectGuard({ projectId, userId, capability: 'project.delete' }, async tx => {
-        // 1. System test & evaluation leaf models
-        if (tx.systemRunArtifact?.deleteMany) await tx.systemRunArtifact.deleteMany({ where: { assessment: { snapshot: { projectId } } } });
-        if (tx.systemRunEvent?.deleteMany) await tx.systemRunEvent.deleteMany({ where: { assessment: { snapshot: { projectId } } } });
-        if (tx.systemMutationRun?.deleteMany) await tx.systemMutationRun.deleteMany({ where: { proposal: { snapshot: { projectId } } } });
-        if (tx.systemTestProposal?.deleteMany) await tx.systemTestProposal.deleteMany({ where: { snapshot: { projectId } } });
-        if (tx.systemScenario?.deleteMany) await tx.systemScenario.deleteMany({ where: { snapshot: { projectId } } });
-        if (tx.systemAssertionBinding?.deleteMany) await tx.systemAssertionBinding.deleteMany({ where: { snapshot: { projectId } } });
-        if (tx.systemTestAssessment?.deleteMany) await tx.systemTestAssessment.deleteMany({ where: { snapshot: { projectId } } });
-        if (tx.systemRequirementRevision?.deleteMany) await tx.systemRequirementRevision.deleteMany({ where: { snapshot: { projectId } } });
-        if (tx.systemTestFile?.deleteMany) await tx.systemTestFile.deleteMany({ where: { snapshot: { projectId } } });
+      // Tier 1: deepest leaves (run in parallel)
+      await Promise.all([
+        del(tx.systemRunArtifact, { assessment: { snapshot: { projectId } } }),
+        del(tx.systemRunEvent, { assessment: { snapshot: { projectId } } }),
+        del(tx.systemMutationRun, { assessment: { snapshot: { projectId } } }),
+        del(tx.systemTestProposal, { snapshot: { projectId } }),
+        del(tx.systemAssertionBinding, { revision: { snapshot: { projectId } } }),
+        del(tx.systemTestFile, { testRun: { snapshot: { projectId } } }),
+        del(tx.systemSuiteState, { snapshot: { projectId } }),
+        del(tx.aiEvaluationEvidence, { run: { projectId } }),
+        del(tx.aiEvaluationHumanReview, { criterionResult: { caseResult: { run: { projectId } } } }),
+        del(tx.projectOperationRequest, { projectId }),
+        del(tx.invitationDelivery, { invitation: { projectId } }),
+        del(tx.projectEditorUpdate, { document: { projectId } }),
+        del(tx.aiTestResult, { aiTest: { projectId } }),
+        del(tx.jobLog, { job: { projectId } }),
+        del(tx.jobOutput, { job: { projectId } }),
+      ]);
 
-        // 2. Chatbot evaluation models
-        if (tx.aiEvaluationEvidence?.deleteMany) await tx.aiEvaluationEvidence.deleteMany({ where: { run: { projectId } } });
-        if (tx.aiEvaluationHumanReview?.deleteMany) await tx.aiEvaluationHumanReview.deleteMany({ where: { criterionResult: { caseResult: { run: { projectId } } } } });
-        if (tx.aiEvaluationCriterionResult?.deleteMany) await tx.aiEvaluationCriterionResult.deleteMany({ where: { caseResult: { run: { projectId } } } });
-        if (tx.aiEvaluationConfirmationGrant?.deleteMany) await tx.aiEvaluationConfirmationGrant.deleteMany({ where: { attempt: { caseResult: { run: { projectId } } } } });
-        if (tx.aiEvaluationToolCall?.deleteMany) await tx.aiEvaluationToolCall.deleteMany({ where: { attempt: { caseResult: { run: { projectId } } } } });
-        if (tx.aiEvaluationAttempt?.deleteMany) await tx.aiEvaluationAttempt.deleteMany({ where: { caseResult: { run: { projectId } } } });
-        if (tx.aiEvaluationCaseResult?.deleteMany) await tx.aiEvaluationCaseResult.deleteMany({ where: { run: { projectId } } });
-        if (tx.aiEvaluationRun?.deleteMany) await tx.aiEvaluationRun.deleteMany({ where: { projectId } });
-        if (tx.aiEvaluationProjectRun?.deleteMany) await tx.aiEvaluationProjectRun.deleteMany({ where: { projectId } });
-        if (tx.aiEvaluationProjectSettings?.deleteMany) await tx.aiEvaluationProjectSettings.deleteMany({ where: { projectId } });
-        if (tx.aiEvaluationTestCase?.deleteMany) await tx.aiEvaluationTestCase.deleteMany({ where: { profileVersion: { profile: { projectId } } } });
-        if (tx.aiEvaluationProfileVersion?.deleteMany) await tx.aiEvaluationProfileVersion.deleteMany({ where: { profile: { projectId } } });
-        if (tx.aiEvaluationProfile?.deleteMany) await tx.aiEvaluationProfile.deleteMany({ where: { projectId } });
-        if (tx.aiEvaluationKnowledgeSource?.deleteMany) await tx.aiEvaluationKnowledgeSource.deleteMany({ where: { projectId } });
-        if (tx.aiEvaluationTargetVersion?.deleteMany) await tx.aiEvaluationTargetVersion.deleteMany({ where: { target: { projectId } } });
-        if (tx.aiEvaluationCredential?.deleteMany) await tx.aiEvaluationCredential.deleteMany({ where: { target: { projectId } } });
-        if (tx.aiEvaluationTarget?.deleteMany) await tx.aiEvaluationTarget.deleteMany({ where: { projectId } });
+      // Tier 2: assessment / evaluation criteria & attempts / chat requests & memory
+      await Promise.all([
+        del(tx.systemTestAssessment, { snapshot: { projectId } }),
+        del(tx.systemScenario, { snapshot: { projectId } }),
+        del(tx.aiEvaluationCriterionResult, { caseResult: { run: { projectId } } }),
+        del(tx.aiEvaluationConfirmationGrant, { attempt: { caseResult: { run: { projectId } } } }),
+        del(tx.aiEvaluationToolCall, { attempt: { caseResult: { run: { projectId } } } }),
+        del(tx.projectMemory, { projectId }),
+        del(tx.chatRequest, { session: { projectId } }),
+        del(tx.testScenario, { testRun: { snapshot: { projectId } } }),
+      ]);
 
-        // 3. Operations, mutations, file versions, events
-        if (tx.projectOperationRequest?.deleteMany) await tx.projectOperationRequest.deleteMany({ where: { projectId } });
-        if (tx.projectOperation?.deleteMany) await tx.projectOperation.deleteMany({ where: { projectId } });
-        if (tx.projectMutation?.deleteMany) await tx.projectMutation.deleteMany({ where: { projectId } });
-        if (tx.projectFileVersion?.deleteMany) await tx.projectFileVersion.deleteMany({ where: { snapshot: { projectId } } });
-        if (tx.projectEvent?.deleteMany) await tx.projectEvent.deleteMany({ where: { projectId } });
+      // Tier 3: suite versions (clear self-FKs first), evaluation runs/cases, chat messages
+      if (typeof tx.systemSuiteVersion?.updateMany === "function") {
+        await tx.systemSuiteVersion.updateMany({
+          where: { snapshot: { projectId } },
+          data: { parentVersionId: null, restoredFromVersionId: null },
+        });
+      }
+      await Promise.all([
+        del(tx.systemSuiteVersion, { snapshot: { projectId } }),
+        del(tx.systemRequirementRevision, { snapshot: { projectId } }),
+        del(tx.aiEvaluationAttempt, { caseResult: { run: { projectId } } }),
+        del(tx.chatMessage, { session: { projectId } }),
+        del(tx.testRun, { snapshot: { projectId } }),
+        del(tx.projectOperation, { projectId }),
+      ]);
 
-        // 4. Collaboration, members, invitations
-        if (tx.invitationDelivery?.deleteMany) await tx.invitationDelivery.deleteMany({ where: { invitation: { projectId } } });
-        if (tx.projectInvitation?.deleteMany) await tx.projectInvitation.deleteMany({ where: { projectId } });
-        if (tx.projectMember?.deleteMany) await tx.projectMember.deleteMany({ where: { projectId } });
-        if (tx.projectMemory?.deleteMany) await tx.projectMemory.deleteMany({ where: { projectId } });
-        if (tx.aiContextSettings?.deleteMany) await tx.aiContextSettings.deleteMany({ where: { projectId } });
+      // Tier 4: evaluation mid-level & remaining snapshot/project children
+      await Promise.all([
+        del(tx.aiEvaluationCaseResult, { run: { projectId } }),
+        del(tx.aiEvaluationTestCase, { profileVersion: { profile: { projectId } } }),
+        del(tx.aiEvaluationDesignAudit, { projectId }),
+        del(tx.projectEditorDocument, { projectId }),
+        del(tx.projectCodeChange, { projectId }),
+        del(tx.projectMutation, { projectId }),
+        del(tx.projectFileVersion, { snapshot: { projectId } }),
+        del(tx.projectEvent, { projectId }),
+        del(tx.projectInvitation, { projectId }),
+        del(tx.projectMember, { projectId }),
+        del(tx.aiContextSettings, { projectId }),
+        del(tx.chatSession, { projectId }),
+        del(tx.qualityReport, { projectId }),
+        del(tx.projectStructureAnalysis, { ProjectSnapshot: { projectId } }),
+        del(tx.performanceMetric, { snapshot: { projectId } }),
+        del(tx.vulnerability, { snapshot: { projectId } }),
+        del(tx.coverageSummary, { snapshot: { projectId } }),
+        del(tx.coverageFile, { snapshot: { projectId } }),
+        del(tx.coverageFunction, { snapshot: { projectId } }),
+        del(tx.cyclomatic, { snapshot: { projectId } }),
+        del(tx.aiContextCache, { snapshot: { projectId } }),
+        del(tx.aiTest, { projectId }),
+        del(tx.aiSuggestion, { projectId }),
+        del(tx.job, { projectId }),
+        del(tx.notification, { projectId }),
+      ]);
 
-        // 5. Chat messages & sessions
-        if (tx.chatMessage?.deleteMany) await tx.chatMessage.deleteMany({ where: { session: { projectId } } });
-        if (tx.chatRequest?.deleteMany) await tx.chatRequest.deleteMany({ where: { session: { projectId } } });
-        if (tx.chatSession?.deleteMany) await tx.chatSession.deleteMany({ where: { projectId } });
+      // Tier 5: CFG, evaluation runs/versions/targets/profiles
+      await Promise.all([
+        del(tx.cfg, { snapshot: { projectId } }),
+        del(tx.aiEvaluationRun, { projectId }),
+        del(tx.aiEvaluationProjectRun, { projectId }),
+        del(tx.aiEvaluationProjectSettings, { projectId }),
+        del(tx.aiEvaluationProfileVersion, { profile: { projectId } }),
+        del(tx.aiEvaluationKnowledgeSource, { projectId }),
+        del(tx.aiEvaluationTargetVersion, { target: { projectId } }),
+      ]);
 
-        // 6. Test runs & scenarios
-        if (tx.testScenario?.deleteMany) await tx.testScenario.deleteMany({ where: { testRun: { snapshot: { projectId } } } });
-        if (tx.testRun?.deleteMany) await tx.testRun.deleteMany({ where: { snapshot: { projectId } } });
+      await Promise.all([
+        del(tx.aiEvaluationProfile, { projectId }),
+        del(tx.aiEvaluationCredential, { target: { projectId } }),
+      ]);
+      await del(tx.aiEvaluationTarget, { projectId });
 
-        // 7. Quality & structure reports
-        if (tx.qualityReport?.deleteMany) await tx.qualityReport.deleteMany({ where: { projectId } });
-        if (tx.projectStructureAnalysis?.deleteMany) await tx.projectStructureAnalysis.deleteMany({ where: { ProjectSnapshot: { projectId } } });
-        if (tx.performanceMetric?.deleteMany) await tx.performanceMetric.deleteMany({ where: { snapshot: { projectId } } });
-        if (tx.vulnerability?.deleteMany) await tx.vulnerability.deleteMany({ where: { snapshot: { projectId } } });
+      // Tier 6: snapshots & project root
+      await del(tx.projectSnapshot, { projectId });
+      await tx.project.delete({ where: { id: projectId } });
+    });
+  }
 
-        // 8. Coverage & CFG metrics
-        if (tx.coverageSummary?.deleteMany) await tx.coverageSummary.deleteMany({ where: { snapshot: { projectId } } });
-        if (tx.coverageFile?.deleteMany) await tx.coverageFile.deleteMany({ where: { snapshot: { projectId } } });
-        if (tx.coverageFunction?.deleteMany) await tx.coverageFunction.deleteMany({ where: { snapshot: { projectId } } });
-        if (tx.cyclomatic?.deleteMany) await tx.cyclomatic.deleteMany({ where: { snapshot: { projectId } } });
-        if (tx.cfg?.deleteMany) await tx.cfg.deleteMany({ where: { snapshot: { projectId } } });
-        if (tx.aiContextCache?.deleteMany) await tx.aiContextCache.deleteMany({ where: { snapshot: { projectId } } });
-
-        // 9. AI suggestions & tests
-        if (tx.aiTestResult?.deleteMany) await tx.aiTestResult.deleteMany({ where: { aiTest: { projectId } } });
-        if (tx.aiTest?.deleteMany) await tx.aiTest.deleteMany({ where: { projectId } });
-        if (tx.aiSuggestion?.deleteMany) await tx.aiSuggestion.deleteMany({ where: { projectId } });
-
-        // 10. Jobs & notifications
-        if (tx.jobLog?.deleteMany) await tx.jobLog.deleteMany({ where: { job: { projectId } } });
-        if (tx.jobOutput?.deleteMany) await tx.jobOutput.deleteMany({ where: { job: { projectId } } });
-        if (tx.job?.deleteMany) await tx.job.deleteMany({ where: { projectId } });
-        if (tx.notification?.deleteMany) await tx.notification.deleteMany({ where: { projectId } });
-
-        // 11. Project snapshots & project root
-        if (tx.projectSnapshot?.deleteMany) await tx.projectSnapshot.deleteMany({ where: { projectId } });
-        await tx.project.delete({ where: { id: projectId } });
-      },
-    );
+  clearProjectTreeCache();
+  invalidateProjectAccessCache(projectId);
+  try {
+    const { clearPortfolioCache } = await import("./portfolioDashboard.service.js");
+    clearPortfolioCache(userId);
+  } catch (error) {
+    console.error("[deleteProject] Portfolio cache invalidation failed:", error);
   }
 };
 

@@ -1,4 +1,5 @@
 import fs from "fs";
+import path from "path";
 import { GitHubCloneService } from "../services/githubClone.service.js";
 import { GitHubRepositoryAccessService } from "../services/github.service.js";
 import prisma from "../config/prisma.js";
@@ -6,6 +7,92 @@ import { detectJest } from "../utils/jestDetector.js";
 import { buildCfgForSnapshot } from "../services/buildCfg.service.js";
 import { detectLanguageFromDirectory } from "../utils/languageDetector.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
+import { clearProjectTreeCache } from "../services/project.service.js";
+import { clearPortfolioCache } from "../services/portfolioDashboard.service.js";
+
+async function finalizeGitHubImportSnapshot({ projectId, ownerId, cloneResult, repoUrl }) {
+  const existing = await prisma.projectSnapshot.findFirst({
+    where: { projectId, commitSha: cloneResult.commitSha },
+    select: {
+      id: true,
+      testingFrameworksJson: true,
+      rootDir: true,
+      storagePath: true,
+    },
+  });
+
+  if (existing && existing.rootDir && fs.existsSync(existing.rootDir)) {
+    try {
+      fs.rmSync(path.dirname(cloneResult.localPath), { recursive: true, force: true });
+    } catch (_) {}
+
+    await prisma.project.update({
+      where: { id: projectId },
+      data: {
+        repoUrl,
+        defaultBranch: cloneResult.defaultBranch || "main",
+        activeSnapshotId: existing.id,
+        workspaceRevision: { increment: 1 },
+      },
+    }).catch((err) => console.error("Error activating existing GitHub snapshot:", err));
+
+    clearProjectTreeCache();
+    if (ownerId) clearPortfolioCache(ownerId);
+
+    let testingFrameworks = [];
+    try {
+      testingFrameworks = JSON.parse(existing.testingFrameworksJson || "[]");
+    } catch (_) {}
+
+    return { snapshot: existing, testingFrameworks, reused: true };
+  }
+
+  const resolvedRootDir = resolveProjectRoot(cloneResult.localPath) || cloneResult.localPath;
+  const detection = detectJest(resolvedRootDir);
+
+  const snapshot = existing
+    ? await prisma.projectSnapshot.update({
+        where: { id: existing.id },
+        data: {
+          storagePath: cloneResult.localPath,
+          rootDir: resolvedRootDir,
+          hasJest: detection.hasJest,
+          jestConfigPath: detection.configPath,
+          jestCommand: detection.jestCommand,
+          testingFrameworksJson: JSON.stringify(detection.testingFrameworks),
+        },
+      })
+    : await prisma.projectSnapshot.create({
+        data: {
+          projectId,
+          source: "GITHUB",
+          commitSha: cloneResult.commitSha,
+          storagePath: cloneResult.localPath,
+          rootDir: resolvedRootDir,
+          hasJest: detection.hasJest,
+          jestConfigPath: detection.configPath,
+          jestCommand: detection.jestCommand,
+          testingFrameworksJson: JSON.stringify(detection.testingFrameworks),
+        },
+      });
+
+  await prisma.project
+    .update({
+      where: { id: projectId },
+      data: {
+        repoUrl,
+        defaultBranch: cloneResult.defaultBranch || "main",
+        activeSnapshotId: snapshot.id,
+        workspaceRevision: { increment: 1 },
+      },
+    })
+    .catch((err) => console.error("Error updating project repoUrl:", err));
+
+  clearProjectTreeCache();
+  if (ownerId) clearPortfolioCache(ownerId);
+
+  return { snapshot, testingFrameworks: detection.testingFrameworks, reused: false };
+}
 
 export const cloneGitHubRepositoryByUrl = async (req, res) => {
   try {
@@ -79,43 +166,24 @@ export const cloneGitHubRepositoryByUrl = async (req, res) => {
       });
     }
 
-    const resolvedRootDir = resolveProjectRoot(cloneResult.localPath) || cloneResult.localPath;
-    const detection = detectJest(resolvedRootDir);
-
-    const snapshot = await prisma.projectSnapshot.create({
-      data: {
-        projectId,
-        source: "GITHUB",
-        commitSha: cloneResult.commitSha,
-        storagePath: cloneResult.localPath,
-        rootDir: resolvedRootDir,
-        hasJest: detection.hasJest,
-        jestConfigPath: detection.configPath,
-        jestCommand: detection.jestCommand,
-        testingFrameworksJson: JSON.stringify(detection.testingFrameworks),
-      },
+    const { snapshot, testingFrameworks, reused } = await finalizeGitHubImportSnapshot({
+      projectId,
+      ownerId: req.user?.id,
+      cloneResult,
+      repoUrl: url,
     });
 
-    // Save repoUrl and defaultBranch to project
-    await prisma.project
-      .update({
-        where: { id: projectId },
-        data: {
-          repoUrl: url,
-          defaultBranch: cloneResult.defaultBranch || "main",
-        },
-      })
-      .catch((err) => console.error("Error updating project repoUrl:", err));
-
-    // Build CFG in background
-    buildCfgForSnapshot(snapshot.id).catch((err) => {
-      console.error("Error building CFG for GitHub URL import:", err);
-    });
+    if (!reused) {
+      // Build CFG in background
+      buildCfgForSnapshot(snapshot.id).catch((err) => {
+        console.error("Error building CFG for GitHub URL import:", err);
+      });
+    }
 
     res.status(200).json({
       ...cloneResult,
       snapshotId: snapshot.id,
-      testingFrameworks: detection.testingFrameworks,
+      testingFrameworks,
     });
   } catch (error) {
     console.error("Error cloning GitHub repository by URL:", error);
@@ -185,44 +253,25 @@ export const importGitHubRepository = async (req, res) => {
       });
     }
 
-    const resolvedRootDir = resolveProjectRoot(cloneResult.localPath) || cloneResult.localPath;
-    const detection = detectJest(resolvedRootDir);
-
-    const snapshot = await prisma.projectSnapshot.create({
-      data: {
-        projectId,
-        source: "GITHUB",
-        commitSha: cloneResult.commitSha,
-        storagePath: cloneResult.localPath,
-        rootDir: resolvedRootDir,
-        hasJest: detection.hasJest,
-        jestConfigPath: detection.configPath,
-        jestCommand: detection.jestCommand,
-        testingFrameworksJson: JSON.stringify(detection.testingFrameworks),
-      },
-    });
-
-    // Save repoUrl and defaultBranch to project
     const repoUrl = `https://github.com/${owner}/${repo}`;
-    await prisma.project
-      .update({
-        where: { id: projectId },
-        data: {
-          repoUrl,
-          defaultBranch: cloneResult.defaultBranch || "main",
-        },
-      })
-      .catch((err) => console.error("Error updating project repoUrl:", err));
-
-    // Build CFG in background
-    buildCfgForSnapshot(snapshot.id).catch((err) => {
-      console.error("Error building CFG for GitHub Repo import:", err);
+    const { snapshot, testingFrameworks, reused } = await finalizeGitHubImportSnapshot({
+      projectId,
+      ownerId: userId,
+      cloneResult,
+      repoUrl,
     });
+
+    if (!reused) {
+      // Build CFG in background
+      buildCfgForSnapshot(snapshot.id).catch((err) => {
+        console.error("Error building CFG for GitHub Repo import:", err);
+      });
+    }
 
     res.status(200).json({
       ...cloneResult,
       snapshotId: snapshot.id,
-      testingFrameworks: detection.testingFrameworks,
+      testingFrameworks,
     });
   } catch (error) {
     console.error("Error importing GitHub repository:", error);

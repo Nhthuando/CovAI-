@@ -3350,6 +3350,62 @@ export const runJestCoverage = async (
       }
     }
 
+    const virtualMockedBarePackages = new Set();
+    let virtualStubPath = "";
+    if (useHermeticMock && Array.isArray(filesToRun) && filesToRun.length > 0) {
+      const mockPkgRe = /jest\.(?:unstable_)?mock(?:Module)?\s*\(\s*['"]([^./'"\s][^'"]*)['"]/g;
+      for (const relTf of filesToRun) {
+        try {
+          const absTf = path.isAbsolute(relTf) ? relTf : path.join(rootDir, relTf);
+          if (!fs.existsSync(absTf)) continue;
+          const tfContent = fs.readFileSync(absTf, "utf8");
+          for (const m of tfContent.matchAll(mockPkgRe)) {
+            const spec = String(m[1] || "").trim();
+            if (
+              !spec ||
+              spec.startsWith("node:") ||
+              spec.startsWith("@jest/") ||
+              spec === "jest" ||
+              spec === "vitest"
+            ) {
+              continue;
+            }
+            const pkgName = spec.startsWith("@")
+              ? spec.split("/").slice(0, 2).join("/")
+              : spec.split("/")[0];
+            virtualMockedBarePackages.add(spec);
+            virtualMockedBarePackages.add(pkgName);
+          }
+        } catch (_) {}
+      }
+      if (virtualMockedBarePackages.size > 0) {
+        try {
+          const vStubDir = path.join(rootDir, ".covai-temp");
+          fs.mkdirSync(vStubDir, { recursive: true });
+          virtualStubPath = path.join(vStubDir, "covai-virtual-stub.mjs");
+          fs.writeFileSync(
+            virtualStubPath,
+            `const _stubHandler = {\n` +
+              `  get: (_t, prop) => {\n` +
+              `    if (prop === "__esModule") return true;\n` +
+              `    if (prop === "then" || prop === "catch" || prop === "finally" || typeof prop === "symbol") return undefined;\n` +
+              `    return _stubProxy;\n` +
+              `  },\n` +
+              `};\n` +
+              `const _stubFn = function () { return _stubProxy; };\n` +
+              `const _stubProxy = new Proxy(_stubFn, _stubHandler);\n` +
+              `export default _stubProxy;\n`,
+            "utf8",
+          );
+          createdHarnessFiles.add(virtualStubPath);
+        } catch (_) {
+          virtualStubPath = "";
+        }
+      }
+    }
+    const virtualStubPathLiteral = virtualStubPath.replace(/\\/g, "/");
+    const virtualMockedPkgsJson = JSON.stringify(Array.from(virtualMockedBarePackages));
+
     const tempResolverName = "covai-jest-resolver.cjs";
     const tempResolverPath = path.join(rootDir, tempResolverName);
     if (shouldRunRoot) {
@@ -3426,6 +3482,14 @@ export const runJestCoverage = async (
             `      const parentDir = path.dirname(currentDir);\n` +
             `      if (parentDir === currentDir) break;\n` +
             `      currentDir = parentDir;\n` +
+            `    }\n` +
+            `    const _covaiVirtualStubPath = ${JSON.stringify(virtualStubPathLiteral)};\n` +
+            `    const _covaiVirtualMockedPkgs = new Set(${virtualMockedPkgsJson});\n` +
+            `    if (_covaiVirtualStubPath && !request.startsWith('.') && !path.isAbsolute(request)) {\n` +
+            `      const pkgName = request.startsWith('@') ? request.split('/').slice(0, 2).join('/') : request.split('/')[0];\n` +
+            `      if ((_covaiVirtualMockedPkgs.has(request) || _covaiVirtualMockedPkgs.has(pkgName)) && fs.existsSync(_covaiVirtualStubPath)) {\n` +
+            `        return _covaiVirtualStubPath;\n` +
+            `      }\n` +
             `    }\n` +
             `    throw err;\n` +
             `  }\n` +
@@ -3610,7 +3674,7 @@ export const runJestCoverage = async (
             "/node_modules/",
             "/coverage/",
             "/lcov-report/",
-            "/\\.covai-temp/",
+            "/\\.covai-temp/(?!collaboration-operations/)",
             "/tests?/",
             "/__tests__/",
             "/specs?/",
@@ -3954,6 +4018,14 @@ export const runJestCoverage = async (
             `        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;\n` +
             `      }\n` +
             `    }\n` +
+            `    const _covaiVirtualStubPath = ${JSON.stringify(virtualStubPathLiteral)};\n` +
+            `    const _covaiVirtualMockedPkgs = new Set(${virtualMockedPkgsJson});\n` +
+            `    if (_covaiVirtualStubPath && !request.startsWith('.') && !path.isAbsolute(request)) {\n` +
+            `      const pkgName = request.startsWith('@') ? request.split('/').slice(0, 2).join('/') : request.split('/')[0];\n` +
+            `      if ((_covaiVirtualMockedPkgs.has(request) || _covaiVirtualMockedPkgs.has(pkgName)) && fs.existsSync(_covaiVirtualStubPath)) {\n` +
+            `        return _covaiVirtualStubPath;\n` +
+            `      }\n` +
+            `    }\n` +
             `    throw err;\n` +
             `  }\n` +
             `};\n`,
@@ -4136,7 +4208,7 @@ export const runJestCoverage = async (
             "/node_modules/",
             "/coverage/",
             "/lcov-report/",
-            "/\\.covai-temp/",
+            "/\\.covai-temp/(?!collaboration-operations/)",
             "/tests?/",
             "/__tests__/",
             "/specs?/",
@@ -6807,14 +6879,20 @@ export const processRunTestsJob = async (jobId, options = {}) => {
             if (installSuccess) {
               // Clear stale coverage files before re-running test suite
               for (const sf of staleCoverageFiles) {
-                try {
-                  if (fs.existsSync(path.join(coverageDir, sf)))
-                    fs.unlinkSync(path.join(coverageDir, sf));
-                } catch {}
-                try {
-                  if (fs.existsSync(path.join(unitCoverageDir, sf)))
-                    fs.unlinkSync(path.join(unitCoverageDir, sf));
-                } catch {}
+                for (const covTargetDir of [
+                  coverageDir,
+                  unitCoverageDir,
+                  activeCoverageDir,
+                  activeUnitCoverageDir,
+                ]) {
+                  try {
+                    if (
+                      covTargetDir &&
+                      fs.existsSync(path.join(covTargetDir, sf))
+                    )
+                      fs.unlinkSync(path.join(covTargetDir, sf));
+                  } catch {}
+                }
               }
               continue; // Automatically re-run tests!
             }
@@ -6948,14 +7026,20 @@ export const processRunTestsJob = async (jobId, options = {}) => {
                 `[RUN_TESTS] Successfully injected isolation mocks for '${missingTarget}'. Automatically re-running unit tests...`,
               ).catch(() => {});
               for (const sf of staleCoverageFiles) {
-                try {
-                  if (fs.existsSync(path.join(coverageDir, sf)))
-                    fs.unlinkSync(path.join(coverageDir, sf));
-                } catch {}
-                try {
-                  if (fs.existsSync(path.join(unitCoverageDir, sf)))
-                    fs.unlinkSync(path.join(unitCoverageDir, sf));
-                } catch {}
+                for (const covTargetDir of [
+                  coverageDir,
+                  unitCoverageDir,
+                  activeCoverageDir,
+                  activeUnitCoverageDir,
+                ]) {
+                  try {
+                    if (
+                      covTargetDir &&
+                      fs.existsSync(path.join(covTargetDir, sf))
+                    )
+                      fs.unlinkSync(path.join(covTargetDir, sf));
+                  } catch {}
+                }
               }
               continue; // Automatically re-run tests!
             }
@@ -7019,14 +7103,20 @@ export const processRunTestsJob = async (jobId, options = {}) => {
                 `[RUN_TESTS] Successfully healed mock export '${missingExport}' in test file(s). Automatically re-running unit tests...`,
               ).catch(() => {});
               for (const sf of staleCoverageFiles) {
-                try {
-                  if (fs.existsSync(path.join(coverageDir, sf)))
-                    fs.unlinkSync(path.join(coverageDir, sf));
-                } catch {}
-                try {
-                  if (fs.existsSync(path.join(unitCoverageDir, sf)))
-                    fs.unlinkSync(path.join(unitCoverageDir, sf));
-                } catch {}
+                for (const covTargetDir of [
+                  coverageDir,
+                  unitCoverageDir,
+                  activeCoverageDir,
+                  activeUnitCoverageDir,
+                ]) {
+                  try {
+                    if (
+                      covTargetDir &&
+                      fs.existsSync(path.join(covTargetDir, sf))
+                    )
+                      fs.unlinkSync(path.join(covTargetDir, sf));
+                  } catch {}
+                }
               }
               continue; // Automatically re-run tests!
             }
@@ -7190,7 +7280,13 @@ export const processRunTestsJob = async (jobId, options = {}) => {
                   relTest.toLowerCase().endsWith("/" + scFile)
                 );
               });
-              if (matchingFailed.length === 0 && runnerResult.exitCode === 0) {
+              const hasFileAttributedFailures = failedScenarios.some((sc) =>
+                Boolean(String(sc.testFile || "").trim()),
+              );
+              if (
+                matchingFailed.length === 0 &&
+                (runnerResult.exitCode === 0 || hasFileAttributedFailures)
+              ) {
                 continue;
               }
 
@@ -7327,12 +7423,18 @@ export const processRunTestsJob = async (jobId, options = {}) => {
                   },
                   orderBy: { createdAt: "desc" },
                   take: 3,
-                  select: { id: true, result: true },
+                  select: { id: true, resultJson: true },
                 });
                 for (const sj of latestSugJobs) {
-                  if (!sj.result || typeof sj.result !== "object") continue;
+                  let parsedRes = null;
+                  try {
+                    parsedRes = sj.resultJson ? JSON.parse(sj.resultJson) : null;
+                  } catch {
+                    parsedRes = null;
+                  }
+                  if (!parsedRes || typeof parsedRes !== "object") continue;
                   let jobModified = false;
-                  const nextRes = { ...sj.result };
+                  const nextRes = { ...parsedRes };
                   if (Array.isArray(nextRes.suggestions)) {
                     nextRes.suggestions = nextRes.suggestions.map((s) => {
                       const tf = String(s?.targetTestFile || s?.testFile || "")
@@ -7354,7 +7456,7 @@ export const processRunTestsJob = async (jobId, options = {}) => {
                   if (jobModified) {
                     await prisma.job.update({
                       where: { id: sj.id },
-                      data: { result: nextRes },
+                      data: { resultJson: JSON.stringify(nextRes) },
                     });
                   }
                 }
@@ -7371,14 +7473,20 @@ export const processRunTestsJob = async (jobId, options = {}) => {
                 `[RUN_TESTS] Auto-healed ${healedCodeByTestFile.size} AI unit test draft file(s). Re-running to verify 100% passing suite...`,
               ).catch(() => {});
               for (const sf of staleCoverageFiles) {
-                try {
-                  if (fs.existsSync(path.join(coverageDir, sf)))
-                    fs.unlinkSync(path.join(coverageDir, sf));
-                } catch {}
-                try {
-                  if (fs.existsSync(path.join(unitCoverageDir, sf)))
-                    fs.unlinkSync(path.join(unitCoverageDir, sf));
-                } catch {}
+                for (const covTargetDir of [
+                  coverageDir,
+                  unitCoverageDir,
+                  activeCoverageDir,
+                  activeUnitCoverageDir,
+                ]) {
+                  try {
+                    if (
+                      covTargetDir &&
+                      fs.existsSync(path.join(covTargetDir, sf))
+                    )
+                      fs.unlinkSync(path.join(covTargetDir, sf));
+                  } catch {}
+                }
               }
               continue;
             }

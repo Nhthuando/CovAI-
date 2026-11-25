@@ -44,7 +44,10 @@ const PYRAMID_LAYERS = [
 function BentoCard({ children, className = "", id }) {
   const handleMouseMove = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    e.currentTarget.style.setProperty("--mouse-x", `${e.clientX - rect.left}px`);
+    e.currentTarget.style.setProperty(
+      "--mouse-x",
+      `${e.clientX - rect.left}px`,
+    );
     e.currentTarget.style.setProperty("--mouse-y", `${e.clientY - rect.top}px`);
   };
 
@@ -64,7 +67,11 @@ export default function Features() {
   const [activeMutant, setActiveMutant] = useState(0);
 
   const mutants = [
-    { op: "balance < total  ->  balance <= total", file: "checkout.ts:14", time: "12ms" },
+    {
+      op: "balance < total  ->  balance <= total",
+      file: "checkout.ts:14",
+      time: "12ms",
+    },
     { op: "fxRate <= 0      ->  false", file: "settlement.ts:6", time: "8ms" },
     { op: "!signature       ->  true", file: "webhooks.ts:3", time: "15ms" },
   ];
@@ -80,7 +87,8 @@ export default function Features() {
             Graph intelligence. Verified execution.
           </h2>
           <p className="text-sm sm:text-base text-[var(--lp-ink-secondary)]">
-            AST branch mapping paired with mutation checks and isolated containers.
+            AST branch mapping paired with mutation checks and isolated
+            containers.
           </p>
         </div>
 
@@ -93,7 +101,9 @@ export default function Features() {
                   <Layers className="w-4 h-4 text-[var(--lp-signal)]" />
                   <span>Three-tier test architecture</span>
                 </span>
-                <span className="text-[var(--lp-signal)] font-semibold">{selectedLayer.metric} cov</span>
+                <span className="text-[var(--lp-signal)] font-semibold">
+                  {selectedLayer.metric} cov
+                </span>
               </div>
 
               <h3 className="lp-display text-xl sm:text-2xl font-bold text-[var(--lp-ink)] mb-1.5">
@@ -135,14 +145,18 @@ export default function Features() {
                           <span className="inline-flex items-center gap-2">
                             <LayerIcon
                               className={`w-3.5 h-3.5 ${
-                                isSelected ? "text-[var(--lp-signal)]" : "text-[var(--lp-ink-muted)]"
+                                isSelected
+                                  ? "text-[var(--lp-signal)]"
+                                  : "text-[var(--lp-ink-muted)]"
                               }`}
                             />
                             <span>{layer.name}</span>
                           </span>
                           <span
                             className={`lp-mono ${
-                              isSelected ? "text-[var(--lp-signal)]" : "text-[var(--lp-ink-muted)]"
+                              isSelected
+                                ? "text-[var(--lp-signal)]"
+                                : "text-[var(--lp-ink-muted)]"
                             }`}
                           >
                             {layer.metric}
@@ -321,14 +335,22 @@ export default function Features() {
                         height="22"
                         rx="4"
                         fill="var(--lp-surface)"
-                        stroke={leaf.fault ? "var(--lp-fault)" : "var(--lp-line-strong)"}
+                        stroke={
+                          leaf.fault
+                            ? "var(--lp-fault)"
+                            : "var(--lp-line-strong)"
+                        }
                         strokeWidth="1.2"
                       />
                       <text
                         x="0"
                         y="3.5"
                         textAnchor="middle"
-                        fill={leaf.fault ? "var(--lp-fault)" : "var(--lp-ink-secondary)"}
+                        fill={
+                          leaf.fault
+                            ? "var(--lp-fault)"
+                            : "var(--lp-ink-secondary)"
+                        }
                         fontSize="9.5"
                         fontFamily="JetBrains Mono, monospace"
                       >
@@ -354,14 +376,17 @@ export default function Features() {
                   <ShieldCheck className="w-4 h-4 text-[var(--lp-signal)]" />
                   <span>Mutation guard</span>
                 </span>
-                <span className="text-[var(--lp-signal)] font-semibold">99.2% killed</span>
+                <span className="text-[var(--lp-signal)] font-semibold">
+                  99.2% killed
+                </span>
               </div>
 
               <h3 className="lp-display text-xl font-bold text-[var(--lp-ink)] mb-1.5">
                 Zero hollow assertions
               </h3>
               <p className="text-xs text-[var(--lp-ink-secondary)] mb-4">
-                In-memory fault injection verifies every test catches logic breaks.
+                In-memory fault injection verifies every test catches logic
+                breaks.
               </p>
 
               <div className="p-3 rounded-lg bg-[var(--lp-inset)] border border-[var(--lp-line)] space-y-2">
@@ -424,7 +449,7 @@ export default function Features() {
                     <span className="inline-block w-1.5 h-3.5 align-middle ml-0.5 bg-[var(--lp-ink)] lp-cursor-blink" />
                   </span>
                   <span className="px-1.5 py-0.5 rounded bg-[var(--lp-ink)] text-[var(--lp-bg)] text-[9px] font-semibold">
-                    Thuan
+                    User
                   </span>
                 </div>
 
@@ -455,7 +480,8 @@ export default function Features() {
                 Isolated container verification
               </h3>
               <p className="text-xs text-[var(--lp-ink-secondary)] mb-4">
-                Runs every suite in sandboxed containers and auto-repairs imports.
+                Runs every suite in sandboxed containers and auto-repairs
+                imports.
               </p>
 
               <div className="p-3 rounded-lg bg-[var(--lp-inset)] border border-[var(--lp-line)] lp-mono text-[11px] space-y-2">
@@ -473,7 +499,9 @@ export default function Features() {
                 </div>
                 <div className="text-[var(--lp-signal)] font-semibold pt-1 flex items-center justify-between">
                   <span>24 passed, 0 failed</span>
-                  <span className="text-[10px] text-[var(--lp-ink-muted)]">1.18s</span>
+                  <span className="text-[10px] text-[var(--lp-ink-muted)]">
+                    1.18s
+                  </span>
                 </div>
               </div>
             </div>
