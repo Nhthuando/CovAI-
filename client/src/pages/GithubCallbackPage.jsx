@@ -110,7 +110,8 @@ export default function GithubCallbackPage() {
         message:
           errorParam === "access_denied"
             ? AUTH_MESSAGES.OAUTH_ACCESS_DENIED
-            : errorDescription || "GitHub authentication failed. Please try again.",
+            : errorDescription ||
+              "GitHub authentication failed. Please try again.",
       }
     : null;
 
@@ -194,11 +195,24 @@ export default function GithubCallbackPage() {
     return () => {
       active = false;
     };
-  }, [code, oauthState, errorParam, isConnectMode, wantsConnectMode, hasToken, navigate]);
+  }, [
+    code,
+    oauthState,
+    errorParam,
+    isConnectMode,
+    wantsConnectMode,
+    hasToken,
+    navigate,
+  ]);
 
   const handleConfirmLink = async (e) => {
     e.preventDefault();
-    if (!pendingLink?.linkToken || confirmBusy || cancelBusy || linkTokenExpired) {
+    if (
+      !pendingLink?.linkToken ||
+      confirmBusy ||
+      cancelBusy ||
+      linkTokenExpired
+    ) {
       return;
     }
     if (!password) {
@@ -292,7 +306,8 @@ export default function GithubCallbackPage() {
               )}
               <div className="min-w-0">
                 <p className="text-xs font-semibold text-[var(--color-text)] truncate">
-                  {githubName || (githubLogin ? `@${githubLogin}` : "GitHub Account")}
+                  {githubName ||
+                    (githubLogin ? `@${githubLogin}` : "GitHub Account")}
                 </p>
                 {githubLogin && (
                   <p className="text-[11px] font-mono text-[var(--color-text-muted)] truncate">
@@ -321,7 +336,11 @@ export default function GithubCallbackPage() {
             </div>
           )}
 
-          <form onSubmit={handleConfirmLink} noValidate className="flex flex-col gap-4">
+          <form
+            onSubmit={handleConfirmLink}
+            noValidate
+            className="flex flex-col gap-4"
+          >
             <div>
               <label
                 htmlFor="github-link-password"

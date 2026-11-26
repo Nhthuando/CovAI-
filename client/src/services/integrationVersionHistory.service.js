@@ -1,4 +1,9 @@
-import { API_BASE, authAwareFetch, getAccessToken, handleUnauthorizedResponse } from "../lib/authSession.js";
+import {
+  API_BASE,
+  authAwareFetch,
+  getAccessToken,
+  handleUnauthorizedResponse,
+} from "../lib/authSession.js";
 const BASE_URL = API_BASE;
 
 function getAuthHeaders() {
@@ -44,31 +49,40 @@ export async function getIntegrationVersionHistory(snapshotId, options = {}) {
     `${BASE_URL}/coverage/${snapshotId}/integration/version-history${queryString}`,
     {
       headers: getAuthHeaders(),
-    }
+    },
   );
   return handleResponse(res);
 }
 
-export async function compareIntegrationVersions(snapshotId, versionAId, versionBId, type = "ANALYZE") {
+export async function compareIntegrationVersions(
+  snapshotId,
+  versionAId,
+  versionBId,
+  type = "ANALYZE",
+) {
   const params = new URLSearchParams({ versionAId, versionBId, type });
   const res = await authAwareFetch(
     fetch,
     `${BASE_URL}/coverage/${snapshotId}/integration/version-compare?${params.toString()}`,
     {
       headers: getAuthHeaders(),
-    }
+    },
   );
   return handleResponse(res);
 }
 
-export async function getHistoricalWorkspaceVersion(snapshotId, versionId, type = "ANALYZE") {
+export async function getHistoricalWorkspaceVersion(
+  snapshotId,
+  versionId,
+  type = "ANALYZE",
+) {
   const params = new URLSearchParams({ type });
   const res = await authAwareFetch(
     fetch,
     `${BASE_URL}/coverage/${snapshotId}/integration/version/${versionId}?${params.toString()}`,
     {
       headers: getAuthHeaders(),
-    }
+    },
   );
   return handleResponse(res);
 }
@@ -85,7 +99,7 @@ export async function getBeforeAfterComparison(projectId, options = {}) {
     `${BASE_URL}/coverage/project/${projectId}/comparison${queryString}`,
     {
       headers: getAuthHeaders(),
-    }
+    },
   );
   return handleResponse(res);
 }
@@ -97,7 +111,7 @@ export async function getSourceFileDiff(projectId, options = {}) {
     `${BASE_URL}/coverage/project/${projectId}/comparison/source-file?${params.toString()}`,
     {
       headers: getAuthHeaders(),
-    }
+    },
   );
   return handleResponse(res);
 }

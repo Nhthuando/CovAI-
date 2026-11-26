@@ -1,4 +1,9 @@
-import { API_BASE, authAwareFetch, getAccessToken, handleUnauthorizedResponse } from "../lib/authSession.js";
+import {
+  API_BASE,
+  authAwareFetch,
+  getAccessToken,
+  handleUnauthorizedResponse,
+} from "../lib/authSession.js";
 const BASE_URL = API_BASE;
 
 function getAuthHeaders() {
@@ -24,11 +29,15 @@ async function handleResponse(res) {
  * POST /api/projects/:id/quality-analysis
  */
 export async function startQualityAnalysisApi(projectId, snapshotId) {
-  const res = await authAwareFetch(fetch, `${BASE_URL}/projects/${projectId}/quality-analysis`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: JSON.stringify(snapshotId ? { snapshotId } : {}),
-  });
+  const res = await authAwareFetch(
+    fetch,
+    `${BASE_URL}/projects/${projectId}/quality-analysis`,
+    {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify(snapshotId ? { snapshotId } : {}),
+    },
+  );
   return handleResponse(res);
 }
 
@@ -36,8 +45,12 @@ export async function startQualityAnalysisApi(projectId, snapshotId) {
  * GET /api/projects/:id/quality-report
  */
 export async function getQualityReportApi(projectId) {
-  const res = await authAwareFetch(fetch, `${BASE_URL}/projects/${projectId}/quality-report`, {
-    headers: getAuthHeaders(),
-  });
+  const res = await authAwareFetch(
+    fetch,
+    `${BASE_URL}/projects/${projectId}/quality-report`,
+    {
+      headers: getAuthHeaders(),
+    },
+  );
   return handleResponse(res);
 }

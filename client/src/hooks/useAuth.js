@@ -120,4 +120,7 @@ export const useAuth = () => {
     userId: user?.id,
     token: user?.token,
     login,
-  
+    logout,
+    refresh: loadUserFromStorage,
+  };
+};

@@ -1,4 +1,8 @@
-import { API_BASE, authAwareFetch, getAccessToken } from "../lib/authSession.js";
+import {
+  API_BASE,
+  authAwareFetch,
+  getAccessToken,
+} from "../lib/authSession.js";
 
 const BASE_URL = API_BASE;
 
@@ -26,14 +30,18 @@ export async function getAiQuotasApi() {
 
 export async function resetAiQuotasApi(channelId = null) {
   const token = getAuthToken();
-  const res = await authAwareFetch(fetch, `${BASE_URL}/settings/ai-quotas/reset`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
+  const res = await authAwareFetch(
+    fetch,
+    `${BASE_URL}/settings/ai-quotas/reset`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ channelId }),
     },
-    body: JSON.stringify({ channelId }),
-  });
+  );
 
   if (!res.ok) {
     const errorBody = await res.json().catch(() => ({}));
@@ -46,14 +54,18 @@ export async function resetAiQuotasApi(channelId = null) {
 
 export async function updateAiQuotaLimitApi(channelId, quotaLimit) {
   const token = getAuthToken();
-  const res = await authAwareFetch(fetch, `${BASE_URL}/settings/ai-quotas/limit`, {
-    method: "PATCH",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
+  const res = await authAwareFetch(
+    fetch,
+    `${BASE_URL}/settings/ai-quotas/limit`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ channelId, quotaLimit }),
     },
-    body: JSON.stringify({ channelId, quotaLimit }),
-  });
+  );
 
   if (!res.ok) {
     const errorBody = await res.json().catch(() => ({}));

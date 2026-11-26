@@ -13,16 +13,27 @@ const SLIDING_RENEW_THRESHOLD_SEC = 7 * 24 * 60 * 60; // renew refresh token if 
 router.post("/", async (req, res) => {
   const refreshToken = req.cookies?.refreshToken;
   if (!refreshToken) {
-    return res.status(401).json({ code: "REFRESH_TOKEN_MISSING", message: "Refresh token missing" });
+    return res
+      .status(401)
+      .json({
+        code: "REFRESH_TOKEN_MISSING",
+        message: "Refresh token missing",
+      });
   }
 
   let payload;
   try {
-    const refreshSecret = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
+    const refreshSecret =
+      process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
     payload = jwt.verify(refreshToken, refreshSecret);
   } catch (error) {
     console.warn("[refresh] JWT verify failed:", error?.message || error);
-    return res.status(403).json({ code: "REFRESH_TOKEN_INVALID", message: "Invalid or expired refresh token" });
+    return res
+      .status(403)
+      .json({
+        code: "REFRESH_TOKEN_INVALID",
+        message: "Invalid or expired refresh token",
+      });
   }
 
   let user;
@@ -32,16 +43,30 @@ router.post("/", async (req, res) => {
       select: { id: true, email: true, name: true, refreshToken: true },
     });
   } catch (dbError) {
-    console.error("[refresh] Transient DB error verifying refresh token:", dbError?.message || dbError);
-    return res.status(503).json({ code: "REFRESH_UNAVAILABLE", message: "Session renewal temporarily unavailable" });
+    console.error(
+      "[refresh] Transient DB error verifying refresh token:",
+      dbError?.message || dbError,
+    );
+    return res
+      .status(503)
+      .json({
+        code: "REFRESH_UNAVAILABLE",
+        message: "Session renewal temporarily unavailable",
+      });
   }
 
   if (!user || !isStoredRefreshTokenValid(user.refreshToken, refreshToken)) {
-    return res.status(403).json({ code: "REFRESH_TOKEN_INVALID", message: "Invalid refresh token" });
+    return res
+      .status(403)
+      .json({
+        code: "REFRESH_TOKEN_INVALID",
+        message: "Invalid refresh token",
+      });
   }
 
   const nowSec = Math.floor(Date.now() / 1000);
-  const remainingSec = typeof payload.exp === "number" ? payload.exp - nowSec : 0;
+  const remainingSec =
+    typeof payload.exp === "number" ? payload.exp - nowSec : 0;
 
   // Slide refresh token expiry forward when approaching threshold so active users stay signed in
   if (remainingSec < SLIDING_RENEW_THRESHOLD_SEC) {
@@ -50,7 +75,10 @@ router.post("/", async (req, res) => {
       setRefreshTokenCookie(req, res, issued.refreshToken);
       return res.status(200).json({ accessToken: issued.accessToken });
     } catch (err) {
-      console.error("[refresh] Sliding renewal failed, issuing access token only:", err?.message || err);
+      console.error(
+        "[refresh] Sliding renewal failed, issuing access token only:",
+        err?.message || err,
+      );
     }
   }
 

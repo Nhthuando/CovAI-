@@ -484,4 +484,8 @@ export default function RepoList({
               <ChevronRight size={13} />
             </button>
           </div>
-     
+        </div>
+      )}
+    </div>
+  );
+}

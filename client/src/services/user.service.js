@@ -1,4 +1,8 @@
-import { API_BASE, authAwareFetch, getAccessToken } from "../lib/authSession.js";
+import {
+  API_BASE,
+  authAwareFetch,
+  getAccessToken,
+} from "../lib/authSession.js";
 
 const BASE_URL = API_BASE;
 

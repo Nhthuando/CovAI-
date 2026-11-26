@@ -43,9 +43,9 @@ const OAUTH_STATE_COOKIE_NAME = "covai_oauth_state";
 function isSecureCookieRequest(req) {
   return Boolean(
     req?.secure ||
-      req?.headers?.["x-forwarded-proto"] === "https" ||
-      (/^https:/i.test(process.env.CLIENT_URL || "") &&
-        process.env.NODE_ENV === "production"),
+    req?.headers?.["x-forwarded-proto"] === "https" ||
+    (/^https:/i.test(process.env.CLIENT_URL || "") &&
+      process.env.NODE_ENV === "production"),
   );
 }
 
@@ -81,7 +81,10 @@ export const setRefreshTokenCookie = (req, res, refreshToken) => {
   res.cookie("refreshToken", refreshToken, getRefreshCookieOptions(req));
 };
 
-function getOAuthStateCookieOptions(req, maxAge = AUTH_LIMITS.OAUTH_STATE_TTL_MS) {
+function getOAuthStateCookieOptions(
+  req,
+  maxAge = AUTH_LIMITS.OAUTH_STATE_TTL_MS,
+) {
   const secure = isSecureCookieRequest(req);
   return {
     httpOnly: true,
@@ -135,7 +138,10 @@ export const register = async (req, res) => {
         message: error.message,
       });
     }
-    logger.error("[register] Unexpected error:", error?.message || "Unknown error");
+    logger.error(
+      "[register] Unexpected error:",
+      error?.message || "Unknown error",
+    );
     return res.status(500).json({ message: "Internal server error!" });
   }
 };
@@ -176,7 +182,10 @@ export const login = async (req, res) => {
         ...(error.details || {}),
       });
     }
-    logger.error("[login] Unexpected error:", error?.message || "Unknown error");
+    logger.error(
+      "[login] Unexpected error:",
+      error?.message || "Unknown error",
+    );
     return res.status(500).json({ message: "Internal server error!" });
   }
 };
@@ -357,9 +366,7 @@ export const githubOAuthAccess = async (req, res) => {
     const { allowAccess } = req.body;
 
     if (allowAccess === undefined) {
-      return res
-        .status(400)
-        .json({ message: "Missing permission parameter!" });
+      return res.status(400).json({ message: "Missing permission parameter!" });
     }
 
     if (!allowAccess) {
@@ -433,7 +440,12 @@ export const oAuthGithub = async (req, res) => {
   clearOAuthStateCookie(req, res);
 
   try {
-    const { code, error, error_description: errorDescription, state } = req.query;
+    const {
+      code,
+      error,
+      error_description: errorDescription,
+      state,
+    } = req.query;
 
     if (error) {
       if (error === "access_denied") {
@@ -515,7 +527,9 @@ export const confirmGithubLink = async (req, res) => {
     if (!parsed.success) {
       const flat = parsed.error.flatten().fieldErrors;
       const firstMessage =
-        flat.linkToken?.[0] || flat.password?.[0] || "Invalid link confirmation payload.";
+        flat.linkToken?.[0] ||
+        flat.password?.[0] ||
+        "Invalid link confirmation payload.";
       const code = flat.linkToken
         ? AUTH_ERROR_CODES.INVALID_LINK_TOKEN
         : AUTH_ERROR_CODES.VALIDATION_ERROR;

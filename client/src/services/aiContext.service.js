@@ -1,5 +1,9 @@
-import { normalizeChatScreenContext } from './chatScreenContext';
-import { API_BASE, authAwareFetch, getAccessToken } from "../lib/authSession.js";
+import { normalizeChatScreenContext } from "./chatScreenContext";
+import {
+  API_BASE,
+  authAwareFetch,
+  getAccessToken,
+} from "../lib/authSession.js";
 const BASE_URL = API_BASE;
 
 async function contextRequest(projectId, suffix = "", method = "GET", body) {
@@ -7,20 +11,57 @@ async function contextRequest(projectId, suffix = "", method = "GET", body) {
     return suffix.includes("memories") ? [] : {};
   }
   const token = getAccessToken();
-  const response = await authAwareFetch(fetch, `${BASE_URL}/projects/${encodeURIComponent(projectId)}${suffix}`, {
-    method, headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-  });
+  const response = await authAwareFetch(
+    fetch,
+    `${BASE_URL}/projects/${encodeURIComponent(projectId)}${suffix}`,
+    {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    },
+  );
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.message || "Could not load context. Please try again.");
+  if (!response.ok)
+    throw new Error(
+      result.message || "Could not load context. Please try again.",
+    );
   return result.data;
 }
-export const getAiContext = projectId => contextRequest(projectId, "/ai-context");
-export const saveAiContext = (projectId, settings) => contextRequest(projectId, "/ai-context", "PUT", settings);
-export const getAiMemories = projectId => contextRequest(projectId, "/ai-context/memories");
-export const addAiMemory = (projectId, input) => contextRequest(projectId, "/ai-context/memories", "POST", input);
-export const editAiMemory = (projectId, id, input) => contextRequest(projectId, `/ai-context/memories/${encodeURIComponent(id)}`, "PATCH", input);
-export const forgetAiMemory = (projectId, id) => contextRequest(projectId, `/ai-context/memories/${encodeURIComponent(id)}`, "DELETE");
-export const clearAiMemories = projectId => contextRequest(projectId, "/ai-context/memories", "DELETE");
-export const previewAiContext = (projectId, input) => contextRequest(projectId, "/ai-context/preview", "POST", { ...input, screenContext: normalizeChatScreenContext(input.screenContext) });
-export const branchAiConversation = (projectId, sessionId, input) => contextRequest(projectId, `/chat/sessions/${encodeURIComponent(sessionId)}/branch`, "POST", input);
+export const getAiContext = (projectId) =>
+  contextRequest(projectId, "/ai-context");
+export const saveAiContext = (projectId, settings) =>
+  contextRequest(projectId, "/ai-context", "PUT", settings);
+export const getAiMemories = (projectId) =>
+  contextRequest(projectId, "/ai-context/memories");
+export const addAiMemory = (projectId, input) =>
+  contextRequest(projectId, "/ai-context/memories", "POST", input);
+export const editAiMemory = (projectId, id, input) =>
+  contextRequest(
+    projectId,
+    `/ai-context/memories/${encodeURIComponent(id)}`,
+    "PATCH",
+    input,
+  );
+export const forgetAiMemory = (projectId, id) =>
+  contextRequest(
+    projectId,
+    `/ai-context/memories/${encodeURIComponent(id)}`,
+    "DELETE",
+  );
+export const clearAiMemories = (projectId) =>
+  contextRequest(projectId, "/ai-context/memories", "DELETE");
+export const previewAiContext = (projectId, input) =>
+  contextRequest(projectId, "/ai-context/preview", "POST", {
+    ...input,
+    screenContext: normalizeChatScreenContext(input.screenContext),
+  });
+export const branchAiConversation = (projectId, sessionId, input) =>
+  contextRequest(
+    projectId,
+    `/chat/sessions/${encodeURIComponent(sessionId)}/branch`,
+    "POST",
+    input,
+  );

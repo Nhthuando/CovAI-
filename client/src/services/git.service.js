@@ -33,9 +33,12 @@ async function handleResponse(res) {
 export const gitService = {
   getStatus: async (projectId) => {
     try {
-      const res = await gitFetch(`${BASE_URL}/git/status?projectId=${projectId}`, {
-        headers: getAuthHeaders(),
-      });
+      const res = await gitFetch(
+        `${BASE_URL}/git/status?projectId=${projectId}`,
+        {
+          headers: getAuthHeaders(),
+        },
+      );
       if (res.status === 404) {
         return {
           success: true,
@@ -134,9 +137,12 @@ export const gitService = {
   },
 
   getBranches: async (projectId) => {
-    const res = await gitFetch(`${BASE_URL}/git/branches?projectId=${projectId}`, {
-      headers: getAuthHeaders(),
-    });
+    const res = await gitFetch(
+      `${BASE_URL}/git/branches?projectId=${projectId}`,
+      {
+        headers: getAuthHeaders(),
+      },
+    );
     return handleResponse(res);
   },
 

@@ -73,18 +73,19 @@ function retainActiveRefreshTokens(storedValue) {
   return active;
 }
 
-export const issueSessionTokensForUser = async (user, extraUserUpdates = {}) => {
+export const issueSessionTokensForUser = async (
+  user,
+  extraUserUpdates = {},
+) => {
   const accessToken = jwt.sign(
     { userId: user.id, userEmail: user.email, userName: user.name },
     process.env.JWT_SECRET,
     { expiresIn: JWT_TTL },
   );
 
-  const refreshToken = jwt.sign(
-    { userId: user.id },
-    getRefreshSecret(),
-    { expiresIn: REFRESH_TTL },
-  );
+  const refreshToken = jwt.sign({ userId: user.id }, getRefreshSecret(), {
+    expiresIn: REFRESH_TTL,
+  });
 
   let existingRefreshValue = user.refreshToken;
   if (existingRefreshValue === undefined) {
@@ -313,7 +314,9 @@ export const login = async (
     if (outcome.locked && outcome.lockedUntil) {
       const retryAfterSeconds = Math.max(
         1,
-        Math.ceil((outcome.lockedUntil.getTime() - currentTime.getTime()) / 1000),
+        Math.ceil(
+          (outcome.lockedUntil.getTime() - currentTime.getTime()) / 1000,
+        ),
       );
       throw new ServiceError(
         formatLockoutMessage(retryAfterSeconds),

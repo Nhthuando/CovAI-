@@ -1,16 +1,26 @@
-import { getAIModelHeaders } from './aiModel.service.js';
+import { getAIModelHeaders } from "./aiModel.service.js";
 import axiosLibrary from "axios";
-import { prepareEditorRequest } from './editorAwareRequest';
-import { API_BASE as SESSION_API_BASE, getAccessToken, installAxiosAuthRefresh } from '../lib/authSession.js';
+import { prepareEditorRequest } from "./editorAwareRequest";
+import {
+  API_BASE as SESSION_API_BASE,
+  getAccessToken,
+  installAxiosAuthRefresh,
+} from "../lib/authSession.js";
 const axios = axiosLibrary.create();
-axios.interceptors.request.use(async config => { await prepareEditorRequest(config.url, {method: config.method}); return config; });
+axios.interceptors.request.use(async (config) => {
+  await prepareEditorRequest(config.url, { method: config.method });
+  return config;
+});
 installAxiosAuthRefresh(axios);
 
 const API_BASE = SESSION_API_BASE;
 
 const getAuthHeaders = () => {
   const token = getAccessToken();
-  return { ...getAIModelHeaders(), ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+  return {
+    ...getAIModelHeaders(),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
 };
 
 /**
@@ -24,7 +34,7 @@ export const getSystemTestFrameworks = async (projectId, snapshotId = null) => {
   const headers = getAuthHeaders();
   const response = await axios.get(
     `${API_BASE}/projects/${projectId}/system-test/frameworks?${params.toString()}`,
-    { headers }
+    { headers },
   );
   return response.data;
 };
@@ -41,7 +51,7 @@ export const runSystemTest = async (
     selectedFiles = [],
     selectedTitles = [],
     headed = false,
-  } = {}
+  } = {},
 ) => {
   const headers = getAuthHeaders();
   const response = await axios.post(
@@ -50,11 +60,15 @@ export const runSystemTest = async (
       framework,
       executionMode,
       testFile,
-      ...(Array.isArray(selectedFiles) && selectedFiles.length > 0 ? { selectedFiles } : {}),
-      ...(Array.isArray(selectedTitles) && selectedTitles.length > 0 ? { selectedTitles } : {}),
+      ...(Array.isArray(selectedFiles) && selectedFiles.length > 0
+        ? { selectedFiles }
+        : {}),
+      ...(Array.isArray(selectedTitles) && selectedTitles.length > 0
+        ? { selectedTitles }
+        : {}),
       ...(headed ? { headed: true } : {}),
     },
-    { headers }
+    { headers },
   );
   return response.data;
 };
@@ -78,7 +92,7 @@ export const getSystemTestSummary = async (snapshotId, params = {}) => {
   const headers = getAuthHeaders();
   const response = await axios.get(
     `${API_BASE}/coverage/${snapshotId}/system/summary`,
-    { headers, params }
+    { headers, params },
   );
   return response.data;
 };
@@ -90,7 +104,7 @@ export const getSystemTestScenarios = async (snapshotId, params = {}) => {
   const headers = getAuthHeaders();
   const response = await axios.get(
     `${API_BASE}/coverage/${snapshotId}/system/scenarios`,
-    { headers, params }
+    { headers, params },
   );
   return response.data;
 };
@@ -102,13 +116,13 @@ export const getSystemTestEvidence = async (
   snapshotId,
   scenarioId,
   format = "image",
-  { signal } = {}
+  { signal } = {},
 ) => {
   const headers = getAuthHeaders();
   if (format === "dom" || format === "json") {
     const response = await axios.get(
       `${API_BASE}/coverage/${snapshotId}/system/scenarios/${scenarioId}/evidence?type=dom`,
-      { headers, signal, timeout: 15000 }
+      { headers, signal, timeout: 15000 },
     );
     return response.data;
   }
@@ -120,7 +134,7 @@ export const getSystemTestEvidence = async (
       responseType: "blob",
       signal,
       timeout: 15000,
-    }
+    },
   );
   if (!response.data?.type?.startsWith("image/")) {
     throw new Error("Screenshot unavailable for this scenario");
@@ -133,19 +147,22 @@ export const getSystemTestEvidence = async (
  */
 export const generateColdStartSystemTests = async (
   snapshotId,
-  { framework = "playwright", routes = ["/"], executionMode = "full" } = {}
+  { framework = "playwright", routes = ["/"], executionMode = "full" } = {},
 ) => {
   const headers = getAuthHeaders();
   try {
     const response = await axios.post(
       `${API_BASE}/coverage/${snapshotId}/system/generate-tests`,
       { framework, routes, executionMode },
-      { headers }
+      { headers },
     );
     return response.data.data;
   } catch (error) {
     const response = error.response;
-    if (response?.status === 409 && response.data?.code === 'GENERATION_IN_PROGRESS') {
+    if (
+      response?.status === 409 &&
+      response.data?.code === "GENERATION_IN_PROGRESS"
+    ) {
       return response.data.data;
     }
     throw error;
@@ -159,9 +176,9 @@ export const getSystemTestFileContent = async (snapshotId, filePath) => {
   const headers = getAuthHeaders();
   const response = await axios.get(
     `${API_BASE}/coverage/${snapshotId}/system/tests/content?filePath=${encodeURIComponent(
-      filePath
+      filePath,
     )}`,
-    { headers }
+    { headers },
   );
   return response.data;
 };
@@ -173,16 +190,26 @@ export const updateSystemTestFileContent = async (
   snapshotId,
   filePath,
   content,
-  options = {}
+  options = {},
 ) => {
-  const { saveCollaborativeSnapshotFile } = await import('../lib/editor/editorModelRegistry');
-  const live = await saveCollaborativeSnapshotFile(snapshotId, filePath, content);
+  const { saveCollaborativeSnapshotFile } =
+    await import("../lib/editor/editorModelRegistry");
+  const live = await saveCollaborativeSnapshotFile(
+    snapshotId,
+    filePath,
+    content,
+  );
   if (live) return live;
   const headers = getAuthHeaders();
   const response = await axios.put(
     `${API_BASE}/coverage/${snapshotId}/system/tests/content`,
-    { filePath, content, ...options, requestId: options.requestId || crypto.randomUUID() },
-    { headers }
+    {
+      filePath,
+      content,
+      ...options,
+      requestId: options.requestId || crypto.randomUUID(),
+    },
+    { headers },
   );
   return response.data;
 };
@@ -194,13 +221,13 @@ export const runSingleSystemTest = async (
   snapshotId,
   filePath,
   framework = "playwright",
-  executionMode = "full"
+  executionMode = "full",
 ) => {
   const headers = getAuthHeaders();
   const response = await axios.post(
     `${API_BASE}/coverage/${snapshotId}/system/tests/run-single`,
     { filePath, framework, executionMode },
-    { headers }
+    { headers },
   );
   return response.data;
 };
@@ -210,50 +237,78 @@ export const runSingleSystemTest = async (
  */
 export const optimizeSystemTest = async (
   snapshotId,
-  { filePath, scenarioId = null, mode = "BOOST_COVERAGE", instruction = "" }
+  { filePath, scenarioId = null, mode = "BOOST_COVERAGE", instruction = "" },
 ) => {
   const headers = getAuthHeaders();
   const response = await axios.post(
     `${API_BASE}/coverage/${snapshotId}/system/optimize-test`,
     { filePath, scenarioId, mode, instruction },
-    { headers }
+    { headers },
   );
   return response.data;
 };
 
-export const systemEvidenceRequest = async (snapshotId, path, { method = 'GET', data, signal } = {}) => {
-  const response = await axios({ signal, url: `${API_BASE}/coverage/${snapshotId}/system/${path}`, method, data, headers: getAuthHeaders() });
+export const systemEvidenceRequest = async (
+  snapshotId,
+  path,
+  { method = "GET", data, signal } = {},
+) => {
+  const response = await axios({
+    signal,
+    url: `${API_BASE}/coverage/${snapshotId}/system/${path}`,
+    method,
+    data,
+    headers: getAuthHeaders(),
+  });
   return response.data.data;
 };
 
 export const getSystemGenerationStatus = (snapshotId, signal) =>
-  systemEvidenceRequest(snapshotId, 'generate-tests/status', { signal });
+  systemEvidenceRequest(snapshotId, "generate-tests/status", { signal });
 
 export const cancelSystemGeneration = (snapshotId) =>
-  systemEvidenceRequest(snapshotId, 'generate-tests', { method: 'DELETE' });
+  systemEvidenceRequest(snapshotId, "generate-tests", { method: "DELETE" });
 
 export const importSystemEnvironment = (snapshotId, body) =>
-  systemEvidenceRequest(snapshotId, 'setup/environment/import', { method: 'POST', data: body });
+  systemEvidenceRequest(snapshotId, "setup/environment/import", {
+    method: "POST",
+    data: body,
+  });
 
-export const getSystemRunArtifact = async (snapshotId, artifactId, { signal } = {}) => {
-  const response = await axios.get(`${API_BASE}/coverage/${snapshotId}/system/artifacts/${encodeURIComponent(artifactId)}`, { headers: getAuthHeaders(), responseType: 'blob', signal });
+export const getSystemRunArtifact = async (
+  snapshotId,
+  artifactId,
+  { signal } = {},
+) => {
+  const response = await axios.get(
+    `${API_BASE}/coverage/${snapshotId}/system/artifacts/${encodeURIComponent(artifactId)}`,
+    { headers: getAuthHeaders(), responseType: "blob", signal },
+  );
   return response.data;
 };
 
 export const downloadSystemAssessmentPdf = async (snapshotId, assessmentId) => {
-  const response = await axios.get(`${API_BASE}/coverage/${snapshotId}/system/assessments/${assessmentId}/report.pdf`, { headers: getAuthHeaders(), responseType: 'blob' });
+  const response = await axios.get(
+    `${API_BASE}/coverage/${snapshotId}/system/assessments/${assessmentId}/report.pdf`,
+    { headers: getAuthHeaders(), responseType: "blob" },
+  );
   const url = URL.createObjectURL(response.data);
   try {
-    const link = document.createElement('a');
+    const link = document.createElement("a");
     link.href = url;
     link.download = `covai-system-test-${assessmentId}.pdf`;
     document.body.appendChild(link);
     link.click();
     link.remove();
-  } finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 };
 
-export const getSystemTestCaseDetail = async (snapshotId, { testFile, testName } = {}) => {
+export const getSystemTestCaseDetail = async (
+  snapshotId,
+  { testFile, testName } = {},
+) => {
   const params = new URLSearchParams();
   if (testFile) params.set("testFile", testFile);
   if (testName) params.set("testName", testName);
@@ -298,5 +353,3 @@ export const aiFixSystemTestCaseApi = async (snapshotId, payload = {}) => {
   );
   return response.data;
 };
-
-

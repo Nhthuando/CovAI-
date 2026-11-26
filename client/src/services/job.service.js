@@ -1,5 +1,10 @@
-import { getAIModelHeaders } from './aiModel.service.js';
-import { API_BASE, authAwareFetch, getAccessToken, handleUnauthorizedResponse } from "../lib/authSession.js";
+import { getAIModelHeaders } from "./aiModel.service.js";
+import {
+  API_BASE,
+  authAwareFetch,
+  getAccessToken,
+  handleUnauthorizedResponse,
+} from "../lib/authSession.js";
 /* eslint-disable no-useless-assignment */
 const BASE_URL = API_BASE;
 
@@ -34,8 +39,14 @@ async function handleResponse(res) {
     if (res.status === 401) {
       await handleUnauthorizedResponse();
     }
-    const error = new Error(data.message || `Request failed with status ${res.status}`);
-    Object.assign(error, { status: res.status, code: data.code, details: data.details });
+    const error = new Error(
+      data.message || `Request failed with status ${res.status}`,
+    );
+    Object.assign(error, {
+      status: res.status,
+      code: data.code,
+      details: data.details,
+    });
     throw error;
   }
 
@@ -68,7 +79,9 @@ async function fetchWithRetry(url, options = {}, retries = 1, delayMs = 400) {
 export async function getProjectJobsApi(projectId) {
   try {
     const headers = await getAuthHeaders();
-    return await fetchWithRetry(`${BASE_URL}/job/${projectId}/jobs`, { headers });
+    return await fetchWithRetry(`${BASE_URL}/job/${projectId}/jobs`, {
+      headers,
+    });
   } catch (error) {
     if (error instanceof TypeError) {
       throw new Error(
@@ -108,7 +121,9 @@ export async function getJobDetailApi(jobId, options = {}) {
     if (options?.summary) params.set("summary", "1");
     if (options?.includeLogs) params.set("includeLogs", "1");
     const qs = params.toString();
-    const url = qs ? `${BASE_URL}/job/${jobId}?${qs}` : `${BASE_URL}/job/${jobId}`;
+    const url = qs
+      ? `${BASE_URL}/job/${jobId}?${qs}`
+      : `${BASE_URL}/job/${jobId}`;
     return await fetchWithRetry(url, { headers });
   } catch (error) {
     if (error instanceof TypeError) {
