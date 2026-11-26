@@ -14,6 +14,8 @@ services:
       - "5000:5000"
     volumes:
       - ./server:/app
+      # Persists Git workspaces (.git) and immutable Snapshot CAS blobs (storage/projects/*/vcs/objects/*.gz)
+      - ./server/storage:/app/storage
       - ./shared:/shared:ro
       - /app/node_modules
       - /app/node_modules/.prisma
@@ -21,6 +23,7 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379
       - DISABLE_DOCKER_RUNNER=true
+      - GIT_TERMINAL_PROMPT=0
       - GIT_CONFIG_COUNT=1
       - GIT_CONFIG_KEY_0=safe.directory
       - GIT_CONFIG_VALUE_0=*

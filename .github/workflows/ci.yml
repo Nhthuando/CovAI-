@@ -1,0 +1,112 @@
+name: Version Control & Platform CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+concurrency:
+  group: covai-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server-verify:
+    name: Server Schema & Jest Verification
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install server dependencies
+        run: npm ci
+
+      - name: Validate Prisma schema & generate client
+        run: |
+          npx prisma validate
+          npx prisma generate
+
+      - name: Dry-run additive Version Control SQL migration
+        run: node scripts/applyVersionControlMigration.mjs
+
+      - name: Run Auth, Collaboration, Git & Snapshot VCS Jest suites
+        run: |
+          npm test -- --runInBand \
+            src/tests/auth.service.test.js \
+            src/tests/auth.login.integration.test.js \
+            src/tests/auth.github.integration.test.js \
+            src/tests/auth.providerSeparation.test.js \
+            src/tests/githubOAuth.controller.test.js \
+            src/tests/projectAccess.test.js \
+            src/tests/projectEndpointPolicy.test.js \
+            src/tests/gitCollaborationSafety.test.js \
+            src/tests/gitPreparedPublication.integration.test.js \
+            src/tests/gitCredentialHelper.test.js \
+            src/tests/gitPorcelainParser.test.js \
+            src/tests/gitFullWorkflow.integration.test.js \
+            src/tests/snapshotCas.service.test.js \
+            src/tests/snapshotWorkspace.test.js \
+            src/tests/snapshotVcs.integration.test.js
+
+  client-verify:
+    name: Client Lint, Tests & Production Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install client dependencies
+        run: npm ci
+
+      - name: Run client unit tests
+        run: npm test
+
+      - name: Lint VCS & Auth client modules
+        run: |
+          npx eslint --max-warnings=0 \
+            src/lib/authSession.js \
+            src/hooks/useAuth.js \
+            src/hooks/useProjectEvents.js \
+            src/hooks/useVcsSync.js \
+            src/services/auth.service.js \
+            src/services/vcsUiHelpers.js \
+            src/services/vcsUiHelpers.test.js \
+            src/services/git.service.js \
+            src/services/snapshotVcs.service.js \
+            src/services/coverage.service.js \
+            src/components/auth/AuthForm.jsx \
+            src/pages/GithubCallbackPage.jsx \
+            src/components/dashboard/VersionControlWorkspace.jsx \
+            src/components/dashboard/ActivityBar.jsx \
+            src/components/dashboard/import/ImportLayout.jsx \
+            src/components/dashboard/import/GitHubImport.jsx \
+            src/components/dashboard/vcs/shared/*.jsx \
+            src/components/dashboard/vcs/git/*.jsx \
+            src/components/dashboard/vcs/snapshot/*.jsx
+
+      - name: Build client production bundle
+        run: npm run build
