@@ -17,7 +17,6 @@ import {
   AlertCircle,
   Save,
   Check,
-  Sparkles,
   CheckCircle2,
   ChevronRight,
   Eye,
@@ -468,7 +467,6 @@ export default function Editor({
   coverageType = "unit",
   onOpenFile,
   onRunAnalysis,
-  onSuggestTestcase,
   refreshTrigger,
   jumpTarget,
 }) {
@@ -1218,7 +1216,7 @@ export default function Editor({
           ))}
         </div>
 
-        {/* Right: Coverage summary tags, Suggest testcase & Save Status */}
+        {/* Right: Coverage summary tags & Save Status */}
         <div className="flex items-center gap-2.5">
           {!isCurrentTestFile && fileCoverage?.summary && (
             <div
@@ -1267,18 +1265,6 @@ export default function Editor({
             </div>
           )}
 
-          {snapshotId && !isCurrentTestFile && (
-            <button
-              type="button"
-              onClick={() => { if (projectAccess.can("ai.use")) onSuggestTestcase?.(activeTabId); }}
-              disabled={!projectAccess.can("ai.use")}
-              className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium border border-[var(--ps-line-strong)] bg-[var(--ps-surface-2)] hover:border-[var(--ps-cobalt)] text-[var(--ps-ink)] transition-colors duration-150 cursor-pointer"
-              title="Request AI Agent to suggest Jest/Vitest testcase in chat"
-            >
-              <Sparkles size={12} className="text-[var(--ps-cobalt)]" />
-              <span>Suggest testcase</span>
-            </button>
-          )}
           {saveError && (
             <span style={{ color: "var(--color-danger)", fontSize: 11 }}>
               {saveError}

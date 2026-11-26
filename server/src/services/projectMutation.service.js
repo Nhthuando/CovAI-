@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { hashOperationInput } from '../utils/projectOperationIdentity.js';
 import prisma from '../config/prisma.js';
 import { withProjectGuard } from './projectAccess.service.js';
+import * as projectAccessModule from './projectAccess.service.js';
 import { deliverProjectEvent, publishProjectEvent } from './projectEvent.service.js';
 import fsSync from 'node:fs';
 import { fileVersion, findEditableSnapshot, hashFileContent, MAX_PROJECT_FILE_BYTES,
@@ -153,6 +154,7 @@ export const mutateProjectWorkspace = async ({ projectId, snapshotId, userId, ca
     }
     // Only remove recovery evidence after the transaction is confirmed committed.
     if (result._cleanup) {
+        projectAccessModule.invalidateProjectAccessCache?.(projectId);
         for (const target of Object.values(result._cleanup)) await fs.rm(target, { recursive: true, force: true }).catch(() => {});
         delete result._cleanup;
         await deliverProjectEvent(result._event).catch(() => {});

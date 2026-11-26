@@ -16,7 +16,7 @@ export function PyramidAndPillarsZone({
   const pillars = vm?.pillars || {};
 
   return (
-    <div className={`grid grid-cols-12 gap-4 ${className}`}>
+    <div data-guide="ud-pyramid" className={`grid grid-cols-12 gap-4 ${className}`}>
       {/* Left 4 Cols: Test Pyramid Visualizer */}
       <div className="col-span-12 xl:col-span-4">
         <ZonePanel

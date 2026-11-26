@@ -6,6 +6,7 @@ import {
   normalizeAuthProvider,
   resolveVersionControlMode,
 } from "../../../shared/versionControlMode.js";
+import { resetGuidanceTours } from "../components/dashboard/guidance/guidanceStorage";
 
 function readUserFromStorage() {
   const token = localStorage.getItem("token");
@@ -61,6 +62,7 @@ export const useAuth = () => {
   const login = useCallback((userData, token) => {
     queryClient.cancelQueries();
     queryClient.clear();
+    resetGuidanceTours();
     const authProvider =
       normalizeAuthProvider(userData?.authProvider) || AUTH_PROVIDERS.EMAIL;
     const vcMode = resolveVersionControlMode(authProvider);
@@ -89,6 +91,7 @@ export const useAuth = () => {
     }
     queryClient.cancelQueries();
     queryClient.clear();
+    resetGuidanceTours();
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     localStorage.removeItem("userName");

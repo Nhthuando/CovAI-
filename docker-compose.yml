@@ -1,65 +1,80 @@
-# CovAI 3-Service Runtime Topology (client, server, redis)
-# - Local Dev (Windows + WSL Redis):
-#     docker compose up -d redis
-#     npm run dev
-# - Full 3-Service Deployment (VPS / Docker):
-#     docker compose up -d --build
 services:
   server:
     build:
       context: ./server
       dockerfile: Dockerfile
-    container_name: covai_server
+    container_name: covai_server_prod
     ports:
-      - "5000:5000"
+      - "127.0.0.1:5000:5000"
+    mem_limit: 1800m
     volumes:
-      - ./server:/app
       # Persists Git workspaces (.git) and immutable Snapshot CAS blobs (storage/projects/*/vcs/objects/*.gz)
       - ./server/storage:/app/storage
       - ./shared:/shared:ro
-      - /app/node_modules
-      - /app/node_modules/.prisma
-    command: sh -c "git config --global --add safe.directory '*' ; npm run dev:docker"
     environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://covai_user:CovaiDbPass2026!@postgres:5432/covai_db?schema=public
       - REDIS_URL=redis://redis:6379
       - DISABLE_DOCKER_RUNNER=true
       - GIT_TERMINAL_PROMPT=0
       - GIT_CONFIG_COUNT=1
       - GIT_CONFIG_KEY_0=safe.directory
       - GIT_CONFIG_VALUE_0=*
-      - NODE_OPTIONS=--dns-result-order=ipv4first
+      - NODE_OPTIONS=--max-old-space-size=1400 --dns-result-order=ipv4first
     env_file:
       - ./server/.env
     depends_on:
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
     restart: unless-stopped
 
   client:
     build:
-      context: ./client
-      dockerfile: Dockerfile.dev
-    container_name: covai_client
+      context: .
+      dockerfile: client/Dockerfile
+      args:
+        - VITE_API_URL=https://covai.tech/api
+        - VITE_GITHUB_CLIENT_ID=Ov23liQ1Hyb1oaqmSTXi
+    container_name: covai_client_prod
     ports:
-      - "5173:5173"
-    volumes:
-      - ./client:/app
-      - ./shared:/shared:ro
-      - /app/node_modules
-    environment:
-      - VITE_BACKEND_DOCKER_URL=http://server:5000
-    command: sh -c "npm run dev -- --host"
+      - "127.0.0.1:4173:80"
+    mem_limit: 128m
     depends_on:
       - server
     restart: unless-stopped
 
+  postgres:
+    image: postgres:16-alpine
+    container_name: covai_postgres_prod
+    ports:
+      - "127.0.0.1:5432:5432"
+    mem_limit: 768m
+    environment:
+      - POSTGRES_USER=covai_user
+      - POSTGRES_PASSWORD=CovaiDbPass2026!
+      - POSTGRES_DB=covai_db
+    volumes:
+      - postgres_data_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U covai_user -d covai_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
-    container_name: covai_redis
+    container_name: covai_redis_prod
+    command: redis-server --maxmemory 200mb --maxmemory-policy allkeys-lru
     ports:
       - "127.0.0.1:6379:6379"
+    mem_limit: 256m
     volumes:
-      - redis_data:/data
+      - redis_data_prod:/data
     restart: unless-stopped
 
 volumes:
-  redis_data:
+  postgres_data_prod:
+  redis_data_prod:

@@ -9,6 +9,7 @@ import prisma from "../config/prisma.js";
 import { admitProjectOperation } from "./projectOperation.service.js";
 import { operationSnapshot, currentProjectOperation, withOperationPublishGuard, stagePreparedPublication, deferPreparedCommit } from "./projectOperationWorkspace.service.js";
 import { resolveProjectAccess, withProjectGuard } from "./projectAccess.service.js";
+import * as projectAccessModule from "./projectAccess.service.js";
 import { assertEditorSnapshotChangeAllowed } from './projectEditorBridge.service.js';
 import { deliverProjectEvent, publishProjectEvent } from "./projectEvent.service.js";
 import { ServiceError } from "../utils/serviceError.js";
@@ -440,7 +441,7 @@ export const createSnapshotIngestJob = async ({
     return { reused: true, result: cached };
   }
 
-  return withProjectGuard({ projectId, userId, capability: 'integrations.write' }, async (tx) => {
+  const created = await withProjectGuard({ projectId, userId, capability: 'integrations.write' }, async (tx) => {
     const [project, user] = await Promise.all([
       tx.project.findUnique({ where: { id: projectId }, select: { id: true } }),
       tx.user.findUnique({ where: { id: userId }, select: { id: true } }),
@@ -473,6 +474,8 @@ export const createSnapshotIngestJob = async ({
 
     return { reused: false, snapshot, job };
   });
+  projectAccessModule.invalidateProjectAccessCache?.(projectId);
+  return created;
 };
 
 export const createIngestJobForSnapshot = async ({

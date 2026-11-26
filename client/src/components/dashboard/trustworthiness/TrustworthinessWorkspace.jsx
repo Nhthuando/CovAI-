@@ -12,7 +12,7 @@ import HomeScreen from './HomeScreen';
 import TargetSetup from './TargetSetup';
 import KnowledgeSources from './KnowledgeSources';
 import BenchmarkEditor from './BenchmarkEditor';
-import { ArrowLeft, ArrowRight, BookOpen, Check, Code2, House, Power, ScanSearch } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Code2, House, Power, ScanSearch } from 'lucide-react';
 import { Button as UiButton } from '../../ui/button';
 import { TooltipProvider } from '../../ui/tooltip';
 import { getStepStatus, nextStep } from './evaluationSteps';
@@ -158,6 +158,7 @@ export default function TrustworthinessWorkspace({ projectId }) {
       <button
         type="button"
         id="chatbot-evaluation-toggle"
+        data-guide="eval-toggle"
         role="switch"
         aria-checked={projectEnabled}
         aria-label={projectEnabled ? 'Turn Chatbot Evaluation off' : 'Turn Chatbot Evaluation on'}
@@ -198,7 +199,7 @@ export default function TrustworthinessWorkspace({ projectId }) {
   };
   return (
     <TooltipProvider delayDuration={200}>
-    <section ref={workspaceRef} aria-label="Project chatbot evaluation"
+    <section ref={workspaceRef} data-guide="eval-workspace" aria-label="Project chatbot evaluation"
       className="mx-auto w-full max-w-[1400px] space-y-6 bg-[var(--color-bg)] px-4 py-5 text-[var(--color-text)] sm:px-8 sm:py-7">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3">
@@ -213,27 +214,6 @@ export default function TrustworthinessWorkspace({ projectId }) {
               <span aria-hidden="true" className="size-2 rounded-full bg-amber-400" />Reconnecting…
             </span>
           )}
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            className={buttonClass}
-            onClick={() =>
-              window.dispatchEvent(
-                new CustomEvent('covai:open-guide', {
-                  detail: {
-                    stepId: ['audit', 'connect'].includes(view)
-                      ? 'chatbot-audit-connect'
-                      : 'chatbot-benchmark-run',
-                  },
-                }),
-              )
-            }
-            title="Chatbot Evaluation Guide (code review, target setup, benchmarks & calibration)"
-          >
-            <BookOpen className="size-3.5 text-[var(--color-primary)]" aria-hidden="true" />
-            <span>Guide</span>
-          </Button>
           {renderOnOffSwitch()}
         </div>
       </header>
@@ -261,7 +241,7 @@ export default function TrustworthinessWorkspace({ projectId }) {
         </div>
       ) : (
         <>
-      <nav role="tablist" aria-label="Evaluation workflow"
+      <nav role="tablist" data-guide="eval-tabs" aria-label="Evaluation workflow"
         className="-mx-1 flex gap-1 overflow-x-auto border-b border-[var(--color-border)] px-1"
         onKeyDown={event => {
           if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;

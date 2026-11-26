@@ -7,6 +7,7 @@ import {
   withProjectGuard,
   invalidateProjectAccessCache,
 } from "./projectAccess.service.js";
+import * as projectAccessModule from "./projectAccess.service.js";
 import { assertEditorSnapshotChangeAllowed } from "./projectEditorBridge.service.js";
 import {
   publishProjectEvent,
@@ -56,31 +57,70 @@ import { cleanupProjectStorageAsync } from "./projectStorageCleanup.service.js";
 export { ServiceError };
 export { cleanupProjectStorageAsync, buildTree };
 
+const TREE_EXCLUDED_NAMES = new Set([
+  "node_modules",
+  ".git",
+  "__MACOSX",
+  ".DS_Store",
+  ".covai_test_versions",
+]);
+
+function shouldSkipTreeEntry(item) {
+  return (
+    TREE_EXCLUDED_NAMES.has(item) ||
+    item.startsWith(".covai-") ||
+    item.startsWith(".covai_")
+  );
+}
+
+function resolveFileLang(item) {
+  const lowerName = item.toLowerCase();
+  const ext = path.extname(item).toLowerCase();
+
+  if (lowerName.includes(".test.") || lowerName.includes(".spec.")) return "test";
+  if (ext === ".jsx" || ext === ".tsx") return "react";
+  if (ext === ".js" || ext === ".mjs" || ext === ".cjs") return "js";
+  if (ext === ".ts") return "ts";
+  if (ext === ".json") return "json";
+  if (ext === ".css" || ext === ".scss" || ext === ".sass" || ext === ".less")
+    return "css";
+  if (ext === ".html" || ext === ".htm") return "html";
+  if (ext === ".md") return "md";
+  if (
+    ext === ".png" ||
+    ext === ".jpg" ||
+    ext === ".jpeg" ||
+    ext === ".svg" ||
+    ext === ".gif" ||
+    ext === ".ico"
+  )
+    return "image";
+  return "file";
+}
+
+function sortTreeNodes(nodes) {
+  nodes.sort((a, b) => {
+    if (a.type === b.type) return a.name.localeCompare(b.name);
+    return a.type === "folder" ? -1 : 1;
+  });
+  return nodes;
+}
+
 function buildTree(dirPath, rootPath = dirPath) {
   const result = [];
+  if (!dirPath) return result;
   try {
-    if (!dirPath || !fs.existsSync(dirPath)) return result;
-    const items = fs.readdirSync(dirPath);
-    for (const item of items) {
-      if (
-        item === "node_modules" ||
-        item === ".git" ||
-        item === "__MACOSX" ||
-        item === ".DS_Store" ||
-        item.startsWith(".covai-") ||
-        item.startsWith(".covai_") ||
-        item === ".covai_test_versions"
-      )
-        continue;
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const item = entry.name;
+      if (shouldSkipTreeEntry(item) || entry.isSymbolicLink()) continue;
 
       const itemPath = path.join(dirPath, item);
-      const stat = fs.lstatSync(itemPath);
-      if (stat.isSymbolicLink()) continue;
       const relativePath = path
         .relative(rootPath, itemPath)
         .replace(/\\/g, "/");
 
-      if (stat.isDirectory()) {
+      if (entry.isDirectory()) {
         const children = buildTree(itemPath, rootPath);
         result.push({
           id: relativePath,
@@ -89,53 +129,66 @@ function buildTree(dirPath, rootPath = dirPath) {
           children,
         });
       } else {
-        let lang = "file";
-        const lowerName = item.toLowerCase();
-        const ext = path.extname(item).toLowerCase();
-
-        if (lowerName.includes(".test.") || lowerName.includes(".spec."))
-          lang = "test";
-        else if (ext === ".jsx" || ext === ".tsx") lang = "react";
-        else if (ext === ".js" || ext === ".mjs" || ext === ".cjs") lang = "js";
-        else if (ext === ".ts") lang = "ts";
-        else if (ext === ".json") lang = "json";
-        else if (
-          ext === ".css" ||
-          ext === ".scss" ||
-          ext === ".sass" ||
-          ext === ".less"
-        )
-          lang = "css";
-        else if (ext === ".html" || ext === ".htm") lang = "html";
-        else if (ext === ".md") lang = "md";
-        else if (
-          ext === ".png" ||
-          ext === ".jpg" ||
-          ext === ".jpeg" ||
-          ext === ".svg" ||
-          ext === ".gif" ||
-          ext === ".ico"
-        )
-          lang = "image";
-
         result.push({
           id: relativePath,
           name: item,
           type: "file",
-          lang,
+          lang: resolveFileLang(item),
         });
       }
     }
   } catch (e) {
-    console.error(e);
+    if (e?.code !== "ENOENT" && e?.code !== "ENOTDIR") {
+      console.error(e);
+    }
   }
 
-  result.sort((a, b) => {
-    if (a.type === b.type) return a.name.localeCompare(b.name);
-    return a.type === "folder" ? -1 : 1;
-  });
+  return sortTreeNodes(result);
+}
 
-  return result;
+async function buildTreeAsync(dirPath, rootPath = dirPath) {
+  if (!dirPath) return [];
+  let entries;
+  try {
+    entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+  } catch (e) {
+    if (e?.code !== "ENOENT" && e?.code !== "ENOTDIR") {
+      console.error(e);
+    }
+    return [];
+  }
+
+  const folderTasks = [];
+  const files = [];
+
+  for (const entry of entries) {
+    const item = entry.name;
+    if (shouldSkipTreeEntry(item) || entry.isSymbolicLink()) continue;
+
+    const itemPath = path.join(dirPath, item);
+    const relativePath = path.relative(rootPath, itemPath).replace(/\\/g, "/");
+
+    if (entry.isDirectory()) {
+      folderTasks.push(
+        buildTreeAsync(itemPath, rootPath).then((children) => ({
+          id: relativePath,
+          name: item,
+          type: "folder",
+          children,
+        })),
+      );
+    } else {
+      files.push({
+        id: relativePath,
+        name: item,
+        type: "file",
+        lang: resolveFileLang(item),
+      });
+    }
+  }
+
+  const folders = await Promise.all(folderTasks);
+  return sortTreeNodes([...folders, ...files]);
 }
 
 export const createProject = async ({ input, currentUserId }) => {
@@ -525,6 +578,7 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
           jestCommand: detection.jestCommand,
         },
       });
+      invalidateProjectTreeMetaCache(projectId);
 
       try {
         const { ensureProjectCasBaseline } = await import("./snapshotCas.service.js");
@@ -730,6 +784,8 @@ export const activateProjectSnapshot = async ({
       workspaceRevision: { increment: 1 },
     },
   });
+  invalidateProjectAccessCache(projectId);
+  invalidateProjectTreeMetaCache(projectId);
 
   try {
     const { clearPortfolioCache } =
@@ -1081,6 +1137,7 @@ export const createProjectCheckpoint = async ({
     },
   );
   const { newSnapshot } = committed;
+  invalidateProjectTreeMetaCache(projectId);
   await deliverProjectEvent(committed.event).catch(() => {});
 
   try {
@@ -1334,6 +1391,7 @@ export const restoreProjectCheckpoint = async ({
     },
   );
   const { newSnapshot } = committed;
+  invalidateProjectTreeMetaCache(projectId);
   await deliverProjectEvent(committed.event).catch(() => {});
 
   return {
@@ -1696,8 +1754,31 @@ export const deleteProject = async (projectId, userId) => {
 
 const projectTreeCache = new Map();
 const projectTreeMetaCache = new Map();
+const inFlightTreeRequests = new Map();
 const TREE_CACHE_TTL_MS = 30_000;
 const TREE_META_CACHE_TTL_MS = 15_000;
+const TREE_CACHE_MAX_ENTRIES = 200;
+
+const SNAPSHOT_TREE_SELECT = {
+  id: true,
+  rootDir: true,
+  storagePath: true,
+  source: true,
+};
+
+export function invalidateProjectTreeMetaCache(projectId = null) {
+  projectAccessModule.invalidateProjectAccessCache?.(projectId);
+  if (!projectId) {
+    projectTreeMetaCache.clear();
+    return;
+  }
+  const prefix = `${projectId}:`;
+  for (const key of projectTreeMetaCache.keys()) {
+    if (key.startsWith(prefix)) {
+      projectTreeMetaCache.delete(key);
+    }
+  }
+}
 
 export const clearProjectTreeCache = (snapshotId = null) => {
   projectTreeMetaCache.clear();
@@ -1713,104 +1794,152 @@ export const clearProjectTreeCache = (snapshotId = null) => {
 };
 
 export const getProjectTree = async (projectId, userId, options = {}) => {
-  const metaCacheKey = `${projectId}:${options.snapshotId || "latest"}`;
-  const cachedMetaEntry = projectTreeMetaCache.get(metaCacheKey);
-  const { readMutationMarkers, recoverProjectMutationMarkers } =
-    await import("./projectMutationRecovery.service.js");
-
-  let meta = null;
-  if (
-    cachedMetaEntry &&
-    Date.now() - cachedMetaEntry.cachedAt < TREE_META_CACHE_TTL_MS &&
-    cachedMetaEntry.allowedUsers?.has(userId)
-  ) {
-    const markers = await readMutationMarkers(
-      cachedMetaEntry.meta.workspaceRoot,
-    );
-    if (markers.length === 0) {
-      meta = cachedMetaEntry.meta;
-    }
+  const initialInvalidationVersion =
+    typeof projectAccessModule.getProjectInvalidationVersion === "function"
+      ? projectAccessModule.getProjectInvalidationVersion(projectId)
+      : 0;
+  const dedupeKey = `${projectId}:${userId}:${options.snapshotId || "latest"}:${options.withMetadata ? "meta" : "raw"}:${initialInvalidationVersion}`;
+  const existingFlight = inFlightTreeRequests.get(dedupeKey);
+  if (existingFlight) {
+    return existingFlight;
   }
 
-  if (!meta) {
-    const access = await resolveProjectAccess({ projectId, userId, capability: "project.read" });
-    const snapshot = await prisma.projectSnapshot.findFirst({
-      where: {
-        projectId,
-        ...(options.snapshotId ? { id: options.snapshotId } : {}),
-      },
-      orderBy: options.snapshotId ? undefined : { createdAt: "desc" },
-    });
-    if (!snapshot?.rootDir)
-      throw new ServiceError("Project snapshot not ready", 202);
-    const workspaceRoot = projectEditableWorkspaceRoot(snapshot);
-    const markers = await readMutationMarkers(workspaceRoot);
+  const run = async () => {
+    const metaCacheKey = `${projectId}:${options.snapshotId || "latest"}`;
+    const cachedMetaEntry = projectTreeMetaCache.get(metaCacheKey);
+    const invalidationVersion = initialInvalidationVersion;
+    const { readMutationMarkers, recoverProjectMutationMarkers } =
+      await import("./projectMutationRecovery.service.js");
 
-    if (markers.length > 0) {
-      meta = await withProjectGuard(
-        {
-          projectId,
-          userId,
-          capability: "project.read",
-          maxWait: 30000,
-          timeout: 60000,
-        },
-        async (tx, guardedAccess) => {
-          const guardedSnapshot = await tx.projectSnapshot.findFirst({
-            where: {
-              projectId,
-              ...(options.snapshotId ? { id: options.snapshotId } : {}),
-            },
-            orderBy: options.snapshotId ? undefined : { createdAt: "desc" },
-          });
-          if (!guardedSnapshot?.rootDir)
-            throw new ServiceError("Project snapshot not ready", 202);
-          const guardedRoot = projectEditableWorkspaceRoot(guardedSnapshot);
-          await recoverProjectMutationMarkers({
-            tx,
-            project: guardedAccess.project,
-            snapshot: guardedSnapshot,
-            root: guardedRoot,
-          });
-          return {
-            snapshotId: guardedSnapshot.id,
-            workspaceRevision: guardedAccess.project.workspaceRevision,
-            workspaceRoot: guardedRoot,
-          };
-        },
+    let meta = null;
+    if (
+      cachedMetaEntry &&
+      cachedMetaEntry.invalidationVersion === invalidationVersion &&
+      Date.now() - cachedMetaEntry.cachedAt < TREE_META_CACHE_TTL_MS &&
+      cachedMetaEntry.allowedUsers?.has(userId)
+    ) {
+      const markers = await readMutationMarkers(
+        cachedMetaEntry.meta.workspaceRoot,
       );
-    } else {
-      meta = {
-        snapshotId: snapshot.id,
-        workspaceRevision: access.project.workspaceRevision,
-        workspaceRoot,
-      };
+      if (markers.length === 0) {
+        meta = cachedMetaEntry.meta;
+      }
     }
 
-    projectTreeMetaCache.set(metaCacheKey, {
-      meta,
-      cachedAt: Date.now(),
-      allowedUsers: new Set([userId, access.project?.ownerId].filter(Boolean)),
-    });
-  }
-
-  const cacheKey = `${meta.snapshotId}:${meta.workspaceRevision ?? 0}`;
-  let tree = null;
-  const cached = projectTreeCache.get(cacheKey);
-  if (cached && Date.now() - cached.cachedAt < TREE_CACHE_TTL_MS) {
-    tree = cached.tree;
-  } else {
-    tree = buildTree(meta.workspaceRoot);
-    projectTreeCache.set(cacheKey, { tree, cachedAt: Date.now() });
-  }
-
-  return options.withMetadata
-    ? {
-        tree,
-        snapshotId: meta.snapshotId,
-        workspaceRevision: meta.workspaceRevision,
+    if (!meta) {
+      const access = await resolveProjectAccess({
+        projectId,
+        userId,
+        capability: "project.read",
+      });
+      const targetSnapshotId =
+        options.snapshotId || access.project?.activeSnapshotId || null;
+      let snapshot = targetSnapshotId
+        ? await prisma.projectSnapshot.findFirst({
+            where: { projectId, id: targetSnapshotId },
+            select: SNAPSHOT_TREE_SELECT,
+          })
+        : null;
+      if (!snapshot && !options.snapshotId) {
+        snapshot = await prisma.projectSnapshot.findFirst({
+          where: { projectId },
+          orderBy: { createdAt: "desc" },
+          select: SNAPSHOT_TREE_SELECT,
+        });
       }
-    : tree;
+      if (!snapshot?.rootDir)
+        throw new ServiceError("Project snapshot not ready", 202);
+      const workspaceRoot = projectEditableWorkspaceRoot(snapshot);
+      const markers = await readMutationMarkers(workspaceRoot);
+
+      if (markers.length > 0) {
+        meta = await withProjectGuard(
+          {
+            projectId,
+            userId,
+            capability: "project.read",
+            maxWait: 30000,
+            timeout: 60000,
+          },
+          async (tx, guardedAccess) => {
+            const guardedSnapshot = await tx.projectSnapshot.findFirst({
+              where: {
+                projectId,
+                ...(options.snapshotId ? { id: options.snapshotId } : {}),
+              },
+              orderBy: options.snapshotId ? undefined : { createdAt: "desc" },
+              select: SNAPSHOT_TREE_SELECT,
+            });
+            if (!guardedSnapshot?.rootDir)
+              throw new ServiceError("Project snapshot not ready", 202);
+            const guardedRoot = projectEditableWorkspaceRoot(guardedSnapshot);
+            await recoverProjectMutationMarkers({
+              tx,
+              project: guardedAccess.project,
+              snapshot: guardedSnapshot,
+              root: guardedRoot,
+            });
+            return {
+              snapshotId: guardedSnapshot.id,
+              workspaceRevision: guardedAccess.project.workspaceRevision,
+              workspaceRoot: guardedRoot,
+            };
+          },
+        );
+      } else {
+        meta = {
+          snapshotId: snapshot.id,
+          workspaceRevision: access.project.workspaceRevision,
+          workspaceRoot,
+        };
+      }
+
+      const latestInvalidationVersion =
+        typeof projectAccessModule.getProjectInvalidationVersion === "function"
+          ? projectAccessModule.getProjectInvalidationVersion(projectId)
+          : 0;
+      if (latestInvalidationVersion === invalidationVersion) {
+        if (projectTreeMetaCache.size >= TREE_CACHE_MAX_ENTRIES) {
+          projectTreeMetaCache.clear();
+        }
+        projectTreeMetaCache.set(metaCacheKey, {
+          meta,
+          invalidationVersion,
+          cachedAt: Date.now(),
+          allowedUsers: new Set(
+            [userId, access.project?.ownerId].filter(Boolean),
+          ),
+        });
+      }
+    }
+
+    const cacheKey = `${meta.snapshotId}:${meta.workspaceRevision ?? 0}:${meta.workspaceRoot}`;
+    let tree = null;
+    const cached = projectTreeCache.get(cacheKey);
+    if (cached && Date.now() - cached.cachedAt < TREE_CACHE_TTL_MS) {
+      tree = cached.tree;
+    } else {
+      tree = await buildTreeAsync(meta.workspaceRoot);
+      if (projectTreeCache.size >= TREE_CACHE_MAX_ENTRIES) {
+        projectTreeCache.clear();
+      }
+      projectTreeCache.set(cacheKey, { tree, cachedAt: Date.now() });
+    }
+
+    return options.withMetadata
+      ? {
+          tree,
+          snapshotId: meta.snapshotId,
+          workspaceRevision: meta.workspaceRevision,
+        }
+      : tree;
+  };
+
+  const promise = run().finally(() => {
+    inFlightTreeRequests.delete(dedupeKey);
+  });
+  inFlightTreeRequests.set(dedupeKey, promise);
+  return promise;
 };
 
 export const getFileContent = (projectId, userId, filePath, options = {}) =>
@@ -1836,7 +1965,7 @@ export const updateFileContent = async (
     kind: "WRITE_FILE",
     ...options,
   });
-  projectTreeMetaCache.clear();
+  invalidateProjectTreeMetaCache(projectId);
   return res;
 };
 
@@ -1855,7 +1984,7 @@ export const createProjectFile = async (
     kind: "CREATE_FILE",
     ...options,
   });
-  projectTreeMetaCache.clear();
+  invalidateProjectTreeMetaCache(projectId);
   return res;
 };
 
@@ -1872,7 +2001,7 @@ export const createProjectFolder = async (
     kind: "CREATE_FOLDER",
     ...options,
   });
-  projectTreeMetaCache.clear();
+  invalidateProjectTreeMetaCache(projectId);
   return res;
 };
 
@@ -1892,7 +2021,7 @@ export const renameProjectEntry = async (
     kind: "RENAME_ENTRY",
     ...options,
   });
-  projectTreeMetaCache.clear();
+  invalidateProjectTreeMetaCache(projectId);
   return res;
 };
 
@@ -1909,7 +2038,7 @@ export const deleteProjectEntry = async (
     kind: "DELETE_ENTRY",
     ...options,
   });
-  projectTreeMetaCache.clear();
+  invalidateProjectTreeMetaCache(projectId);
   return res;
 };
 

@@ -25,8 +25,9 @@ jobs:
 
             # Safe idempotent schema sync for Version Control v2 (never uses prisma migrate deploy)
             if [ -f "server/scripts/applyVersionControlMigration.mjs" ]; then
-              if docker ps --format '{{.Names}}' | grep -qx 'covai_server'; then
-                docker exec covai_server sh -c 'npx prisma generate && node scripts/applyVersionControlMigration.mjs --apply'
+              SERVER_CTR=$(docker ps --format '{{.Names}}' | grep -E '^covai_server(_prod)?$' | head -n 1 || true)
+              if [ -n "$SERVER_CTR" ]; then
+                docker exec "$SERVER_CTR" sh -c 'npx prisma generate && node scripts/applyVersionControlMigration.mjs --apply'
               elif [ -f "server/.env" ] && command -v node >/dev/null 2>&1; then
                 (cd server && npx prisma generate && node scripts/applyVersionControlMigration.mjs --apply)
               fi
