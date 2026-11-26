@@ -121,6 +121,7 @@ export default function AuthForm({
           id: data.userId || null,
           name: data.name || "",
           email: data.email || normalizedEmail,
+          authProvider: data.authProvider || "email",
           token: data.accessToken,
         };
         localStorage.setItem("token", data.accessToken);
@@ -137,6 +138,7 @@ export default function AuthForm({
           id: data.userId || null,
           name: data.userName || "",
           email: data.userEmail || normalizedEmail,
+          authProvider: data.authProvider || "email",
           token: data.accessToken,
         };
         localStorage.setItem("token", data.accessToken);

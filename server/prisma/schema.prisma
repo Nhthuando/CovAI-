@@ -330,6 +330,9 @@ model User {
   systemRole                 SystemRole                  @default(USER)
   failedLoginAttempts        Int                         @default(0)
   lockedUntil                DateTime?
+  githubLogin                String?
+  githubOAuthScopes          String?
+  lastAuthProvider           String?
   AdminAuditLog              AdminAuditLog[]
   aiContextSettings          AiContextSettings[]
   aiQuotaReservations        AiQuotaReservation[]
@@ -355,6 +358,10 @@ model User {
   bindingApprovals           SystemAssertionBinding[]    @relation("BindingApprover")
   requirementApprovals       SystemRequirementRevision[] @relation("RequirementApprover")
   proposalApplications       SystemTestProposal[]        @relation("ProposalApplier")
+  authoredSnapshots          ProjectSnapshot[]           @relation("SnapshotAuthor")
+  vcsBranchesCreated         SnapshotVcsBranch[]         @relation("VcsBranchCreator")
+  vcsTagsCreated             SnapshotVcsTag[]            @relation("VcsTagCreator")
+  vcsStagedFiles             SnapshotVcsStaging[]
 }
 
 model Project {
@@ -388,6 +395,7 @@ model Project {
   eventSequence             Int                           @default(0)
   workspaceRevision         Int                           @default(0)
   activeSnapshotId          String?
+  activeVcsBranchId         String?
   isPinned                  Boolean                       @default(false)
   lifecycleStatus           ProjectLifecycleStatus        @default(NOT_STARTED)
   lifecycleUpdatedAt        DateTime                      @default(now())
@@ -416,6 +424,10 @@ model Project {
   operationRequests         ProjectOperationRequest[]
   snapshots                 ProjectSnapshot[]
   qualityReports            QualityReport[]
+  vcsBranches               SnapshotVcsBranch[]
+  vcsTags                   SnapshotVcsTag[]
+  vcsStagedFiles            SnapshotVcsStaging[]
+  vcsBlobRefs               SnapshotVcsBlobRef[]
 
   @@index([ownerId])
   @@index([ownerId, lifecycleStatus])
@@ -453,6 +465,15 @@ model ProjectSnapshot {
   contentHash                 String?
   label                       String?
   versionNumber               Int?
+  commitMessage               String?
+  parentSnapshotId            String?
+  restoredFromSnapshotId      String?
+  authorId                    String?
+  vcsBranchId                 String?
+  statsJson                   Json?
+  isPinned                    Boolean                     @default(false)
+  isAutoBackup                Boolean                     @default(false)
+  casMaterialized             Boolean                     @default(false)
   aiContextCache              AiContextCache?
   evaluationDesignAudits      AiEvaluationDesignAudit[]
   aiSuggestions               AiSuggestion[]
@@ -480,12 +501,103 @@ model ProjectSnapshot {
   systemProposals             SystemTestProposal[]
   testRuns                    TestRun[]
   vulnerabilities             Vulnerability[]
+  author                      User?                       @relation("SnapshotAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  parentSnapshot              ProjectSnapshot?            @relation("SnapshotParent", fields: [parentSnapshotId], references: [id], onDelete: SetNull)
+  childSnapshots              ProjectSnapshot[]           @relation("SnapshotParent")
+  restoredFromSnapshot        ProjectSnapshot?            @relation("SnapshotRestoredFrom", fields: [restoredFromSnapshotId], references: [id], onDelete: SetNull)
+  restoredBySnapshots         ProjectSnapshot[]           @relation("SnapshotRestoredFrom")
+  vcsBranch                   SnapshotVcsBranch?          @relation("BranchSnapshots", fields: [vcsBranchId], references: [id], onDelete: SetNull)
+  branchHeads                 SnapshotVcsBranch[]         @relation("BranchHeadSnapshot")
+  branchBases                 SnapshotVcsBranch[]         @relation("BranchBaseSnapshot")
+  vcsEntries                  SnapshotVcsEntry[]
+  vcsTags                     SnapshotVcsTag[]
 
   @@unique([projectId, checksum])
-  @@unique([projectId, commitSha])
+  @@index([projectId, commitSha])
   @@index([projectId])
   @@index([projectId, contentHash])
   @@index([projectId, createdAt])
+  @@index([projectId, vcsBranchId, createdAt])
+  @@index([projectId, versionNumber])
+}
+
+model SnapshotVcsBranch {
+  id             String            @id @default(cuid())
+  projectId      String
+  name           String
+  description    String?
+  headSnapshotId String?
+  baseSnapshotId String?
+  isDefault      Boolean           @default(false)
+  createdById    String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  project        Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  headSnapshot   ProjectSnapshot?  @relation("BranchHeadSnapshot", fields: [headSnapshotId], references: [id], onDelete: SetNull)
+  baseSnapshot   ProjectSnapshot?  @relation("BranchBaseSnapshot", fields: [baseSnapshotId], references: [id], onDelete: SetNull)
+  createdBy      User?             @relation("VcsBranchCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  snapshots      ProjectSnapshot[] @relation("BranchSnapshots")
+
+  @@unique([projectId, name])
+  @@index([projectId])
+}
+
+model SnapshotVcsTag {
+  id          String          @id @default(cuid())
+  projectId   String
+  snapshotId  String
+  name        String
+  description String?
+  color       String?         @default("indigo")
+  createdById String?
+  createdAt   DateTime        @default(now())
+  project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot    ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  createdBy   User?           @relation("VcsTagCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([projectId, name])
+  @@index([snapshotId])
+}
+
+model SnapshotVcsEntry {
+  id           String          @id @default(cuid())
+  snapshotId   String
+  relativePath String
+  blobSha256   String
+  byteSize     Int
+  isBinary     Boolean         @default(false)
+  mode         String          @default("100644")
+  snapshot     ProjectSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([snapshotId, relativePath])
+  @@index([snapshotId])
+  @@index([blobSha256])
+}
+
+model SnapshotVcsStaging {
+  id           String   @id @default(cuid())
+  projectId    String
+  userId       String
+  relativePath String
+  stagedAt     DateTime @default(now())
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId, relativePath])
+  @@index([projectId, userId])
+}
+
+model SnapshotVcsBlobRef {
+  projectId  String
+  sha256     String
+  byteSize   Int
+  isBinary   Boolean  @default(false)
+  compressed Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, sha256])
+  @@index([projectId])
 }
 
 model ProjectStructureAnalysis {
@@ -1402,6 +1514,11 @@ enum JobType {
   AI_EVALUATION_PREPARE
   UNIT_TEST_SUGGEST
   UNIT_TEST_APPLY
+  GIT_PUSH
+  GIT_PULL
+  GIT_FETCH
+  GIT_PUBLISH_REPO
+  SNAPSHOT_CAS_GC
 }
 
 enum JobStatus {

@@ -44,9 +44,12 @@ export async function createAuthTestDatabase() {
       ? connection
       : `postgresql://postgres:postgres@${connection}/postgres`,
     max: 1,
+    allowExitOnIdle: true,
   });
   const db = new PrismaClient({ adapter: new PrismaPg(pool) });
   setPrismaClient(db);
+
+  let closed = false;
 
   return {
     db,
@@ -56,6 +59,8 @@ export async function createAuthTestDatabase() {
       await db.user.deleteMany({});
     },
     close: async () => {
+      if (closed) return;
+      closed = true;
       await db.$disconnect();
       await pool.end().catch(() => {});
       await socket.stop();

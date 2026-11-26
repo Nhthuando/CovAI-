@@ -9,7 +9,7 @@ const prisma = { $transaction:jest.fn(),$executeRaw:jest.fn(),
     projectFileVersion:{findUnique:jest.fn(),create:jest.fn(),update:jest.fn(),upsert:jest.fn()},
     projectMutation:{findUnique:jest.fn(),create:jest.fn(),update:jest.fn()},
     projectEvent:{create:jest.fn()},
-    projectSnapshot: { findFirst: jest.fn(), create: jest.fn(), findMany: jest.fn() } };
+    projectSnapshot: { findFirst: jest.fn(), create: jest.fn(), findMany: jest.fn(), update: jest.fn(async ({ data }) => ({ ...snapshot, ...data })), aggregate: jest.fn(async () => ({ _max: { versionNumber: 1 } })) } };
 jest.unstable_mockModule("../config/prisma.js", () => ({ default: prisma }));
 jest.unstable_mockModule("../config/firebase.js", () => ({ getBucket: jest.fn() }));
 jest.unstable_mockModule("../services/job.service.js", () => ({ createAnalysisJob: jest.fn(), createSnapshotIngestJob: jest.fn(), createRunTestsJob: jest.fn(), addJobLog: jest.fn() }));
@@ -85,6 +85,8 @@ it("rejects traversal and unrelated storage directories", () => {
     expect(snapshotWorkspaceRoot({ ...snapshot, source: "ZIP" })).toBe(snapshot.rootDir);
 });
 it("checkpoints both packages while retaining the backend analysis root", async () => {
+    snapshot.contentHash = "previous-snapshot-hash";
+    fs.writeFileSync(path.join(root, "client", "App.jsx"), "updated client source");
     await service.createProjectCheckpoint({ projectId: "workspace-test-project", userId: "owner", label: "Both packages" });
     const data = prisma.projectSnapshot.create.mock.calls[0][0].data;
     expect(fs.existsSync(path.join(data.storagePath, "client", "App.jsx"))).toBe(true);

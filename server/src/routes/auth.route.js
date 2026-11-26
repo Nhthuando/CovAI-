@@ -9,6 +9,7 @@ import {
   connectGithub,
   githubOAuthAccess,
   getGithubRepositories,
+  getGithubCapabilities,
   getRefreshCookieOptions,
 } from "../controllers/auth.controller.js";
 import prisma from "../config/prisma.js";
@@ -49,5 +50,6 @@ router.post("/github/cancel-link", oauthLimiter, cancelGithubLink);
 router.post("/github/connect", authMiddleware, oauthLimiter, connectGithub);
 router.post("/github/access", authMiddleware, githubOAuthAccess);
 router.get("/github/repositories", authMiddleware, getGithubRepositories);
+router.get("/github/capabilities", authMiddleware, getGithubCapabilities);
 
 export default router;

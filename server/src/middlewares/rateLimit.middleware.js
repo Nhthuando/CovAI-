@@ -83,3 +83,21 @@ export const aiLimiter = rateLimit({
     message: "Too many AI requests, please try again later.",
   },
 });
+
+/**
+ * Git remote / GitHub API rate limiter — protects network endpoints (push, pull, fetch, PRs, publish).
+ */
+export const gitRemoteLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max:
+    isCollaborationLocalTest() || process.env.NODE_ENV === "test"
+      ? 1000
+      : Number(process.env.GIT_REMOTE_RATE_LIMIT_MAX || 60),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    code: AUTH_ERROR_CODES.RATE_LIMIT_EXCEEDED,
+    message: "Too many remote Git operations, please wait a moment and try again.",
+  },
+});

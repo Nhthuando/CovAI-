@@ -116,8 +116,8 @@ export const cloneGitHubRepositoryByUrl = async (req, res) => {
     const owner = match[1];
     const repo = match[2].replace(".git", "");
 
-    // If user has linked GitHub, check if repository is private via API
-    if (req.user?.id) {
+    // For GitHub sessions only, probe private repo status using acting user's token
+    if (req.user?.id && req.user?.authProvider === "github") {
       try {
         const userToken = await GitHubRepositoryAccessService.getGitHubToken(
           req.user.id,
@@ -175,6 +175,20 @@ export const cloneGitHubRepositoryByUrl = async (req, res) => {
       cloneResult,
       repoUrl: url,
     });
+
+    if (!reused && req.user?.authProvider === "email") {
+      try {
+        const { ensureProjectCasBaseline } = await import("../services/snapshotCas.service.js");
+        await ensureProjectCasBaseline({
+          projectId,
+          snapshotId: snapshot.id,
+          userId: req.user?.id,
+          rootDir: cloneResult.localPath,
+        });
+      } catch (casErr) {
+        console.warn("[GitHub Import URL] CAS baseline warning:", casErr?.message || casErr);
+      }
+    }
 
     if (!reused) {
       // Build CFG in background

@@ -73,7 +73,8 @@ suite('actual Git commands publish through the collaboration mutation boundary',
         const original = GitService.runCommand;
         jest.spyOn(GitService, 'runCommand').mockImplementation(async function (directory, command, ...args) {
             const result = await original.call(this, directory, command, ...args);
-            if (String(command).includes('git checkout "feature"')) { ready(); await resume; }
+            const cmdText = Array.isArray(command) ? command.join(" ") : String(command);
+            if (cmdText.includes("checkout") && cmdText.includes("feature")) { ready(); await resume; }
             return result;
         });
         const checkout = GitService.checkout(project.id, owner.id, 'feature');

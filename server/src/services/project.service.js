@@ -572,12 +572,25 @@ export const uploadProjectZip = async ({ projectId, file, userId }) => {
       await prisma.project.update({
         where: { id: projectId },
         data: {
+          activeSnapshotId: snapshot.id,
           hasJest: detection.hasJest,
           jestConfigPath: detection.configPath,
           jestCommand: detection.jestCommand,
         },
       });
       invalidateProjectTreeMetaCache(projectId);
+
+      try {
+        const { ensureProjectCasBaseline } = await import("./snapshotCas.service.js");
+        await ensureProjectCasBaseline({
+          projectId,
+          snapshotId: snapshot.id,
+          userId: userId || null,
+          rootDir: validation.rootDir,
+        });
+      } catch (casErr) {
+        console.warn("[UploadProjectZip] Initial CAS baseline warning:", casErr?.message || casErr);
+      }
 
       await updateJobProgress(job.id, 100).catch(() => {});
       await markJobSuccess(job.id, { rootDir: validation.rootDir });
@@ -726,13 +739,13 @@ export async function computeSnapshotContentHash(root) {
 
 export const resolveWorkingSnapshot = async (projectId) => {
   if (!projectId) return null;
-  const project = await prisma.project.findUnique({
+  const project = await prisma.project.findFirst({
     where: { id: projectId },
     select: { activeSnapshotId: true },
   });
   if (project?.activeSnapshotId) {
-    const active = await prisma.projectSnapshot.findUnique({
-      where: { id: project.activeSnapshotId },
+    const active = await prisma.projectSnapshot.findFirst({
+      where: { id: project.activeSnapshotId, projectId },
     });
     if (active && active.rootDir && fs.existsSync(active.rootDir)) {
       return active;
@@ -878,7 +891,7 @@ export const listProjectSnapshots = async ({ projectId, userId }) => {
   });
 };
 
-const rebaseSnapshotConfigPath = (value, originalRoot, targetRoot) => {
+export const rebaseSnapshotConfigPath = (value, originalRoot, targetRoot) => {
   if (!value || !path.isAbsolute(value)) return value;
   const relative = path.relative(originalRoot, value);
   if (
@@ -1280,6 +1293,14 @@ export const restoreProjectCheckpoint = async ({
   );
 
   const checksum = `cp_${Date.now()}_${randomUUID().slice(0, 8)}`;
+  const restoredContentHash = await computeSnapshotContentHash(restoreStorage).catch(
+    () => targetSnapshot.contentHash || null,
+  );
+  const maxVersionAgg = await prisma.projectSnapshot.aggregate({
+    where: { projectId },
+    _max: { versionNumber: true },
+  });
+  const nextVersionNumber = (maxVersionAgg?._max?.versionNumber ?? 0) + 1;
 
   const committed = await withProjectGuard(
     { projectId, userId, capability: "snapshot.restore" },
@@ -1296,6 +1317,12 @@ export const restoreProjectCheckpoint = async ({
           projectId,
           source: targetSnapshot.source,
           checksum,
+          contentHash: restoredContentHash,
+          versionNumber: nextVersionNumber,
+          label: restoreMeta.label,
+          commitMessage: restoreMeta.message,
+          restoredFromSnapshotId: targetSnapshot.id,
+          authorId: userId,
           commitSha: null,
           storagePath: restoreStorage,
           rootDir: path.join(restoreStorage, targetAnalysisRelative),
@@ -1347,7 +1374,10 @@ export const restoreProjectCheckpoint = async ({
       });
       const updated = await tx.project.update({
         where: { id: projectId },
-        data: { workspaceRevision: { increment: 1 } },
+        data: {
+          activeSnapshotId: newSnapshot.id,
+          workspaceRevision: { increment: 1 },
+        },
       });
       const event = await publishProjectEvent({
         tx,
@@ -1648,6 +1678,10 @@ export const deleteProject = async (projectId, userId) => {
         del(tx.projectCodeChange, { projectId }),
         del(tx.projectMutation, { projectId }),
         del(tx.projectFileVersion, { snapshot: { projectId } }),
+        del(tx.snapshotVcsStaging, { projectId }),
+        del(tx.snapshotVcsTag, { projectId }),
+        del(tx.snapshotVcsEntry, { snapshot: { projectId } }),
+        del(tx.snapshotVcsBlobRef, { projectId }),
         del(tx.projectEvent, { projectId }),
         del(tx.projectInvitation, { projectId }),
         del(tx.projectMember, { projectId }),
@@ -1685,7 +1719,24 @@ export const deleteProject = async (projectId, userId) => {
       ]);
       await del(tx.aiEvaluationTarget, { projectId });
 
-      // Tier 6: snapshots & project root
+      // Tier 6: snapshot VCS branches, snapshots & project root
+      if (typeof tx.snapshotVcsBranch?.updateMany === "function") {
+        await tx.snapshotVcsBranch.updateMany({
+          where: { projectId },
+          data: { headSnapshotId: null, baseSnapshotId: null },
+        });
+      }
+      if (typeof tx.projectSnapshot?.updateMany === "function") {
+        await tx.projectSnapshot.updateMany({
+          where: { projectId },
+          data: {
+            parentSnapshotId: null,
+            restoredFromSnapshotId: null,
+            vcsBranchId: null,
+          },
+        });
+      }
+      await del(tx.snapshotVcsBranch, { projectId });
       await del(tx.projectSnapshot, { projectId });
       await tx.project.delete({ where: { id: projectId } });
     });
@@ -1781,14 +1832,21 @@ export const getProjectTree = async (projectId, userId, options = {}) => {
         userId,
         capability: "project.read",
       });
-      const snapshot = await prisma.projectSnapshot.findFirst({
-        where: {
-          projectId,
-          ...(options.snapshotId ? { id: options.snapshotId } : {}),
-        },
-        orderBy: options.snapshotId ? undefined : { createdAt: "desc" },
-        select: SNAPSHOT_TREE_SELECT,
-      });
+      const targetSnapshotId =
+        options.snapshotId || access.project?.activeSnapshotId || null;
+      let snapshot = targetSnapshotId
+        ? await prisma.projectSnapshot.findFirst({
+            where: { projectId, id: targetSnapshotId },
+            select: SNAPSHOT_TREE_SELECT,
+          })
+        : null;
+      if (!snapshot && !options.snapshotId) {
+        snapshot = await prisma.projectSnapshot.findFirst({
+          where: { projectId },
+          orderBy: { createdAt: "desc" },
+          select: SNAPSHOT_TREE_SELECT,
+        });
+      }
       if (!snapshot?.rootDir)
         throw new ServiceError("Project snapshot not ready", 202);
       const workspaceRoot = projectEditableWorkspaceRoot(snapshot);

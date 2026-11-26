@@ -31,5 +31,11 @@ it("branch/log/diff reads never initialize or reconfigure the repository", async
     await GitService.getLog("project", "viewer", 10);
     await GitService.getDiff("project", "viewer", "src/a.js");
     expect(setup).not.toHaveBeenCalled();
-    expect(command.mock.calls.every(call => /git (rev-parse|branch -a|log|diff)/.test(call[1]))).toBe(true);
+    expect(command.mock.calls.length).toBeGreaterThanOrEqual(4);
+    expect(
+      command.mock.calls.every((call) => {
+        const verb = Array.isArray(call[1]) ? call[1][0] : String(call[1]).split(/\s+/)[1];
+        return ["rev-parse", "branch", "for-each-ref", "log", "ls-files", "diff"].includes(verb);
+      }),
+    ).toBe(true);
 });

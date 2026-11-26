@@ -136,7 +136,10 @@ describe("GitHub OAuth Connect & Callback Routes", () => {
         .mockResolvedValueOnce({
           ok: true,
           status: 200,
-          json: async () => ({ access_token: "gho_abc" }),
+          json: async () => ({
+            access_token: "gho_abc",
+            scope: "repo,read:user,user:email",
+          }),
         })
         .mockResolvedValueOnce({
           ok: true,
@@ -148,6 +151,8 @@ describe("GitHub OAuth Connect & Callback Routes", () => {
       prismaMock.user.update.mockResolvedValueOnce({
         id: "user-regular-1",
         githubUserId: "777666",
+        githubLogin: "dev-octo",
+        githubOAuthScopes: "repo read:user user:email",
       });
 
       const res = await request(app)
@@ -160,14 +165,23 @@ describe("GitHub OAuth Connect & Callback Routes", () => {
         message: "GitHub account connected successfully!",
         githubUserId: "777666",
         githubLogin: "dev-octo",
+        githubScopes: ["repo", "read:user", "user:email"],
+        hasGithubRepoWriteScope: true,
       });
       expect(prismaMock.user.update).toHaveBeenCalledWith({
         where: { id: "user-regular-1" },
         data: {
           githubUserId: "777666",
+          githubLogin: "dev-octo",
+          githubOAuthScopes: "repo,read:user,user:email",
           githubAccessTokenEnc: "enc:gho_abc",
         },
-        select: { id: true, githubUserId: true },
+        select: {
+          id: true,
+          githubUserId: true,
+          githubLogin: true,
+          githubOAuthScopes: true,
+        },
       });
       expect(prismaMock.user.create).not.toHaveBeenCalled();
     });
@@ -226,6 +240,8 @@ describe("GitHub OAuth Connect & Callback Routes", () => {
           name: true,
           avatarUrl: true,
           githubUserId: true,
+          githubLogin: true,
+          githubOAuthScopes: true,
         },
       });
       expect(prismaMock.user.create).not.toHaveBeenCalled();
