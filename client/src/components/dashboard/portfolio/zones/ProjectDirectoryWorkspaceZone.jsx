@@ -159,6 +159,7 @@ function ProjectDirectoryWorkspaceZoneComponent({
   return (
     <section
       id="project-directory-workspace-zone"
+      data-guide="portfolio-directory"
       aria-label="Projects Directory"
       className={`space-y-3.5 ${className}`}
     >

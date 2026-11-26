@@ -82,7 +82,7 @@ export default function HomeScreen({ data, capabilities, navigateView }) {
   return (
     <div className="space-y-5">
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
+        <section data-guide="eval-checklist" className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
           <div className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-4">
             <h2 className="text-sm font-semibold tracking-tight">Get ready in 4 steps</h2>
             <span className="font-mono text-xs tabular-nums text-[var(--color-text-muted)]">{doneCount}/4 done</span>
@@ -118,7 +118,7 @@ export default function HomeScreen({ data, capabilities, navigateView }) {
           </ol>
         </section>
 
-        <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
+        <section data-guide="eval-latest" className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
           <div className="border-b border-[var(--color-border)] px-5 py-4">
             <h2 className="text-sm font-semibold tracking-tight">Latest result</h2>
           </div>
@@ -162,7 +162,7 @@ export default function HomeScreen({ data, capabilities, navigateView }) {
         </section>
       </div>
 
-      <div className="grid gap-5 md:grid-cols-2">
+      <div data-guide="eval-tools" className="grid gap-5 md:grid-cols-2">
         <ToolCard icon={ScanSearch} title="Check the grading AI" onClick={() => navigateView('review')}
           description="Grade a few answers yourself to see if the grading AI agrees with you."
           action="Start checking" />

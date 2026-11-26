@@ -65,7 +65,6 @@ import {
   Network,
   FileText,
   Loader2,
-  BookOpen,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "./ToastContext";
@@ -2658,6 +2657,7 @@ export default function IntegrationWorkspace({
             {!hasScanned ? (
               <button
                 type="button"
+                data-guide="int-scan-primary"
                 onClick={handleScanEndpoints}
                 disabled={isScanningEndpoints || isJobActive}
                 className={TEST_UI.btnPrimary}
@@ -2675,6 +2675,7 @@ export default function IntegrationWorkspace({
               <>
                 <button
                   type="button"
+                  data-guide="int-setup"
                   onClick={() => {
                     setCancellationNotice("");
                     setSetupAutoRun(false);
@@ -2693,6 +2694,7 @@ export default function IntegrationWorkspace({
 
                 <button
                   type="button"
+                  data-guide="int-run"
                   onClick={() => handleRunApprovedTests(false)}
                   disabled={
                     !projectAccess.can("tests.run") ||
@@ -2722,6 +2724,7 @@ export default function IntegrationWorkspace({
             {/* Version History & Diff Drawer Button */}
             <button
               type="button"
+              data-guide="int-history"
               onClick={() => setDrawerOpen(drawerOpen ? null : "history")}
               className={
                 drawerOpen ? TEST_UI.btnSecondaryActive : TEST_UI.btnSecondary
@@ -2731,29 +2734,15 @@ export default function IntegrationWorkspace({
               <Clock size={13} />
               <span className="hidden md:inline">History</span>
             </button>
-
-            <button
-              type="button"
-              onClick={() =>
-                window.dispatchEvent(
-                  new CustomEvent("covai:open-guide", {
-                    detail: { stepId: "integration-scan-setup" },
-                  }),
-                )
-              }
-              className={TEST_UI.btnSecondary}
-              title="Integration Testing Guide (AST scan, 5-layer tests & diagnostics)"
-              aria-label="Integration Testing Guide"
-            >
-              <BookOpen size={13} className="text-[var(--color-primary)]" />
-              <span className="hidden lg:inline">Guide</span>
-            </button>
           </div>
         </div>
 
         {/* ── 2. UNIFIED TELEMETRY STRIP (Asymmetric Hierarchy) ── */}
         {hasScanned && (
-          <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-bg)]/60">
+          <div
+            data-guide="int-telemetry"
+            className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-bg)]/60"
+          >
             <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-[var(--color-border)] overflow-hidden">
               {/* Primary Anchor: Endpoint Coverage */}
               <div className="lg:col-span-5 px-4 py-3 flex flex-col justify-between gap-2">
@@ -2902,7 +2891,7 @@ export default function IntegrationWorkspace({
 
         {/* ── 3. TWO-TAB NAVIGATION BAR (Underline Style) ── */}
         <div className="px-5 border-t border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between overflow-x-auto custom-scrollbar">
-          <div className="flex items-center gap-5 text-xs" role="tablist">
+          <div data-guide="int-tabs" className="flex items-center gap-5 text-xs" role="tablist">
             {WORKSPACE_TABS.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -3141,7 +3130,7 @@ export default function IntegrationWorkspace({
 
           {/* TAB 1: UNIFIED ENDPOINTS & SCENARIOS MATRIX */}
           {activeTab === "endpoints" && (
-            <div className="space-y-4">
+            <div data-guide="int-matrix" className="space-y-4">
               <IntegrationRouteMatrixTable
                 ref={matrixRef}
                 key={snapshotId || "integration"}
