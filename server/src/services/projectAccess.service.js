@@ -6,12 +6,24 @@ const failure = (message, status, code) => new ServiceError(message, status, cod
 const READ_ACCESS_CACHE_TTL_MS = 3000;
 const readAccessCache = new Map();
 const inFlightAccess = new Map();
+const projectInvalidationVersions = new Map();
+let globalInvalidationVersion = 0;
+
+export function getProjectInvalidationVersion(projectId = null) {
+    if (!projectId) return globalInvalidationVersion;
+    return globalInvalidationVersion + (projectInvalidationVersions.get(projectId) || 0);
+}
 
 export function invalidateProjectAccessCache(projectId = null) {
     if (!projectId) {
+        globalInvalidationVersion += 1;
         readAccessCache.clear();
         return;
     }
+    projectInvalidationVersions.set(
+        projectId,
+        (projectInvalidationVersions.get(projectId) || 0) + 1,
+    );
     for (const key of readAccessCache.keys()) {
         if (key.includes(projectId)) readAccessCache.delete(key);
     }
