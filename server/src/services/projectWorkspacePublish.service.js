@@ -5,7 +5,8 @@ import { randomUUID } from 'node:crypto';
 import prisma from '../config/prisma.js';
 import { withProjectGuard } from './projectAccess.service.js';
 import { publishProjectEvent,deliverProjectEvent } from './projectEvent.service.js';
-import { findEditableSnapshot,hashFileContent,projectFileError,resolveContainedProjectPath,MAX_PROJECT_FILE_BYTES } from './projectFileVersion.service.js';
+import fsSync from 'node:fs';
+import { findEditableSnapshot,hashFileContent,projectEditableWorkspaceRoot,projectFileError,resolveActiveProjectSnapshot,resolveContainedProjectPath,MAX_PROJECT_FILE_BYTES } from './projectFileVersion.service.js';
 import { durableWrite,mutationJournalDirectory,mutationKey,recoverProjectMutationMarkers } from './projectMutationRecovery.service.js';
 import { runtimeIgnoredDirectories } from './projectRuntimePlan.service.js';
 import { hashOperationInput } from '../utils/projectOperationIdentity.js';
@@ -45,7 +46,7 @@ export const captureWorkspaceFiles = async (root,{includeGitMetadata = false} = 
 // providers and test execution happen before this bounded critical section.
 export const publishPreparedWorkspace = async ({projectId,snapshotId,userId,capability = 'files.write',
     expectedWorkspaceRevision,beforeFiles,preparedRoot,requestId = randomUUID(),db = prisma,afterMutation,includeGitMetadata = false,emitCommittedEvent = deliverProjectEvent, beforeMutation, editorCheckpoint = false, checkpointRows, checkpointDocumentIds, provenanceSource = 'HUMAN_EDIT'}) => {
-    if (includeGitMetadata && capability !== 'integrations.write') throw projectFileError('CAPABILITY_DENIED','Git metadata publication requires integration permission',403);
+    if (includeGitMetadata && !['integrations.write', 'vcs.local'].includes(capability)) throw projectFileError('CAPABILITY_DENIED','Git metadata publication requires VCS permission',403);
     const afterFiles = await captureWorkspaceFiles(preparedRoot,{includeGitMetadata});
     const paths = [...new Set([...beforeFiles.keys(),...afterFiles.keys()])].filter(name=>beforeFiles.get(name)?.sha256 !== afterFiles.get(name)?.sha256).sort();
     const maxFiles = includeGitMetadata ? 2000 : 100;
@@ -62,6 +63,18 @@ export const publishPreparedWorkspace = async ({projectId,snapshotId,userId,capa
     }
     if (total > (includeGitMetadata ? 256 : 16) * 1024 * 1024) throw projectFileError('MUTATION_TOO_LARGE','Prepared changes exceed the publication size limit',413);
     const fastCheckpoint = editorCheckpoint && checkpointRows && !!db.$queryRaw && !includeGitMetadata && capability === 'files.write';
+    if (!includeGitMetadata && !fastCheckpoint && db?.snapshotVcsBranch) {
+        try {
+            const preSnap = await resolveActiveProjectSnapshot(db, projectId, snapshotId);
+            if (preSnap && !preSnap.casMaterialized) {
+                const wsRoot = projectEditableWorkspaceRoot(preSnap);
+                if (wsRoot && fsSync.existsSync(wsRoot) && !fsSync.existsSync(path.join(wsRoot, '.git'))) {
+                    const { ensureProjectCasBaseline } = await import('./snapshotCas.service.js');
+                    await ensureProjectCasBaseline({ projectId, snapshotId: preSnap.id, userId, rootDir: wsRoot, db });
+                }
+            }
+        } catch { /* Non-fatal in minimal unit mocks */ }
+    }
     const guard = fastCheckpoint ? withCheckpointGuard : withProjectGuard;
     let committed;
     try {
@@ -70,7 +83,7 @@ export const publishPreparedWorkspace = async ({projectId,snapshotId,userId,capa
         await assertProjectOperationActive(undefined,tx);
         const snapshot = fastCheckpoint ? access.checkpointSnapshot : await findEditableSnapshot(tx,projectId,snapshotId);
         if (!snapshot?.rootDir) throw projectFileError('SNAPSHOT_CHANGED','Project snapshot is unavailable; select it again');
-        const latest = fastCheckpoint ? { id: access.latestSnapshotId } : await tx.projectSnapshot.findFirst({where:{projectId},orderBy:{createdAt:'desc'},select:{id:true}});
+        const latest = fastCheckpoint ? { id: access.latestSnapshotId } : await resolveActiveProjectSnapshot(tx, projectId);
         if (latest?.id !== snapshotId || access.project.workspaceRevision !== expectedWorkspaceRevision) {
             throw projectFileError('SNAPSHOT_CHANGED','Workspace changed during preparation; regenerate or review the changes again');
         }

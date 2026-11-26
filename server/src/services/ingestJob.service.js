@@ -109,6 +109,23 @@ export const processIngestJob = async (jobId) => {
       data: { rootDir: resolvedRootDir },
     });
 
+    await prisma.project.updateMany({
+      where: { id: job.projectId, activeSnapshotId: null },
+      data: { activeSnapshotId: job.snapshotId },
+    }).catch(() => {});
+
+    try {
+      const { ensureProjectCasBaseline } = await import("./snapshotCas.service.js");
+      await ensureProjectCasBaseline({
+        projectId: job.projectId,
+        snapshotId: job.snapshotId,
+        userId: job.userId || null,
+        rootDir: resolvedRootDir,
+      });
+    } catch (casErr) {
+      console.warn(`[Job ${jobId}] CAS baseline warning:`, casErr?.message || casErr);
+    }
+
     // Build CFG
     console.log(
       `[Job ${jobId}] Starting CFG build for snapshot ${job.snapshotId}, rootDir: ${sourcePath}`,
@@ -232,6 +249,23 @@ export const processUploadAndIngestJob = async (
       where: { id: job.snapshotId },
       data: { rootDir: resolvedRootDir },
     });
+
+    await prisma.project.updateMany({
+      where: { id: job.projectId, activeSnapshotId: null },
+      data: { activeSnapshotId: job.snapshotId },
+    }).catch(() => {});
+
+    try {
+      const { ensureProjectCasBaseline } = await import("./snapshotCas.service.js");
+      await ensureProjectCasBaseline({
+        projectId: job.projectId,
+        snapshotId: job.snapshotId,
+        userId: job.userId || null,
+        rootDir: resolvedRootDir,
+      });
+    } catch (casErr) {
+      console.warn(`[Job ${jobId}] CAS baseline warning:`, casErr?.message || casErr);
+    }
 
     // Build CFG
     console.log(

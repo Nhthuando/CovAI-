@@ -53,6 +53,11 @@ const JOB_TYPES = Object.freeze([
   "CYPRESS_SYSTEM_TEST",
   "CYPRESS_SYSTEM_COVERAGE",
   "PLAYWRIGHT_SYSTEM_COVERAGE",
+  "GIT_PUSH",
+  "GIT_PULL",
+  "GIT_FETCH",
+  "GIT_PUBLISH_REPO",
+  "SNAPSHOT_CAS_GC",
 ]);
 
 /** Terminal statuses — a job in one of these states cannot be mutated. */
