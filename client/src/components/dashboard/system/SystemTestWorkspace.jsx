@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
+  BookOpen,
 } from "lucide-react";
 import { useProjectAccess } from "../../../hooks/useProjectAccess";
 import { useChatTestContext } from "../../../hooks/useChatTestContext";
@@ -1216,6 +1217,23 @@ export default function SystemTestWorkspace({
             >
               <Clock size={13} />
               <span className="hidden md:inline">History</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                window.dispatchEvent(
+                  new CustomEvent("covai:open-guide", {
+                    detail: { stepId: "system-setup-matrix" },
+                  }),
+                )
+              }
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors cursor-pointer"
+              title="System / E2E Testing Guide (setup, generator, live stream & reports)"
+              aria-label="System Testing Guide"
+            >
+              <BookOpen size={13} className="text-[var(--color-primary)]" />
+              <span className="hidden lg:inline">Guide</span>
             </button>
           </div>
         </div>

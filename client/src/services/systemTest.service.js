@@ -1,12 +1,12 @@
 import { getAIModelHeaders } from './aiModel.service.js';
 import axiosLibrary from "axios";
 import { prepareEditorRequest } from './editorAwareRequest';
-import { getAccessToken, installAxiosAuthRefresh } from '../lib/authSession.js';
+import { API_BASE as SESSION_API_BASE, getAccessToken, installAxiosAuthRefresh } from '../lib/authSession.js';
 const axios = axiosLibrary.create();
 axios.interceptors.request.use(async config => { await prepareEditorRequest(config.url, {method: config.method}); return config; });
 installAxiosAuthRefresh(axios);
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const API_BASE = SESSION_API_BASE;
 
 const getAuthHeaders = () => {
   const token = getAccessToken();

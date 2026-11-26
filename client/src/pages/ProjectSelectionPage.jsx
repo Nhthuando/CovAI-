@@ -8,8 +8,10 @@ import {
   AlertTriangle,
   PanelRightClose,
   PanelRightOpen,
+  BookOpen,
 } from "lucide-react";
 import CovaiLogo from "../components/common/CovaiLogo";
+import PlatformGuidanceModal from "../components/dashboard/guidance/PlatformGuidanceModal";
 import { deleteProjectApi, invalidateFileContentCache } from "../services/project.service";
 import {
   removeProjectFromPortfolioCache,
@@ -59,6 +61,8 @@ export default function ProjectSelectionPage() {
   const [projectToDelete, setProjectToDelete] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [showGuidance, setShowGuidance] = useState(false);
+  const [guidanceInitialStepId, setGuidanceInitialStepId] = useState(null);
 
   // AI Assistant Sidebar state (collapsed by default across pages)
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
@@ -149,6 +153,47 @@ export default function ProjectSelectionPage() {
     setPendingAiSuggestion({ promptText, timestamp: Date.now() });
   }, []);
 
+  useEffect(() => {
+    const onOpenGuide = (event) => {
+      setGuidanceInitialStepId(event.detail?.stepId || null);
+      setShowGuidance(true);
+    };
+    window.addEventListener("covai:open-guide", onOpenGuide);
+    return () => window.removeEventListener("covai:open-guide", onOpenGuide);
+  }, []);
+
+  const handleNavigateGuideTarget = useCallback(
+    (target) => {
+      if (!target) return;
+      if (target.kind === "portfolio") return;
+      const targetProj = activeAiProject || portfolioProjects[0];
+      if (!targetProj?.id) {
+        setShowImport(true);
+        showToast({
+          type: "info",
+          title: "Import a project first",
+          message: "Upload a ZIP/RAR archive or connect GitHub to open the Studio workspace.",
+        });
+        return;
+      }
+      const params = new URLSearchParams();
+      params.set("projectId", targetProj.id);
+      const snapId = targetProj.snapshotId || targetProj.activeSnapshotId;
+      if (snapId) params.set("snapshotId", snapId);
+      const nextActivity = target.activity || "overview";
+      params.set("tab", nextActivity);
+      if (nextActivity === "coverage" && target.coverageType) {
+        params.set("coverageType", target.coverageType);
+        params.set("type", target.coverageType);
+      }
+      if (nextActivity === "trustworthiness" && target.evalView) {
+        params.set("view", target.evalView);
+      }
+      navigate(`/main-editor?${params.toString()}`);
+    },
+    [activeAiProject, navigate, portfolioProjects, showToast],
+  );
+
   const handleAiPanelResize = useCallback(
     (e) => {
       e.preventDefault();
@@ -223,6 +268,20 @@ export default function ProjectSelectionPage() {
           <div className="h-4 w-px bg-[var(--color-border)] mx-0.5 hidden sm:block" />
 
           <ThemeSelector compact />
+
+          <button
+            type="button"
+            onClick={() => {
+              setGuidanceInitialStepId(null);
+              setShowGuidance(true);
+            }}
+            className="h-8 px-2.5 rounded-[var(--radius-md)] border border-[var(--ps-line)] bg-[var(--ps-surface-2)]/60 hover:border-[var(--ps-line-strong)] text-xs font-medium text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+            title="CovAI Platform Guide (step-by-step walkthrough)"
+            aria-label="Open platform guide"
+          >
+            <BookOpen size={13} className="text-[var(--ps-cobalt)]" />
+            <span className="hidden sm:inline">Guide</span>
+          </button>
 
           <NotificationCenter userId={user?.id} size={14} />
 
@@ -454,6 +513,17 @@ export default function ProjectSelectionPage() {
           }}
         />
       )}
+
+      <PlatformGuidanceModal
+        isOpen={showGuidance}
+        onClose={() => setShowGuidance(false)}
+        initialStepId={guidanceInitialStepId}
+        currentContext={{ page: "portfolio" }}
+        onNavigateTarget={handleNavigateGuideTarget}
+        onAskAi={(promptText) =>
+          handleAskAiPrompt(promptText, { projectId: activeAiProject?.id })
+        }
+      />
     </div>
   );
 }

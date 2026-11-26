@@ -65,6 +65,7 @@ import {
   Network,
   FileText,
   Loader2,
+  BookOpen,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "./ToastContext";
@@ -90,14 +91,15 @@ import {
   getScenarioIdentityKey,
 } from "./integration/integrationCaseCoverage.js";
 
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+import {
+  API_BASE,
+  authAwareFetch,
+  getAccessToken,
+} from "../../lib/authSession.js";
+const BASE_URL = API_BASE;
 
 function getAuthHeaders() {
-  const token =
-    localStorage.getItem("token") ||
-    (localStorage.getItem("user")
-      ? JSON.parse(localStorage.getItem("user")).token
-      : null);
+  const token = getAccessToken();
   return {
     "Content-Type": "application/json",
     ...(token && { Authorization: `Bearer ${token}` }),
@@ -111,7 +113,8 @@ async function handleResponse(res) {
 }
 
 async function approveIntegrationTestsApi(snapshotId, approvedTestIds) {
-  const res = await fetch(
+  const res = await authAwareFetch(
+    fetch,
     `${BASE_URL}/coverage/${snapshotId}/integration/approve`,
     {
       method: "POST",
@@ -2728,6 +2731,23 @@ export default function IntegrationWorkspace({
               <Clock size={13} />
               <span className="hidden md:inline">History</span>
             </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                window.dispatchEvent(
+                  new CustomEvent("covai:open-guide", {
+                    detail: { stepId: "integration-scan-setup" },
+                  }),
+                )
+              }
+              className={TEST_UI.btnSecondary}
+              title="Integration Testing Guide (AST scan, 5-layer tests & diagnostics)"
+              aria-label="Integration Testing Guide"
+            >
+              <BookOpen size={13} className="text-[var(--color-primary)]" />
+              <span className="hidden lg:inline">Guide</span>
+            </button>
           </div>
         </div>
 
@@ -2758,9 +2778,13 @@ export default function IntegrationWorkspace({
                       verified
                     </span>
                   </div>
-                  <div className={`flex-1 max-w-[160px] ${TEST_UI.progressTrack}`}>
+                  <div
+                    className={`flex-1 max-w-[160px] ${TEST_UI.progressTrack}`}
+                  >
                     <div
-                      className={calmProgressFillClass(overallStats.apiCoverageRate)}
+                      className={calmProgressFillClass(
+                        overallStats.apiCoverageRate,
+                      )}
                       style={{ width: `${overallStats.apiCoverageRate}%` }}
                     />
                   </div>

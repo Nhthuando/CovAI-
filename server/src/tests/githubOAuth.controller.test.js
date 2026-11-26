@@ -271,5 +271,30 @@ describe("GitHub OAuth Connect & Callback Routes", () => {
         "older-repo",
       ]);
     });
+
+    it("returns 400 GITHUB_NOT_CONNECTED when user has not linked GitHub", async () => {
+      prismaMock.user.findUnique.mockResolvedValueOnce({
+        githubAccessTokenEnc: null,
+      });
+
+      const res = await request(app).get("/api/auth/github/repositories");
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe("GITHUB_NOT_CONNECTED");
+    });
+
+    it("returns 422 GITHUB_TOKEN_INVALID when GitHub rejects stored OAuth token with 401", async () => {
+      prismaMock.user.findUnique.mockResolvedValueOnce({
+        githubAccessTokenEnc: "enc:revoked_token",
+      });
+      global.fetch = jest.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ message: "Bad credentials" }),
+      });
+
+      const res = await request(app).get("/api/auth/github/repositories");
+      expect(res.status).toBe(422);
+      expect(res.body.code).toBe("GITHUB_TOKEN_INVALID");
+    });
   });
 });

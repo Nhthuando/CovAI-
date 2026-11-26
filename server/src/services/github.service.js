@@ -1,5 +1,6 @@
 import prisma from "../config/prisma.js";
 import { decrypt } from "../utils/crypto.js";
+import { githubFetch } from "./githubOAuth.service.js";
 
 /**
  * Service to interact with GitHub APIs using the authenticated user's access token.
@@ -35,13 +36,14 @@ export class GitHubRepositoryAccessService {
     const perPage = 100;
 
     while (true) {
-      const response = await fetch(
+      const response = await githubFetch(
         `https://api.github.com/user/repos?per_page=${perPage}&page=${page}&sort=pushed&direction=desc&affiliation=owner,collaborator,organization_member`,
         {
           cache: "no-store",
           headers: {
             Authorization: `Bearer ${accessToken}`,
             Accept: "application/json",
+            "User-Agent": "CovAI-App",
           },
         },
       );

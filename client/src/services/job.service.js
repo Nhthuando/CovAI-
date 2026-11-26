@@ -1,7 +1,7 @@
 import { getAIModelHeaders } from './aiModel.service.js';
-import { authAwareFetch, getAccessToken, handleUnauthorizedResponse } from "../lib/authSession.js";
+import { API_BASE, authAwareFetch, getAccessToken, handleUnauthorizedResponse } from "../lib/authSession.js";
 /* eslint-disable no-useless-assignment */
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const BASE_URL = API_BASE;
 
 async function getAuthHeaders() {
   let tries = 0;
@@ -126,7 +126,7 @@ export async function getJobDetailApi(jobId, options = {}) {
  */
 export async function cancelJobApi(jobId) {
   try {
-    const res = await fetch(`${BASE_URL}/job/${jobId}/cancel`, {
+    const res = await authAwareFetch(fetch, `${BASE_URL}/job/${jobId}/cancel`, {
       method: "POST",
       headers: await getAuthHeaders(),
     });

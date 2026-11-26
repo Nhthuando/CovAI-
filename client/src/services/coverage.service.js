@@ -1,8 +1,8 @@
 import { editorAwareFetch } from './editorAwareRequest';
 import { getAIModelHeaders } from './aiModel.service.js';
 import { DEPENDENCY_INSTALL_REQUEST_TIMEOUT_MS } from '../../../shared/unitTestRuntime.js';
-import { authAwareFetch, handleUnauthorizedResponse } from "../lib/authSession.js";
-const BASE_URL = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "http://localhost:5000/api";
+import { API_BASE, authAwareFetch, handleUnauthorizedResponse } from "../lib/authSession.js";
+const BASE_URL = API_BASE;
 
 function getAuthHeaders() {
     const user = localStorage.getItem("user");

@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { X, CheckCircle2, ShieldCheck, Layers } from "lucide-react";
 import LocalUpload from "./LocalUpload";
 import GitHubImport from "./GitHubImport";
@@ -11,18 +11,38 @@ import "../portfolio/portfolio.css";
 export default function ImportLayout({ onClose, onSuccess }) {
   const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
   const [hasGithub, setHasGithub] = useState(null);
+  const [profileError, setProfileError] = useState("");
+  const [profileRetrySeq, setProfileRetrySeq] = useState(0);
+
+  const loadGithubStatus = useCallback(() => {
+    setProfileError("");
+    setHasGithub(null);
+    setProfileRetrySeq((prev) => prev + 1);
+  }, []);
 
   useEffect(() => {
+    let active = true;
     getUserProfileApi()
       .then((data) => {
+        if (!active) return;
         const githubId = data?.githubUserId || data?.user?.githubUserId;
+        setProfileError("");
         setHasGithub(!!githubId);
       })
       .catch((err) => {
+        if (!active) return;
         console.error("[ImportLayout] Failed to fetch user profile:", err);
+        setProfileError(
+          err instanceof TypeError
+            ? "Unable to reach CovAI server. Please verify the backend is running."
+            : err?.message || "Unable to verify GitHub connection status.",
+        );
         setHasGithub(false);
       });
-  }, []);
+    return () => {
+      active = false;
+    };
+  }, [profileRetrySeq]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -66,7 +86,8 @@ export default function ImportLayout({ onClose, onSuccess }) {
                   Add repository
                 </h2>
                 <p className="text-xs text-[var(--ps-ink-muted)] mt-0.5 truncate">
-                  Import a local archive or connect a GitHub repository for AST and test synthesis
+                  Import a local archive or connect a GitHub repository for AST
+                  and test synthesis
                 </p>
               </div>
             </div>
@@ -96,11 +117,21 @@ export default function ImportLayout({ onClose, onSuccess }) {
                     Codebase archive
                   </h3>
                   <p className="text-[11.5px] text-[var(--ps-ink-secondary)] mt-1 leading-relaxed">
-                    Upload a compressed project bundle (<span className="ps-mono text-[var(--ps-ink)]">.zip</span>, <span className="ps-mono text-[var(--ps-ink)]">.rar</span>, or <span className="ps-mono text-[var(--ps-ink)]">.tar.gz</span>) to generate call graphs and test suites.
+                    Upload a compressed project bundle (
+                    <span className="ps-mono text-[var(--ps-ink)]">.zip</span>,{" "}
+                    <span className="ps-mono text-[var(--ps-ink)]">.rar</span>,
+                    or{" "}
+                    <span className="ps-mono text-[var(--ps-ink)]">
+                      .tar.gz
+                    </span>
+                    ) to generate call graphs and test suites.
                   </p>
                 </div>
 
-                <LocalUpload onClose={onClose} onSuccess={handleImportSuccess} />
+                <LocalUpload
+                  onClose={onClose}
+                  onSuccess={handleImportSuccess}
+                />
               </div>
 
               <div className="pt-3 border-t border-[var(--ps-line)] flex items-center gap-2 text-[11px] text-[var(--ps-ink-muted)]">
@@ -109,7 +140,9 @@ export default function ImportLayout({ onClose, onSuccess }) {
                   style={{ color: "var(--ps-emerald)" }}
                   className="shrink-0"
                 />
-                <span>Secrets and credential files are filtered before indexing.</span>
+                <span>
+                  Secrets and credential files are filtered before indexing.
+                </span>
               </div>
             </div>
 
@@ -119,6 +152,8 @@ export default function ImportLayout({ onClose, onSuccess }) {
                 onClose={onClose}
                 onSuccess={handleImportSuccess}
                 hasGithub={hasGithub}
+                profileError={profileError}
+                onRetryProfile={loadGithubStatus}
               />
             </div>
           </div>
@@ -127,7 +162,10 @@ export default function ImportLayout({ onClose, onSuccess }) {
           <div className="h-12 px-6 border-t border-[var(--ps-line)] bg-[var(--ps-inset)] flex items-center justify-between text-xs shrink-0">
             <div className="flex items-center gap-2 text-[11px] text-[var(--ps-ink-muted)]">
               <Layers size={13} className="shrink-0" />
-              <span>Supports JavaScript &amp; TypeScript workspaces (Node, React, Express)</span>
+              <span>
+                Supports JavaScript &amp; TypeScript workspaces (Node, React,
+                Express)
+              </span>
             </div>
             <button
               type="button"
@@ -145,8 +183,10 @@ export default function ImportLayout({ onClose, onSuccess }) {
                 <div
                   className="w-11 h-11 rounded-lg flex items-center justify-center mb-3 border"
                   style={{
-                    backgroundColor: "color-mix(in srgb, var(--ps-emerald) 12%, transparent)",
-                    borderColor: "color-mix(in srgb, var(--ps-emerald) 30%, transparent)",
+                    backgroundColor:
+                      "color-mix(in srgb, var(--ps-emerald) 12%, transparent)",
+                    borderColor:
+                      "color-mix(in srgb, var(--ps-emerald) 30%, transparent)",
                     color: "var(--ps-emerald)",
                   }}
                 >
@@ -156,7 +196,8 @@ export default function ImportLayout({ onClose, onSuccess }) {
                   Import queued
                 </h3>
                 <p className="text-xs text-[var(--ps-ink-secondary)] mt-1 leading-relaxed">
-                  Indexing codebase structure and redirecting to your workspace...
+                  Indexing codebase structure and redirecting to your
+                  workspace...
                 </p>
               </div>
             </div>

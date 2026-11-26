@@ -1,10 +1,12 @@
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+import { API_BASE, authAwareFetch, getAccessToken } from "../lib/authSession.js";
+
+const BASE_URL = API_BASE;
 
 export async function getUserProfileApi() {
-  const token = localStorage.getItem("token");
-  const res = await fetch(`${BASE_URL}/users/me`, {
+  const token = getAccessToken();
+  const res = await authAwareFetch(fetch, `${BASE_URL}/users/me`, {
     headers: {
-      Authorization: `Bearer ${token}`,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       "Content-Type": "application/json",
     },
   });
@@ -17,11 +19,11 @@ export async function getUserProfileApi() {
 }
 
 export async function updateUserProfileApi(userData) {
-  const token = localStorage.getItem("token");
-  const res = await fetch(`${BASE_URL}/users/me`, {
+  const token = getAccessToken();
+  const res = await authAwareFetch(fetch, `${BASE_URL}/users/me`, {
     method: "PATCH",
     headers: {
-      Authorization: `Bearer ${token}`,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       "Content-Type": "application/json",
     },
     body: JSON.stringify(userData),

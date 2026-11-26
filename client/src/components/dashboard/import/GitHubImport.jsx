@@ -1,5 +1,11 @@
 import { useState } from "react";
-import { Link2, ArrowRight, AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
+import {
+  Link2,
+  ArrowRight,
+  AlertCircle,
+  CheckCircle2,
+  Loader2,
+} from "lucide-react";
 import RepoList from "./RepoList";
 import {
   createProjectApi,
@@ -24,11 +30,40 @@ function GithubIcon({ size = 16, className = "" }) {
   );
 }
 
-export default function GitHubImport({ onClose, onSuccess, hasGithub }) {
+export default function GitHubImport({
+  onClose,
+  onSuccess,
+  hasGithub,
+  profileError = "",
+  onRetryProfile,
+}) {
   const [urlValue, setUrlValue] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [connectingGithub, setConnectingGithub] = useState(false);
+  const [forceConnectView, setForceConnectView] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const { showToast } = useToast();
+
+  const handleConnectGithub = async () => {
+    if (connectingGithub) return;
+    setConnectingGithub(true);
+    try {
+      const oauthUrl = await fetchGithubAuthorizeUrlApi("connect");
+      sessionStorage.setItem("covai.githubOAuthMode", "connect");
+      sessionStorage.setItem(
+        "covai.githubConnectReturn",
+        `${window.location.pathname}${window.location.search}`,
+      );
+      window.location.assign(oauthUrl);
+    } catch (err) {
+      setConnectingGithub(false);
+      showToast({
+        type: "error",
+        title: "GitHub OAuth Unavailable",
+        message: err?.message || "GitHub OAuth is not configured.",
+      });
+    }
+  };
 
   const isValidUrl =
     urlValue.startsWith("https://github.com/") && urlValue.length > 22;
@@ -162,8 +197,10 @@ export default function GitHubImport({ onClose, onSuccess, hasGithub }) {
           <div
             className="rounded-lg p-2.5 text-xs flex items-center gap-2 border"
             style={{
-              backgroundColor: "color-mix(in srgb, var(--ps-rose) 8%, transparent)",
-              borderColor: "color-mix(in srgb, var(--ps-rose) 25%, transparent)",
+              backgroundColor:
+                "color-mix(in srgb, var(--ps-rose) 8%, transparent)",
+              borderColor:
+                "color-mix(in srgb, var(--ps-rose) 25%, transparent)",
               color: "var(--ps-rose)",
             }}
           >
@@ -184,7 +221,31 @@ export default function GitHubImport({ onClose, onSuccess, hasGithub }) {
 
       {/* ── Repository Browser ────────────────────────────────── */}
       <div className="flex-1 min-h-0 flex flex-col">
-        {hasGithub === false ? (
+        {profileError ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center rounded-[10px] bg-[var(--ps-inset)] border border-[var(--ps-line)] border-dashed gap-3">
+            <div className="w-10 h-10 rounded-lg bg-[var(--ps-surface)] border border-[var(--ps-line)] flex items-center justify-center text-[var(--ps-rose)]">
+              <AlertCircle size={18} />
+            </div>
+            <div>
+              <h4 className="text-xs font-semibold text-[var(--ps-ink)]">
+                Unable to check GitHub connection
+              </h4>
+              <p className="text-[11.5px] text-[var(--ps-ink-secondary)] mt-1 max-w-xs leading-relaxed">
+                {profileError}
+              </p>
+            </div>
+            {onRetryProfile && (
+              <button
+                type="button"
+                onClick={onRetryProfile}
+                className="h-8 px-3.5 rounded-lg inline-flex items-center justify-center gap-1.5 text-xs font-semibold ps-btn-contrast cursor-pointer"
+                id="retry-github-profile-btn"
+              >
+                <span>Retry</span>
+              </button>
+            )}
+          </div>
+        ) : hasGithub === false || forceConnectView ? (
           <div className="flex-1 flex flex-col items-center justify-center p-6 text-center rounded-[10px] bg-[var(--ps-inset)] border border-[var(--ps-line)] border-dashed gap-3">
             <div className="w-10 h-10 rounded-lg bg-[var(--ps-surface)] border border-[var(--ps-line)] flex items-center justify-center text-[var(--ps-ink)]">
               <GithubIcon size={18} />
@@ -194,33 +255,27 @@ export default function GitHubImport({ onClose, onSuccess, hasGithub }) {
                 Connect your GitHub account
               </h4>
               <p className="text-[11.5px] text-[var(--ps-ink-secondary)] mt-1 max-w-xs leading-relaxed">
-                Authorize read access to browse and import your public or private repositories in one click.
+                Authorize read access to browse and import your public or
+                private repositories in one click.
               </p>
             </div>
             <button
               type="button"
-              onClick={async () => {
-                try {
-                  const oauthUrl = await fetchGithubAuthorizeUrlApi("connect");
-                  sessionStorage.setItem("covai.githubOAuthMode", "connect");
-                  sessionStorage.setItem(
-                    "covai.githubConnectReturn",
-                    `${window.location.pathname}${window.location.search}`,
-                  );
-                  window.location.assign(oauthUrl);
-                } catch (err) {
-                  showToast({
-                    type: "error",
-                    title: "GitHub OAuth Unavailable",
-                    message: err?.message || "GitHub OAuth is not configured.",
-                  });
-                }
-              }}
-              className="h-8 px-3.5 rounded-lg inline-flex items-center justify-center gap-1.5 text-xs font-semibold ps-btn-contrast cursor-pointer"
+              onClick={handleConnectGithub}
+              disabled={connectingGithub}
+              className="h-8 px-3.5 rounded-lg inline-flex items-center justify-center gap-1.5 text-xs font-semibold ps-btn-contrast cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               id="connect-github-import-btn"
             >
-              <GithubIcon size={13} />
-              <span>Connect GitHub</span>
+              {connectingGithub ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <GithubIcon size={13} />
+              )}
+              <span>
+                {connectingGithub
+                  ? "Redirecting to GitHub..."
+                  : "Connect GitHub"}
+              </span>
             </button>
           </div>
         ) : (
@@ -228,6 +283,7 @@ export default function GitHubImport({ onClose, onSuccess, hasGithub }) {
             onClose={onClose}
             onSuccess={onSuccess}
             hasGithub={hasGithub}
+            onReconnectGithub={() => setForceConnectView(true)}
           />
         )}
       </div>

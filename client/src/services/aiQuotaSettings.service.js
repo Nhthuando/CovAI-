@@ -1,6 +1,6 @@
-import { authAwareFetch, getAccessToken } from "../lib/authSession.js";
+import { API_BASE, authAwareFetch, getAccessToken } from "../lib/authSession.js";
 
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const BASE_URL = API_BASE;
 
 function getAuthToken() {
   return getAccessToken() || "";

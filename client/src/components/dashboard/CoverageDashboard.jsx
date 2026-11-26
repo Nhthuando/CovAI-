@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { getAccessToken, handleUnauthorizedResponse } from "../../lib/authSession.js";
+import {
+  API_BASE,
+  authAwareFetch,
+  getAccessToken,
+  handleUnauthorizedResponse,
+} from "../../lib/authSession.js";
 
 import {
   getCoverageSummary,
@@ -10,7 +15,7 @@ import {
 } from "../../services/coverage.service.js";
 import { invalidateCoverageQueries } from "../../hooks/useCoverageQuery.js";
 
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const BASE_URL = API_BASE;
 
 function getAuthHeaders() {
   const token = getAccessToken();
@@ -29,9 +34,13 @@ async function handleResponse(res) {
 }
 
 async function getCoverageSummaryApi(snapshotId) {
-  const res = await fetch(`${BASE_URL}/coverage/${snapshotId}/summary`, {
-    headers: getAuthHeaders(),
-  });
+  const res = await authAwareFetch(
+    fetch,
+    `${BASE_URL}/coverage/${snapshotId}/summary`,
+    {
+      headers: getAuthHeaders(),
+    },
+  );
   return handleResponse(res);
 }
 
@@ -40,7 +49,8 @@ async function getCoverageFilesApi(
   { sortBy = "filePath", order = "asc", page = 1, limit = 200 } = {},
 ) {
   const params = new URLSearchParams({ sortBy, order, page, limit });
-  const res = await fetch(
+  const res = await authAwareFetch(
+    fetch,
     `${BASE_URL}/coverage/${snapshotId}/files?${params}`,
     {
       headers: getAuthHeaders(),

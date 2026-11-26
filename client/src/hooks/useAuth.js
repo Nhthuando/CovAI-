@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { queryClient } from "../lib/queryClient";
+import { API_BASE } from "../lib/authSession";
 
 function readUserFromStorage() {
   const token = localStorage.getItem("token");
@@ -44,8 +45,7 @@ export const useAuth = () => {
   const logout = useCallback(() => {
     const token = localStorage.getItem("token");
     if (token) {
-      const baseUrl = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
-      fetch(`${baseUrl}/auth/logout`, {
+      fetch(`${API_BASE}/auth/logout`, {
         method: "POST",
         credentials: "include",
         headers: { Authorization: `Bearer ${token}` },
@@ -79,18 +79,39 @@ export const useAuth = () => {
   }, []);
 
   useEffect(() => {
-    const handleStorageChange = () => {
-      queryClient.cancelQueries();
-      queryClient.clear();
-      loadUserFromStorage();
+    const handleStorageChange = (event) => {
+      if (
+        event &&
+        event.key !== null &&
+        event.key !== "token" &&
+        event.key !== "user"
+      ) {
+        return;
+      }
+      const nextUser = readUserFromStorage();
+      setUser((prevUser) => {
+        const identityChanged =
+          (prevUser?.id || null) !== (nextUser?.id || null);
+        if (identityChanged || !nextUser) {
+          queryClient.cancelQueries();
+          queryClient.clear();
+        }
+        return nextUser;
+      });
+      setIsLoading(false);
+    };
+    const handleTokenRefreshed = () => {
+      setUser(readUserFromStorage());
     };
     window.addEventListener("storage", handleStorageChange);
     window.addEventListener("covai:auth-change", handleStorageChange);
+    window.addEventListener("covai:token-refreshed", handleTokenRefreshed);
     return () => {
       window.removeEventListener("storage", handleStorageChange);
       window.removeEventListener("covai:auth-change", handleStorageChange);
+      window.removeEventListener("covai:token-refreshed", handleTokenRefreshed);
     };
-  }, [loadUserFromStorage]);
+  }, []);
 
   return {
     user,
@@ -99,7 +120,4 @@ export const useAuth = () => {
     userId: user?.id,
     token: user?.token,
     login,
-    logout,
-    refresh: loadUserFromStorage,
-  };
-};
+  

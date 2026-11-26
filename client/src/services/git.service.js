@@ -1,16 +1,30 @@
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+import {
+  API_BASE,
+  authAwareFetch,
+  getAccessToken,
+  handleUnauthorizedResponse,
+} from "../lib/authSession.js";
+
+const BASE_URL = API_BASE;
 
 function getAuthHeaders() {
-  const token = localStorage.getItem("token");
+  const token = getAccessToken();
   return {
     "Content-Type": "application/json",
     ...(token && { Authorization: `Bearer ${token}` }),
   };
 }
 
+function gitFetch(url, options = {}) {
+  return authAwareFetch(fetch, url, options);
+}
+
 async function handleResponse(res) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    if (res.status === 401) {
+      await handleUnauthorizedResponse();
+    }
     throw new Error(data.error || data.message || "Git operation failed");
   }
   return data;
@@ -19,7 +33,7 @@ async function handleResponse(res) {
 export const gitService = {
   getStatus: async (projectId) => {
     try {
-      const res = await fetch(`${BASE_URL}/git/status?projectId=${projectId}`, {
+      const res = await gitFetch(`${BASE_URL}/git/status?projectId=${projectId}`, {
         headers: getAuthHeaders(),
       });
       if (res.status === 404) {
@@ -66,7 +80,7 @@ export const gitService = {
   },
 
   stageFiles: async (projectId, files) => {
-    const res = await fetch(`${BASE_URL}/git/stage`, {
+    const res = await gitFetch(`${BASE_URL}/git/stage`, {
       method: "POST",
       headers: getAuthHeaders(),
       body: JSON.stringify({ projectId, files }),
@@ -75,7 +89,7 @@ export const gitService = {
   },
 
   unstageFiles: async (projectId, files) => {
-    const res = await fetch(`${BASE_URL}/git/unstage`, {
+    const res = await gitFetch(`${BASE_URL}/git/unstage`, {
       method: "POST",
       headers: getAuthHeaders(),
       body: JSON.stringify({ projectId, files }),
@@ -84,7 +98,7 @@ export const gitService = {
   },
 
   discardChanges: async (projectId, filePath, isUntracked = false) => {
-    const res = await fetch(`${BASE_URL}/git/discard`, {
+    const res = await gitFetch(`${BASE_URL}/git/discard`, {
       method: "POST",
       headers: getAuthHeaders(),
       body: JSON.stringify({ projectId, filePath, isUntracked }),
@@ -93,7 +107,7 @@ export const gitService = {
   },
 
   commit: async (projectId, message) => {
-    const res = await fetch(`${BASE_URL}/git/commit`, {
+    const res = await gitFetch(`${BASE_URL}/git/commit`, {
       method: "POST",
       headers: getAuthHeaders(),
       body: JSON.stringify({ projectId, message }),
@@ -102,7 +116,7 @@ export const gitService = {
   },
 
   push: async (projectId, branch) => {
-    const res = await fetch(`${BASE_URL}/git/push`, {
+    const res = await gitFetch(`${BASE_URL}/git/push`, {
       method: "POST",
       headers: getAuthHeaders(),
       body: JSON.stringify({ projectId, branch }),
@@ -111,7 +125,7 @@ export const gitService = {
   },
 
   pull: async (projectId, branch) => {
-    const res = await fetch(`${BASE_URL}/git/pull`, {
+    const res = await gitFetch(`${BASE_URL}/git/pull`, {
       method: "POST",
       headers: getAuthHeaders(),
       body: JSON.stringify({ projectId, branch }),
@@ -120,14 +134,14 @@ export const gitService = {
   },
 
   getBranches: async (projectId) => {
-    const res = await fetch(`${BASE_URL}/git/branches?projectId=${projectId}`, {
+    const res = await gitFetch(`${BASE_URL}/git/branches?projectId=${projectId}`, {
       headers: getAuthHeaders(),
     });
     return handleResponse(res);
   },
 
   checkout: async (projectId, branch, createNew = false) => {
-    const res = await fetch(`${BASE_URL}/git/checkout`, {
+    const res = await gitFetch(`${BASE_URL}/git/checkout`, {
       method: "POST",
       headers: getAuthHeaders(),
       body: JSON.stringify({ projectId, branch, createNew }),
@@ -136,7 +150,7 @@ export const gitService = {
   },
 
   getLog: async (projectId, limit = 25) => {
-    const res = await fetch(
+    const res = await gitFetch(
       `${BASE_URL}/git/log?projectId=${projectId}&limit=${limit}`,
       {
         headers: getAuthHeaders(),
@@ -146,7 +160,7 @@ export const gitService = {
   },
 
   getDiff: async (projectId, filePath, staged = false) => {
-    const res = await fetch(
+    const res = await gitFetch(
       `${BASE_URL}/git/diff?projectId=${projectId}&filePath=${encodeURIComponent(
         filePath || "",
       )}&staged=${staged}`,
@@ -158,7 +172,7 @@ export const gitService = {
   },
 
   initRepo: async (projectId) => {
-    const res = await fetch(`${BASE_URL}/git/init`, {
+    const res = await gitFetch(`${BASE_URL}/git/init`, {
       method: "POST",
       headers: getAuthHeaders(),
       body: JSON.stringify({ projectId }),
@@ -167,7 +181,7 @@ export const gitService = {
   },
 
   setRemoteUrl: async (projectId, repoUrl) => {
-    const res = await fetch(`${BASE_URL}/git/remote`, {
+    const res = await gitFetch(`${BASE_URL}/git/remote`, {
       method: "POST",
       headers: getAuthHeaders(),
       body: JSON.stringify({ projectId, repoUrl }),
@@ -176,7 +190,7 @@ export const gitService = {
   },
 
   runCommand: async (projectId, command, args = []) => {
-    const res = await fetch(`${BASE_URL}/git/command`, {
+    const res = await gitFetch(`${BASE_URL}/git/command`, {
       method: "POST",
       headers: getAuthHeaders(),
       body: JSON.stringify({ projectId, command, args }),

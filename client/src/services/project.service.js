@@ -1,8 +1,8 @@
 import { editorAwareFetch } from './editorAwareRequest';
 import { normalizeChatScreenContext, chatErrorMessage } from './chatScreenContext';
 import { getAIModelHeaders } from './aiModel.service.js';
-import { handleUnauthorizedResponse } from "../lib/authSession.js";
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+import { API_BASE, handleUnauthorizedResponse } from "../lib/authSession.js";
+const BASE_URL = API_BASE;
 
 function getAuthHeaders() {
   const token = localStorage.getItem("token");
@@ -139,19 +139,11 @@ export async function importGithubRepoApi(projectId, owner, repo) {
 }
 
 export async function getGithubRepositoriesApi() {
-  try {
-    const res = await editorAwareFetch(`${BASE_URL}/auth/github/repositories`, {
-      headers: getAuthHeaders(),
-      cache: "no-store",
-    });
-    if (!res.ok) {
-      return [];
-    }
-    return handleResponse(res);
-  } catch (err) {
-    console.warn("[getGithubRepositoriesApi]", err);
-    return [];
-  }
+  const res = await editorAwareFetch(`${BASE_URL}/auth/github/repositories`, {
+    headers: getAuthHeaders(),
+    cache: "no-store",
+  });
+  return handleResponse(res);
 }
 
 // --- In-Memory & Session Storage Cache for File Contents ---
@@ -646,7 +638,7 @@ export function generateSystemTestApi(
   snapshotId,
   executionMode = "full",
 ) {
-  return fetch(`${BASE_URL}/projects/${projectId}/ai-tests`, {
+  return editorAwareFetch(`${BASE_URL}/projects/${projectId}/ai-tests`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify({ snapshotId, mode: "PLAYWRIGHT_E2E", executionMode }),
@@ -718,7 +710,7 @@ export async function createProjectSnapshotApi(projectId, { label, message }) {
 }
 
 export async function activateProjectSnapshotApi(projectId, snapshotId) {
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/snapshots/${snapshotId}/activate`,
     {
       method: "POST",
@@ -768,7 +760,7 @@ export async function getProjectEventsApi(
   projectId,
   { after = 0, limit = 100 } = {},
 ) {
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/events?after=${after}&limit=${limit}`,
     {
       headers: getAuthHeaders(),

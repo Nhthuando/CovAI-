@@ -38,6 +38,7 @@ import GlobalAiTokenPill from "./GlobalAiTokenPill";
 import PanelResizer from "./PanelResizer";
 import ConfirmDialog from "../common/ConfirmDialog";
 import ProjectExportDialog from "./ProjectExportDialog";
+import PlatformGuidanceModal from "./guidance/PlatformGuidanceModal";
 import {
   PanelLeftClose,
   PanelLeftOpen,
@@ -58,6 +59,7 @@ import {
   Network,
   Layers,
   FileText,
+  BookOpen,
 } from "lucide-react";
 import CovaiLogo from "../common/CovaiLogo";
 import "./portfolio/portfolio.css";
@@ -132,6 +134,8 @@ function LayoutInner() {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [showCFG, setShowCFG] = useState(false);
+  const [showGuidance, setShowGuidance] = useState(false);
+  const [guidanceInitialStepId, setGuidanceInitialStepId] = useState(null);
 
   const handleLogout = () => {
     setShowLogoutConfirm(false);
@@ -369,6 +373,57 @@ function LayoutInner() {
     setAiPanelOpen(true);
     setPendingAiSuggestion({ promptText, timestamp: Date.now() });
   }, []);
+
+  useEffect(() => {
+    const onOpenGuide = (event) => {
+      setGuidanceInitialStepId(event.detail?.stepId || null);
+      setShowGuidance(true);
+    };
+    window.addEventListener("covai:open-guide", onOpenGuide);
+    return () => window.removeEventListener("covai:open-guide", onOpenGuide);
+  }, []);
+
+  const handleNavigateGuideTarget = useCallback(
+    (target) => {
+      if (!target) return;
+      if (target.kind === "portfolio") {
+        navigate("/projects");
+        return;
+      }
+      if (target.activity === "logic-analysis") {
+        setShowCFG(true);
+        return;
+      }
+      setShowCFG(false);
+      const nextActivity = target.activity || "explorer";
+      if (nextActivity === "explorer") {
+        setSidebarOpen(true);
+      }
+      setActiveActivity(nextActivity);
+      if (nextActivity === "coverage" && target.coverageType) {
+        setCoverageType(target.coverageType);
+      }
+      const params = new URLSearchParams(location.search);
+      params.set("tab", nextActivity);
+      if (nextActivity === "coverage" && target.coverageType) {
+        params.set("coverageType", target.coverageType);
+        params.set("type", target.coverageType);
+      } else {
+        params.delete("coverageType");
+        params.delete("type");
+      }
+      if (nextActivity === "trustworthiness" && target.evalView) {
+        params.set("view", target.evalView);
+      } else if (nextActivity !== "trustworthiness") {
+        params.delete("view");
+      }
+      params.delete("focusFile");
+      params.delete("focusEndpoint");
+      params.delete("focusScenario");
+      navigate(`${location.pathname}?${params.toString()}`, { replace: true });
+    },
+    [location.pathname, location.search, navigate],
+  );
 
   useEffect(() => {
     const onPrefillEvent = (e) => {
@@ -1642,6 +1697,21 @@ function LayoutInner() {
             </button>
           )}
 
+          <button
+            type="button"
+            id="covai-guide-toggle"
+            onClick={() => {
+              setGuidanceInitialStepId(null);
+              setShowGuidance(true);
+            }}
+            aria-label="Open workspace guide"
+            title="Workspace Guide (step-by-step walkthrough)"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] bg-[var(--ps-surface-2)] hover:border-[var(--ps-line-strong)] border border-[var(--ps-line)] transition-colors duration-150 cursor-pointer focus-visible:outline-2 focus-visible:outline-[var(--ps-cobalt)]"
+          >
+            <BookOpen size={13} className="text-[var(--ps-cobalt)]" />
+            {!isMobile && <span>Guide</span>}
+          </button>
+
           <div className="flex items-center rounded-md bg-[var(--ps-inset)] border border-[var(--ps-line)] p-0.5 gap-0.5">
             <button
               type="button"
@@ -2269,6 +2339,20 @@ function LayoutInner() {
           onClose={() => setShowExport(false)}
         />
       )}
+      <PlatformGuidanceModal
+        isOpen={showGuidance}
+        onClose={() => setShowGuidance(false)}
+        initialStepId={guidanceInitialStepId}
+        currentContext={{
+          page: "workspace",
+          activeActivity,
+          coverageType,
+          evalView: searchParams.get("view") || "home",
+          showCFG,
+        }}
+        onNavigateTarget={handleNavigateGuideTarget}
+        onAskAi={handleAskAiPrompt}
+      />
     </div>
   );
 }

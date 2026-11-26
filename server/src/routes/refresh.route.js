@@ -2,7 +2,10 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import prisma from "../config/prisma.js";
 import { setRefreshTokenCookie } from "../controllers/auth.controller.js";
-import { issueSessionTokensForUser } from "../services/auth.service.js";
+import {
+  isStoredRefreshTokenValid,
+  issueSessionTokensForUser,
+} from "../services/auth.service.js";
 
 const router = express.Router();
 const SLIDING_RENEW_THRESHOLD_SEC = 7 * 24 * 60 * 60; // renew refresh token if < 7 days remaining
@@ -33,7 +36,7 @@ router.post("/", async (req, res) => {
     return res.status(503).json({ code: "REFRESH_UNAVAILABLE", message: "Session renewal temporarily unavailable" });
   }
 
-  if (!user || user.refreshToken !== refreshToken) {
+  if (!user || !isStoredRefreshTokenValid(user.refreshToken, refreshToken)) {
     return res.status(403).json({ code: "REFRESH_TOKEN_INVALID", message: "Invalid refresh token" });
   }
 
