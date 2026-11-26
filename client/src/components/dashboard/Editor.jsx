@@ -751,6 +751,15 @@ export default function Editor({
 
   // Update Monaco decorations for coverage gutters (✓, ⚑, ×)
   useEffect(() => {
+    const model = editorRef.current?.getModel?.();
+    const monaco = monacoRef.current;
+    if (!model || !monaco || typeof currentFile.content !== "string") return;
+    if (!currentFile.content.includes("\r\n")) {
+      model.setEOL?.(monaco.editor.EndOfLineSequence.LF);
+    }
+  }, [activeTabId, currentFile.content, editorMountCount]);
+
+  useEffect(() => {
     const editor = editorRef.current;
     const monaco = monacoRef.current;
     if (!editor || !monaco) return;

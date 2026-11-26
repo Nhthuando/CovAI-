@@ -84,11 +84,11 @@ export default function VcsConflictResolver({
     conflicts.every((c) => Boolean(snapshotResolutions[c.path]));
 
   return (
-    <div className="flex flex-col border border-rose-500/30 rounded-lg bg-[var(--color-surface)] overflow-hidden">
+    <div className="flex flex-col border border-[var(--color-danger)]/35 rounded-lg bg-[var(--color-surface)] overflow-hidden">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 bg-rose-500/10 border-b border-rose-500/20">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 bg-[var(--color-danger)]/10 border-b border-[var(--color-danger)]/25">
         <div className="flex items-center gap-2">
-          <AlertTriangle size={15} className="text-rose-400 shrink-0" />
+          <AlertTriangle size={15} className="text-[var(--color-danger)] shrink-0" />
           <div>
             <h3 className="text-xs font-semibold text-[var(--color-text)]">
               {operationLabel} ({conflicts.length} conflicted file
@@ -150,7 +150,7 @@ export default function VcsConflictResolver({
 
       {/* Body Grid (or ready-to-complete banner when all conflicts are resolved) */}
       {conflicts.length === 0 ? (
-        <div className="px-4 py-3 text-xs text-emerald-400 bg-emerald-500/5 flex items-center gap-2">
+        <div className="px-4 py-3 text-xs text-[var(--color-success)] bg-[var(--color-success)]/10 flex items-center gap-2">
           <CheckCircle2 size={14} className="shrink-0" />
           <span>
             All conflicted files are resolved and staged. Click{" "}
@@ -185,12 +185,12 @@ export default function VcsConflictResolver({
                   {conflict.path}
                 </span>
                 {resolvedChoice ? (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--color-success)]/12 text-[var(--color-success)] border border-[var(--color-success)]/25 shrink-0">
                     <Check size={10} />
                     {resolvedChoice.resolution}
                   </span>
                 ) : (
-                  <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-rose-500/10 text-rose-400 border border-rose-500/20 shrink-0">
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--color-danger)]/12 text-[var(--color-danger)] border border-[var(--color-danger)]/25 shrink-0">
                     {conflict.xy || "!"}
                   </span>
                 )}
@@ -303,7 +303,7 @@ export default function VcsConflictResolver({
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-[var(--color-border)] flex-1">
                   <div className="flex flex-col min-w-0">
-                    <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-sky-400 bg-sky-500/5 border-b border-[var(--color-border)]">
+                    <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-secondary)] bg-[var(--color-secondary)]/10 border-b border-[var(--color-border)]">
                       Ours (Current Branch)
                     </div>
                     <pre className="p-3 text-xs font-mono text-[var(--color-text-secondary)] overflow-auto max-h-64 m-0 whitespace-pre-wrap">
@@ -311,7 +311,7 @@ export default function VcsConflictResolver({
                     </pre>
                   </div>
                   <div className="flex flex-col min-w-0">
-                    <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-400 bg-amber-500/5 border-b border-[var(--color-border)]">
+                    <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-warning)] bg-[var(--color-warning)]/10 border-b border-[var(--color-border)]">
                       Theirs (Incoming Branch)
                     </div>
                     <pre className="p-3 text-xs font-mono text-[var(--color-text-secondary)] overflow-auto max-h-64 m-0 whitespace-pre-wrap">

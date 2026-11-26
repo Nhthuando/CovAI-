@@ -8,45 +8,49 @@ const STATUS_META = Object.freeze({
     label: "Modified",
     textClass: "text-[var(--color-warning)]",
     badgeClass:
-      "bg-amber-500/10 text-amber-400 border border-amber-500/20",
+      "bg-[var(--color-warning)]/12 text-[var(--color-warning)] border border-[var(--color-warning)]/30",
   },
   A: {
     char: "A",
     label: "Added",
     textClass: "text-[var(--color-success)]",
     badgeClass:
-      "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20",
+      "bg-[var(--color-success)]/12 text-[var(--color-success)] border border-[var(--color-success)]/30",
   },
   U: {
     char: "U",
     label: "Untracked",
     textClass: "text-[var(--color-success)]",
     badgeClass:
-      "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20",
+      "bg-[var(--color-success)]/12 text-[var(--color-success)] border border-[var(--color-success)]/30",
   },
   D: {
     char: "D",
     label: "Deleted",
     textClass: "text-[var(--color-danger)]",
-    badgeClass: "bg-rose-500/10 text-rose-400 border border-rose-500/20",
+    badgeClass:
+      "bg-[var(--color-danger)]/12 text-[var(--color-danger)] border border-[var(--color-danger)]/30",
   },
   R: {
     char: "R",
     label: "Renamed",
     textClass: "text-[var(--color-secondary)]",
-    badgeClass: "bg-sky-500/10 text-sky-400 border border-sky-500/20",
+    badgeClass:
+      "bg-[var(--color-secondary)]/12 text-[var(--color-secondary)] border border-[var(--color-secondary)]/30",
   },
   C: {
     char: "C",
     label: "Copied",
     textClass: "text-[var(--color-secondary)]",
-    badgeClass: "bg-sky-500/10 text-sky-400 border border-sky-500/20",
+    badgeClass:
+      "bg-[var(--color-secondary)]/12 text-[var(--color-secondary)] border border-[var(--color-secondary)]/30",
   },
   "!": {
     char: "!",
     label: "Conflict",
     textClass: "text-[var(--color-danger)]",
-    badgeClass: "bg-rose-500/15 text-rose-400 border border-rose-500/30",
+    badgeClass:
+      "bg-[var(--color-danger)]/15 text-[var(--color-danger)] border border-[var(--color-danger)]/35",
   },
   " ": {
     char: " ",
@@ -56,6 +60,25 @@ const STATUS_META = Object.freeze({
       "bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)]",
   },
 });
+
+const CONVENTIONAL_SUBJECT_PREFIX_RE = /^[a-z]+(?:\([^)]+\))?!?:\s+/i;
+const GITHUB_HTTPS_REPO_RE = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\/?$/i;
+
+export function formatAiCommitSubject(data) {
+  if (!data || typeof data.subject !== "string") return "";
+  const rawSubject = data.subject.trim();
+  if (!rawSubject) return "";
+  if (CONVENTIONAL_SUBJECT_PREFIX_RE.test(rawSubject)) {
+    return rawSubject;
+  }
+  const type = String(data.type || "feat").trim() || "feat";
+  const scope = typeof data.scope === "string" ? data.scope.trim() : "";
+  return scope ? `${type}(${scope}): ${rawSubject}` : `${type}: ${rawSubject}`;
+}
+
+export function isValidGithubRepoUrl(rawUrl) {
+  return GITHUB_HTTPS_REPO_RE.test(String(rawUrl || "").trim());
+}
 
 export function getVcsStatusMeta(status) {
   const key = String(status || " ").trim().toUpperCase() || " ";
@@ -492,4 +515,180 @@ export function formatRelativeTime(dateInput) {
   const days = Math.floor(hr / 24);
   if (days < 30) return `${days}d ago`;
   return new Date(dateInput).toLocaleDateString();
+}
+
+/**
+ * Extracts authoritative status payload returned directly inside a VCS mutation response
+ * so callers can update React Query cache without triggering a redundant GET /status.
+ */
+export function extractVcsStatusFromResponse(vcMode, response) {
+  const payload = response?.data;
+  if (!payload || typeof payload !== "object") return null;
+
+  const candidate =
+    payload.status && typeof payload.status === "object" ? payload.status : payload;
+
+  if (vcMode === VC_MODES.GIT_GITHUB) {
+    return typeof candidate.hasGit === "boolean" ? candidate : null;
+  }
+  return typeof candidate.initialized === "boolean" ? candidate : null;
+}
+
+function matchesTargetPath(itemPath, { files, folder } = {}) {
+  const cleanPath = String(itemPath || "")
+    .replace(/\\/g, "/")
+    .replace(/^\.\/+/, "");
+  if (folder) {
+    const cleanFolder = String(folder)
+      .replace(/\\/g, "/")
+      .replace(/^\.\/+/, "")
+      .replace(/\/+$/, "");
+    return cleanPath === cleanFolder || cleanPath.startsWith(`${cleanFolder}/`);
+  }
+  if (files === "all" || files === undefined || files === null) {
+    return true;
+  }
+  const targetSet = new Set(Array.isArray(files) ? files : [files]);
+  return targetSet.has(itemPath) || targetSet.has(cleanPath);
+}
+
+function mergeByPathSorted(existing = [], added = []) {
+  const map = new Map();
+  for (const item of existing) {
+    if (item?.path) map.set(item.path, item);
+  }
+  for (const item of added) {
+    if (item?.path) map.set(item.path, item);
+  }
+  return [...map.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/**
+ * Optimistically moves matching unstaged/untracked items into Staged Changes
+ * immediately on click before the server round-trip completes.
+ */
+export function applyOptimisticStage(vcMode, rawStatus, { files, folder } = {}) {
+  if (!rawStatus || typeof rawStatus !== "object") return rawStatus;
+  const target = { files, folder };
+
+  if (vcMode === VC_MODES.GIT_GITHUB) {
+    const prevStaged = Array.isArray(rawStatus.staged) ? rawStatus.staged : [];
+    const prevUnstaged = Array.isArray(rawStatus.unstaged) ? rawStatus.unstaged : [];
+    const prevUntracked = Array.isArray(rawStatus.untracked) ? rawStatus.untracked : [];
+
+    const movedFromUnstaged = [];
+    const nextUnstaged = [];
+    for (const item of prevUnstaged) {
+      if (matchesTargetPath(item.path, target)) movedFromUnstaged.push(item);
+      else nextUnstaged.push(item);
+    }
+
+    const movedFromUntracked = [];
+    const nextUntracked = [];
+    for (const item of prevUntracked) {
+      if (matchesTargetPath(item.path, target)) {
+        const rest = { ...item };
+        delete rest.isUntracked;
+        movedFromUntracked.push({
+          ...rest,
+          status: item.status === "U" || !item.status ? "A" : item.status,
+          statusText: "Added",
+        });
+      } else {
+        nextUntracked.push(item);
+      }
+    }
+
+    const nextStaged = mergeByPathSorted(prevStaged, [
+      ...movedFromUnstaged,
+      ...movedFromUntracked,
+    ]);
+    return {
+      ...rawStatus,
+      staged: nextStaged,
+      unstaged: nextUnstaged,
+      untracked: nextUntracked,
+      clean:
+        nextStaged.length === 0 &&
+        nextUnstaged.length === 0 &&
+        nextUntracked.length === 0 &&
+        (rawStatus.conflicts?.length || 0) === 0,
+    };
+  }
+
+  const prevStaged = Array.isArray(rawStatus.staged) ? rawStatus.staged : [];
+  const prevUnstaged = Array.isArray(rawStatus.unstaged) ? rawStatus.unstaged : [];
+  const moved = [];
+  const nextUnstaged = [];
+  for (const item of prevUnstaged) {
+    if (matchesTargetPath(item.path, target)) moved.push(item);
+    else nextUnstaged.push(item);
+  }
+  const nextStaged = mergeByPathSorted(prevStaged, moved);
+  return {
+    ...rawStatus,
+    staged: nextStaged,
+    unstaged: nextUnstaged,
+  };
+}
+
+/**
+ * Optimistically moves matching staged items back to Changes before unstage finishes.
+ */
+export function applyOptimisticUnstage(vcMode, rawStatus, { files, folder } = {}) {
+  if (!rawStatus || typeof rawStatus !== "object") return rawStatus;
+  const target = { files, folder };
+
+  if (vcMode === VC_MODES.GIT_GITHUB) {
+    const prevStaged = Array.isArray(rawStatus.staged) ? rawStatus.staged : [];
+    const prevUnstaged = Array.isArray(rawStatus.unstaged) ? rawStatus.unstaged : [];
+    const prevUntracked = Array.isArray(rawStatus.untracked) ? rawStatus.untracked : [];
+
+    const nextStaged = [];
+    const returnedToUnstaged = [];
+    const returnedToUntracked = [];
+    for (const item of prevStaged) {
+      if (!matchesTargetPath(item.path, target)) {
+        nextStaged.push(item);
+      } else if (item.status === "A") {
+        returnedToUntracked.push({
+          ...item,
+          status: "U",
+          statusText: "Untracked",
+          isUntracked: true,
+        });
+      } else {
+        returnedToUnstaged.push(item);
+      }
+    }
+
+    const nextUnstaged = mergeByPathSorted(prevUnstaged, returnedToUnstaged);
+    const nextUntracked = mergeByPathSorted(prevUntracked, returnedToUntracked);
+    return {
+      ...rawStatus,
+      staged: nextStaged,
+      unstaged: nextUnstaged,
+      untracked: nextUntracked,
+      clean:
+        nextStaged.length === 0 &&
+        nextUnstaged.length === 0 &&
+        nextUntracked.length === 0 &&
+        (rawStatus.conflicts?.length || 0) === 0,
+    };
+  }
+
+  const prevStaged = Array.isArray(rawStatus.staged) ? rawStatus.staged : [];
+  const prevUnstaged = Array.isArray(rawStatus.unstaged) ? rawStatus.unstaged : [];
+  const nextStaged = [];
+  const returned = [];
+  for (const item of prevStaged) {
+    if (matchesTargetPath(item.path, target)) returned.push(item);
+    else nextStaged.push(item);
+  }
+  const nextUnstaged = mergeByPathSorted(prevUnstaged, returned);
+  return {
+    ...rawStatus,
+    staged: nextStaged,
+    unstaged: nextUnstaged,
+  };
 }

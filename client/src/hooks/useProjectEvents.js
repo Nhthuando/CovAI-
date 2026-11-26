@@ -36,7 +36,9 @@ export function useProjectEvents(projectId, userId, onEvent) {
         if (!alive) return;
         queryClient
           .invalidateQueries({
-            predicate: (query) => query.queryKey.includes(projectId),
+            predicate: (query) =>
+              query.queryKey[0] !== "vcsSummary" &&
+              query.queryKey.includes(projectId),
             cancelRefetch: false,
           })
           .catch((err) => {

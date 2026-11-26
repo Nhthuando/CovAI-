@@ -637,12 +637,16 @@ function LayoutInner() {
         }
       }
 
-      await queryClient.invalidateQueries({
-        queryKey: ["projectTree", user?.id, activeProjId],
-      });
-      await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      await queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
-      vcsSummary.invalidateAll();
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["projectTree", user?.id, activeProjId],
+        }),
+        queryClient.invalidateQueries({ queryKey: ["projects"] }),
+        queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] }),
+      ]);
+      if (!options?.skipVcsRefetch) {
+        vcsSummary.invalidateAll();
+      }
       await loadData(activeProjId, 1, 0, { forceRefresh: true });
       setEditorRefreshTrigger((prev) => prev + 1);
     } catch (err) {

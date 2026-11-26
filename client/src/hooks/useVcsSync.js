@@ -9,12 +9,55 @@ import { GIT_SOCKET_EVENTS } from "../../../shared/gitProtocol.js";
 import { SNAPSHOT_SOCKET_EVENTS } from "../../../shared/snapshotVcsProtocol.js";
 import { queryClient } from "../lib/queryClient";
 
+const recentLocalMutations = new Map();
+
+function getMutationEntry(vcMode, projectId) {
+  const key = `${vcMode || "none"}:${projectId}`;
+  let entry = recentLocalMutations.get(key);
+  if (!entry) {
+    entry = { inFlight: 0, lastAt: 0 };
+    recentLocalMutations.set(key, entry);
+  }
+  return { key, entry };
+}
+
+export function beginLocalVcsMutation(vcMode, projectId) {
+  if (!projectId) return () => {};
+  const { entry } = getMutationEntry(vcMode, projectId);
+  entry.inFlight += 1;
+  let finished = false;
+  return () => {
+    if (finished) return;
+    finished = true;
+    entry.inFlight = Math.max(0, entry.inFlight - 1);
+    entry.lastAt = Date.now();
+  };
+}
+
+export function markLocalVcsMutation(vcMode, projectId) {
+  if (!projectId) return;
+  const { entry } = getMutationEntry(vcMode, projectId);
+  entry.lastAt = Date.now();
+}
+
+export function isLocalVcsEchoSuppressed(vcMode, projectId, windowMs = 900) {
+  if (!projectId) return false;
+  const key = `${vcMode || "none"}:${projectId}`;
+  const entry = recentLocalMutations.get(key);
+  if (!entry) return false;
+  if (entry.inFlight > 0) return true;
+  if (entry.lastAt && Date.now() - entry.lastAt <= windowMs) return true;
+  recentLocalMutations.delete(key);
+  return false;
+}
+
 export function vcsSummaryQueryKey(vcMode, projectId) {
   return ["vcsSummary", vcMode || "none", projectId || "none"];
 }
 
 export function useVcsSync(projectId) {
-  const { vcMode, isAuthenticated } = useAuth();
+  const { vcMode, isAuthenticated, user } = useAuth();
+  const currentUserId = user?.id || null;
   const [activeOperation, setActiveOperation] = useState(null);
   const debounceTimerRef = useRef(null);
   const clearOpTimerRef = useRef(null);
@@ -64,6 +107,10 @@ export function useVcsSync(projectId) {
 
   const invalidateAll = useCallback(() => {
     if (!projectId) return;
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
     queryClient
       .invalidateQueries({
         queryKey: vcsSummaryQueryKey(vcMode, projectId),
@@ -73,6 +120,45 @@ export function useVcsSync(projectId) {
         console.warn("[useVcsSync] Immediate invalidation failed:", err);
       });
   }, [vcMode, projectId]);
+
+  const beginLocalMutation = useCallback(
+    () => beginLocalVcsMutation(vcMode, projectId),
+    [vcMode, projectId],
+  );
+
+  const applyStatusData = useCallback(
+    (nextStatus, { suppressEcho = true } = {}) => {
+      if (!projectId || !nextStatus || typeof nextStatus !== "object") return;
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      if (suppressEcho) {
+        markLocalVcsMutation(vcMode, projectId);
+      }
+      queryClient.setQueryData(vcsSummaryQueryKey(vcMode, projectId), nextStatus);
+    },
+    [vcMode, projectId],
+  );
+
+  const updateStatusOptimistic = useCallback(
+    async (updater) => {
+      if (!projectId || typeof updater !== "function") return () => {};
+      const key = vcsSummaryQueryKey(vcMode, projectId);
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData(key);
+      markLocalVcsMutation(vcMode, projectId);
+      queryClient.setQueryData(key, (curr) => (curr ? updater(curr) : curr));
+      return () => {
+        queryClient.setQueryData(key, previous);
+      };
+    },
+    [vcMode, projectId],
+  );
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -106,7 +192,11 @@ export function useVcsSync(projectId) {
         clearOpTimerRef.current = setTimeout(() => {
           setActiveOperation(null);
         }, 2500);
-        scheduleRefresh(150);
+        const actorId = detail.payload?.actorId || null;
+        const isSelfEcho = !actorId || (currentUserId && actorId === currentUserId);
+        if (!(isSelfEcho && isLocalVcsEchoSuppressed(vcMode, projectId))) {
+          scheduleRefresh(150);
+        }
         return;
       }
 
@@ -125,6 +215,12 @@ export function useVcsSync(projectId) {
         return;
       }
 
+      const actorId = detail.payload?.actorId || null;
+      const isSelfEcho = !actorId || (currentUserId && actorId === currentUserId);
+      if (isSelfEcho && isLocalVcsEchoSuppressed(vcMode, projectId)) {
+        return;
+      }
+
       scheduleRefresh(200);
     };
 
@@ -132,6 +228,11 @@ export function useVcsSync(projectId) {
       const detail = evt?.detail;
       if (!detail || detail.projectId !== projectId) return;
       if (/file|workspace|snapshot/i.test(detail.type || "")) {
+        const actorId = detail.actorId || null;
+        const isSelfEcho = !actorId || (currentUserId && actorId === currentUserId);
+        if (isSelfEcho && isLocalVcsEchoSuppressed(vcMode, projectId)) {
+          return;
+        }
         scheduleRefresh(300);
       }
     };
@@ -139,7 +240,8 @@ export function useVcsSync(projectId) {
     const handleWorkspaceSaved = (evt) => {
       const detail = evt?.detail;
       if (detail?.projectId && detail.projectId !== projectId) return;
-      scheduleRefresh(300);
+      // Never suppress genuine workspace editor saves with VCS echo suppression
+      scheduleRefresh(200);
     };
 
     window.addEventListener("covai:vcs-event", handleVcsEvent);
@@ -153,7 +255,7 @@ export function useVcsSync(projectId) {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       if (clearOpTimerRef.current) clearTimeout(clearOpTimerRef.current);
     };
-  }, [enabled, projectId, scheduleRefresh]);
+  }, [enabled, projectId, vcMode, currentUserId, scheduleRefresh]);
 
   const summary = useMemo(
     () => buildVcsSummary(vcMode, query.data),
@@ -168,5 +270,8 @@ export function useVcsSync(projectId) {
     activeOperation,
     refetch: query.refetch,
     invalidateAll,
+    beginLocalMutation,
+    applyStatusData,
+    updateStatusOptimistic,
   };
 }

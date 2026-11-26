@@ -1,13 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { VC_MODES } from "../../../shared/versionControlMode.js";
+import {
+  isVcsSecretFileName,
+  VC_MODES,
+} from "../../../shared/versionControlMode.js";
 import { GIT_REPO_OPERATION_STATE } from "../../../shared/gitProtocol.js";
 import {
+  applyOptimisticStage,
+  applyOptimisticUnstage,
   buildChangesFileTree,
   buildVcsPermissions,
   buildVcsSummary,
   computeCommitGraphLayout,
+  extractVcsStatusFromResponse,
+  formatAiCommitSubject,
   getVcsStatusMeta,
+  isValidGithubRepoUrl,
   resolveVcsModeMeta,
 } from "./vcsUiHelpers.js";
 import { gitService } from "./git.service.js";
@@ -209,6 +217,132 @@ test("gitService & snapshotVcsService isolate routes and preserve structured err
         err.code === "DIRTY_WORKSPACE" &&
         err.details?.dirtyCount === 2,
     );
+  } finally {
+    globalThis.fetch = prevFetch;
+    restoreEnv();
+  }
+});
+
+test("isVcsSecretFileName allows env templates and source files while blocking real secrets", () => {
+  assert.equal(isVcsSecretFileName(".env.example"), false);
+  assert.equal(isVcsSecretFileName(".env.sample"), false);
+  assert.equal(isVcsSecretFileName(".env.template"), false);
+  assert.equal(isVcsSecretFileName("gitCredentialHelper.service.js"), false);
+  assert.equal(isVcsSecretFileName("secretManager.ts"), false);
+
+  assert.equal(isVcsSecretFileName(".env"), true);
+  assert.equal(isVcsSecretFileName(".env.production"), true);
+  assert.equal(isVcsSecretFileName("server.key"), true);
+  assert.equal(isVcsSecretFileName("cert.pem"), true);
+  assert.equal(isVcsSecretFileName("service-account.json"), true);
+});
+
+test("formatAiCommitSubject prevents double conventional-commit prefixes and isValidGithubRepoUrl validates URLs strictly", () => {
+  assert.equal(
+    formatAiCommitSubject({
+      type: "feat",
+      scope: "cart",
+      subject: "feat(cart): add quantity validation",
+    }),
+    "feat(cart): add quantity validation",
+  );
+  assert.equal(
+    formatAiCommitSubject({
+      type: "fix",
+      scope: "auth",
+      subject: "handle expired refresh token",
+    }),
+    "fix(auth): handle expired refresh token",
+  );
+  assert.equal(
+    formatAiCommitSubject({
+      type: "chore",
+      subject: "update dependencies",
+    }),
+    "chore: update dependencies",
+  );
+
+  assert.equal(isValidGithubRepoUrl("https://github.com/acme/covai-repo"), true);
+  assert.equal(isValidGithubRepoUrl("  https://github.com/acme/covai.repo.git/  "), true);
+  assert.equal(isValidGithubRepoUrl("https://github.com/acme/repo/tree/main"), false);
+  assert.equal(isValidGithubRepoUrl("https://gitlab.com/acme/repo"), false);
+  assert.equal(isValidGithubRepoUrl("https://github.com/only-owner"), false);
+});
+
+test("optimistic stage/unstage helpers update both Git and Snapshot states cleanly and extractVcsStatusFromResponse parses inline status", () => {
+  const gitBase = {
+    hasGit: true,
+    staged: [],
+    unstaged: [{ path: "src/app.js", status: "M" }],
+    untracked: [{ path: "src/new.js", status: "U", isUntracked: true }],
+    conflicts: [],
+    clean: false,
+  };
+
+  const gitStaged = applyOptimisticStage(VC_MODES.GIT_GITHUB, gitBase, {
+    files: ["src/new.js"],
+  });
+  assert.equal(gitStaged.untracked.length, 0);
+  assert.deepEqual(
+    gitStaged.staged.map((f) => `${f.status}:${f.path}`),
+    ["A:src/new.js"],
+  );
+
+  const gitUnstaged = applyOptimisticUnstage(VC_MODES.GIT_GITHUB, gitStaged, {
+    files: "all",
+  });
+  assert.equal(gitUnstaged.staged.length, 0);
+  assert.deepEqual(
+    gitUnstaged.untracked.map((f) => `${f.status}:${f.path}`),
+    ["U:src/new.js"],
+  );
+
+  const snapBase = {
+    initialized: true,
+    staged: [],
+    unstaged: [
+      { path: "src/a.js", status: "M" },
+      { path: "src/b.js", status: "A" },
+    ],
+  };
+  const snapFolderStaged = applyOptimisticStage(VC_MODES.SNAPSHOT_VCS, snapBase, {
+    folder: "src",
+  });
+  assert.equal(snapFolderStaged.staged.length, 2);
+  assert.equal(snapFolderStaged.unstaged.length, 0);
+
+  assert.equal(
+    extractVcsStatusFromResponse(VC_MODES.GIT_GITHUB, { data: { status: gitBase } }),
+    gitBase,
+  );
+  assert.equal(
+    extractVcsStatusFromResponse(VC_MODES.SNAPSHOT_VCS, { data: snapBase }),
+    snapBase,
+  );
+});
+
+test("gitService.runCommand sends single CLI input string when called without legacy args", async () => {
+  const restoreEnv = setupMockBrowserStorage();
+  const captured = [];
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    captured.push({ url: String(url), body: JSON.parse(init.body) });
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return { success: true, result: "Pulled", data: { mutated: true } };
+      },
+    };
+  };
+
+  try {
+    await gitService.runCommand("proj_9", "git pull origin main");
+    assert.ok(captured[0].url.endsWith("/api/git/command"));
+    assert.deepEqual(captured[0].body, {
+      projectId: "proj_9",
+      input: "git pull origin main",
+    });
   } finally {
     globalThis.fetch = prevFetch;
     restoreEnv();

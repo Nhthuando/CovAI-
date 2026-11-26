@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { GitCompare, RefreshCw } from "lucide-react";
 import Button from "../../../common/Button";
 import VcsMonacoDiffEditor from "../shared/VcsMonacoDiffEditor";
@@ -21,6 +21,14 @@ export default function SnapshotComparePanel({
   const [diffData, setDiffData] = useState(null);
   const [loadingDiff, setLoadingDiff] = useState(false);
   const [diffError, setDiffError] = useState("");
+  const diffRequestSeqRef = useRef(0);
+  const diffAbortRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      diffAbortRef.current?.abort();
+    };
+  }, []);
 
   const effectiveBaseId =
     baseId && checkpoints.some((c) => c.id === baseId)
@@ -61,14 +69,19 @@ export default function SnapshotComparePanel({
 
   useEffect(() => {
     if (!projectId || !effectiveBaseId) return undefined;
-    let active = true;
+    diffAbortRef.current?.abort();
+    const controller = new AbortController();
+    diffAbortRef.current = controller;
+    const reqId = ++diffRequestSeqRef.current;
+
     snapshotVcsService
       .compareCheckpoints(projectId, {
         baseSnapshotId: effectiveBaseId,
         targetSnapshotId: targetId || "WORKING_TREE",
+        signal: controller.signal,
       })
       .then(async (res) => {
-        if (!active) return;
+        if (reqId !== diffRequestSeqRef.current) return;
         setCompareData(res?.data || null);
         const firstChange = res?.data?.changes?.[0];
         if (firstChange) {
@@ -78,22 +91,31 @@ export default function SnapshotComparePanel({
             origPath: firstChange.origPath,
             baseSnapshotId: effectiveBaseId,
             targetSnapshotId: targetId || "WORKING_TREE",
+            signal: controller.signal,
           });
-          if (active) setDiffData(pairRes?.data || null);
+          if (reqId === diffRequestSeqRef.current) {
+            setDiffData(pairRes?.data || null);
+          }
         } else {
           setSelectedPath(null);
           setDiffData(null);
         }
       })
       .catch((err) => {
-        if (active) setDiffError(err?.message || "Failed to compare checkpoints");
+        if (err?.name === "AbortError" || reqId !== diffRequestSeqRef.current) return;
+        setDiffError(err?.message || "Failed to compare checkpoints");
       });
     return () => {
-      active = false;
+      controller.abort();
     };
   }, [projectId, effectiveBaseId, targetId]);
 
   const handleSelectChange = async (change) => {
+    diffAbortRef.current?.abort();
+    const controller = new AbortController();
+    diffAbortRef.current = controller;
+    const reqId = ++diffRequestSeqRef.current;
+
     setSelectedPath(change.path);
     setLoadingDiff(true);
     setDiffError("");
@@ -103,13 +125,18 @@ export default function SnapshotComparePanel({
         origPath: change.origPath,
         baseSnapshotId: effectiveBaseId,
         targetSnapshotId: targetId || "WORKING_TREE",
+        signal: controller.signal,
       });
+      if (reqId !== diffRequestSeqRef.current) return;
       setDiffData(res?.data || null);
     } catch (err) {
+      if (err?.name === "AbortError" || reqId !== diffRequestSeqRef.current) return;
       setDiffError(err?.message || "Failed to load diff");
       setDiffData(null);
     } finally {
-      setLoadingDiff(false);
+      if (reqId === diffRequestSeqRef.current) {
+        setLoadingDiff(false);
+      }
     }
   };
 

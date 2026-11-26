@@ -10,6 +10,7 @@ import {
   Folder,
   FolderTree,
   List,
+  Loader2,
   Minus,
   Plus,
   RotateCcw,
@@ -26,12 +27,16 @@ function ChangeRowActions({
   mode,
   canLocalWrite,
   disabledReason,
+  pendingActions,
   onStage,
   onUnstage,
   onDiscard,
   onAddToGitignore,
   onOpenInEditor,
 }) {
+  const isStaging = pendingActions?.has(`stage:${item.path}`);
+  const isUnstaging = pendingActions?.has(`unstage:${item.path}`);
+
   return (
     <div
       className="flex items-center gap-0.5 opacity-80 group-hover:opacity-100 shrink-0"
@@ -51,12 +56,12 @@ function ChangeRowActions({
       {section === "staged" && onUnstage && (
         <button
           type="button"
-          disabled={!canLocalWrite}
+          disabled={!canLocalWrite || isUnstaging}
           title={canLocalWrite ? "Unstage changes" : disabledReason}
           onClick={() => onUnstage([item.path])}
           className="p-1 rounded hover:bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
         >
-          <Minus size={11} />
+          {isUnstaging ? <Loader2 size={11} className="animate-spin" /> : <Minus size={11} />}
         </button>
       )}
 
@@ -68,7 +73,7 @@ function ChangeRowActions({
               disabled={!canLocalWrite}
               title={canLocalWrite ? "Discard changes" : disabledReason}
               onClick={() => onDiscard(item)}
-              className="p-1 rounded hover:bg-rose-500/15 text-[var(--color-text-muted)] hover:text-rose-400 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+              className="p-1 rounded hover:bg-[var(--color-danger)]/15 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
             >
               <RotateCcw size={11} />
             </button>
@@ -89,12 +94,12 @@ function ChangeRowActions({
           {onStage && (
             <button
               type="button"
-              disabled={!canLocalWrite}
+              disabled={!canLocalWrite || isStaging}
               title={canLocalWrite ? "Stage changes" : disabledReason}
               onClick={() => onStage([item.path])}
-              className="p-1 rounded hover:bg-emerald-500/15 text-[var(--color-text-muted)] hover:text-emerald-400 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+              className="p-1 rounded hover:bg-[var(--color-success)]/15 text-[var(--color-text-muted)] hover:text-[var(--color-success)] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
             >
-              <Plus size={11} />
+              {isStaging ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
             </button>
           )}
         </>
@@ -112,6 +117,7 @@ function ChangeTreeNode({
   onSelectFile,
   canLocalWrite,
   disabledReason,
+  pendingActions,
   onStage,
   onUnstage,
   onStageFolder,
@@ -123,6 +129,8 @@ function ChangeTreeNode({
   const [open, setOpen] = useState(true);
 
   if (node.type === "folder") {
+    const isStagingFolder = pendingActions?.has(`stageFolder:${node.path}`);
+    const isUnstagingFolder = pendingActions?.has(`unstageFolder:${node.path}`);
     return (
       <div>
         <div
@@ -147,23 +155,23 @@ function ChangeTreeNode({
             {section === "staged" && onUnstageFolder && (
               <button
                 type="button"
-                disabled={!canLocalWrite}
+                disabled={!canLocalWrite || isUnstagingFolder}
                 title={canLocalWrite ? `Unstage folder ${node.path}` : disabledReason}
                 onClick={() => onUnstageFolder(node.path)}
                 className="p-1 rounded hover:bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer disabled:opacity-40"
               >
-                <Minus size={11} />
+                {isUnstagingFolder ? <Loader2 size={11} className="animate-spin" /> : <Minus size={11} />}
               </button>
             )}
             {section === "unstaged" && onStageFolder && (
               <button
                 type="button"
-                disabled={!canLocalWrite}
+                disabled={!canLocalWrite || isStagingFolder}
                 title={canLocalWrite ? `Stage folder ${node.path}` : disabledReason}
                 onClick={() => onStageFolder(node.path)}
                 className="p-1 rounded hover:bg-emerald-500/15 text-[var(--color-text-muted)] hover:text-emerald-400 cursor-pointer disabled:opacity-40"
               >
-                <Plus size={11} />
+                {isStagingFolder ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
               </button>
             )}
           </div>
@@ -180,6 +188,7 @@ function ChangeTreeNode({
               onSelectFile={onSelectFile}
               canLocalWrite={canLocalWrite}
               disabledReason={disabledReason}
+              pendingActions={pendingActions}
               onStage={onStage}
               onUnstage={onUnstage}
               onStageFolder={onStageFolder}
@@ -220,6 +229,7 @@ function ChangeTreeNode({
           mode={mode}
           canLocalWrite={canLocalWrite}
           disabledReason={disabledReason}
+          pendingActions={pendingActions}
           onStage={onStage}
           onUnstage={onUnstage}
           onDiscard={onDiscard}
@@ -237,6 +247,8 @@ function ChangeTreeNode({
   );
 }
 
+const PAGE_SIZE = 100;
+
 function ChangeSection({
   title,
   section,
@@ -247,6 +259,7 @@ function ChangeSection({
   onSelectFile,
   canLocalWrite,
   disabledReason,
+  pendingActions,
   onStage,
   onUnstage,
   onStageAll,
@@ -261,9 +274,15 @@ function ChangeSection({
   accentClass = "text-[var(--color-text-secondary)]",
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
+  const [visibleLimit, setVisibleLimit] = useState(PAGE_SIZE);
+  const cappedItems = useMemo(
+    () => (items.length > visibleLimit ? items.slice(0, visibleLimit) : items),
+    [items, visibleLimit],
+  );
+  const remainingCount = Math.max(0, items.length - cappedItems.length);
   const treeNodes = useMemo(
-    () => (viewMode === "tree" ? buildChangesFileTree(items) : []),
-    [viewMode, items],
+    () => (viewMode === "tree" ? buildChangesFileTree(cappedItems) : []),
+    [viewMode, cappedItems],
   );
 
   if (items.length === 0 && section !== "unstaged") return null;
@@ -281,7 +300,7 @@ function ChangeSection({
             <ChevronRight size={13} className="text-[var(--color-text-muted)]" />
           )}
           {section === "conflicts" && (
-            <AlertTriangle size={12} className="text-rose-400 shrink-0" />
+            <AlertTriangle size={12} className="text-[var(--color-danger)] shrink-0" />
           )}
           <span
             className={`text-[11px] font-semibold uppercase tracking-wider truncate ${accentClass}`}
@@ -300,12 +319,16 @@ function ChangeSection({
           {section === "staged" && items.length > 0 && onUnstageAll && (
             <button
               type="button"
-              disabled={!canLocalWrite}
+              disabled={!canLocalWrite || pendingActions?.has("unstage:all")}
               title={canLocalWrite ? "Unstage All Changes" : disabledReason}
               onClick={onUnstageAll}
               className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--color-bg)] hover:bg-[var(--color-border)]/40 border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150 flex items-center gap-1"
             >
-              <Minus size={10} />
+              {pendingActions?.has("unstage:all") ? (
+                <Loader2 size={10} className="animate-spin" />
+              ) : (
+                <Minus size={10} />
+              )}
               <span>Unstage All</span>
             </button>
           )}
@@ -317,7 +340,7 @@ function ChangeSection({
                   disabled={!canLocalWrite}
                   title={canLocalWrite ? "Discard All Unstaged Changes" : disabledReason}
                   onClick={onDiscardAll}
-                  className="p-1 rounded hover:bg-rose-500/15 border border-transparent hover:border-rose-500/20 text-[var(--color-text-muted)] hover:text-rose-400 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
+                  className="p-1 rounded hover:bg-[var(--color-danger)]/15 border border-transparent hover:border-[var(--color-danger)]/25 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150"
                 >
                   <RotateCcw size={11} />
                 </button>
@@ -325,12 +348,16 @@ function ChangeSection({
               {onStageAll && (
                 <button
                   type="button"
-                  disabled={!canLocalWrite}
+                  disabled={!canLocalWrite || pendingActions?.has("stage:all")}
                   title={canLocalWrite ? "Stage All Changes" : disabledReason}
                   onClick={onStageAll}
-                  className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--color-bg)] hover:bg-emerald-500/10 border border-[var(--color-border)] hover:border-emerald-500/30 text-[var(--color-text-secondary)] hover:text-emerald-400 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150 flex items-center gap-1"
+                  className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--color-bg)] hover:bg-[var(--color-success)]/12 border border-[var(--color-border)] hover:border-[var(--color-success)]/35 text-[var(--color-text-secondary)] hover:text-[var(--color-success)] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150 flex items-center gap-1"
                 >
-                  <Plus size={10} />
+                  {pendingActions?.has("stage:all") ? (
+                    <Loader2 size={10} className="animate-spin" />
+                  ) : (
+                    <Plus size={10} />
+                  )}
                   <span>Stage All</span>
                 </button>
               )}
@@ -343,7 +370,7 @@ function ChangeSection({
         <div className="p-1.5 space-y-0.5 max-h-64 overflow-y-auto custom-scrollbar">
           {items.length === 0 ? (
             <div className="flex items-center gap-2 px-2.5 py-3 text-xs text-[var(--color-text-muted)]">
-              <Check size={13} className="text-emerald-400 shrink-0" />
+              <Check size={13} className="text-[var(--color-success)] shrink-0" />
               <span>Working tree clean — no pending modifications.</span>
             </div>
           ) : viewMode === "tree" ? (
@@ -357,6 +384,7 @@ function ChangeSection({
                 onSelectFile={onSelectFile}
                 canLocalWrite={canLocalWrite}
                 disabledReason={disabledReason}
+                pendingActions={pendingActions}
                 onStage={onStage}
                 onUnstage={onUnstage}
                 onStageFolder={onStageFolder}
@@ -367,7 +395,7 @@ function ChangeSection({
               />
             ))
           ) : (
-            items.map((item) => {
+            cappedItems.map((item) => {
               const meta = getVcsStatusMeta(
                 section === "conflicts" ? "!" : item.status,
               );
@@ -417,6 +445,7 @@ function ChangeSection({
                     mode={mode}
                     canLocalWrite={canLocalWrite}
                     disabledReason={disabledReason}
+                    pendingActions={pendingActions}
                     onStage={onStage}
                     onUnstage={onUnstage}
                     onDiscard={onDiscard}
@@ -426,6 +455,15 @@ function ChangeSection({
                 </div>
               );
             })
+          )}
+          {remainingCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setVisibleLimit((prev) => prev + PAGE_SIZE)}
+              className="w-full py-1.5 mt-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-border)]/40 text-[11px] font-mono text-[var(--color-primary)] cursor-pointer transition-colors duration-150"
+            >
+              Show more ({Math.min(PAGE_SIZE, remainingCount)} of {remainingCount} remaining)
+            </button>
           )}
         </div>
       )}
@@ -462,6 +500,7 @@ export default function VcsChangesTree({
   onOpenInEditor,
   canLocalWrite = true,
   disabledReason = "",
+  pendingActions = null,
 }) {
   const [viewMode, setViewMode] = useState("flat");
   const [filterText, setFilterText] = useState("");
@@ -541,9 +580,10 @@ export default function VcsChangesTree({
         onSelectFile={onSelectFile}
         canLocalWrite={canLocalWrite}
         disabledReason={disabledReason}
+        pendingActions={pendingActions}
         onStage={onStage}
         onOpenInEditor={onOpenInEditor}
-        accentClass="text-rose-400"
+        accentClass="text-[var(--color-danger)]"
       />
 
       <ChangeSection
@@ -556,11 +596,12 @@ export default function VcsChangesTree({
         onSelectFile={onSelectFile}
         canLocalWrite={canLocalWrite}
         disabledReason={disabledReason}
+        pendingActions={pendingActions}
         onUnstage={onUnstage}
         onUnstageAll={onUnstageAll}
         onUnstageFolder={onUnstageFolder}
         onOpenInEditor={onOpenInEditor}
-        accentClass="text-emerald-400"
+        accentClass="text-[var(--color-success)]"
       />
 
       <ChangeSection
@@ -573,6 +614,7 @@ export default function VcsChangesTree({
         onSelectFile={onSelectFile}
         canLocalWrite={canLocalWrite}
         disabledReason={disabledReason}
+        pendingActions={pendingActions}
         onStage={onStage}
         onStageAll={onStageAll}
         onStageFolder={onStageFolder}
