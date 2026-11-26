@@ -801,4 +801,74 @@ describe("Phase 2 Snapshot & Checkpoints Mini-GitHub Integration", () => {
     expect(v3Check.status).toBe(200);
     expect(v3Check.body.data.content).toBe("v3-app-content\n");
   });
+
+  it("8. guards dirty workspace on mergeBranch, maps duplicate branch rename to 409, and stores merge secondParentSnapshotId", async () => {
+    const ownerJwt = makeJwt(owner, AUTH_PROVIDERS.EMAIL);
+
+    // Bootstrap CAS baseline
+    await request(app)
+      .get(`/api/projects/${project.id}/snapshot-vcs/status`)
+      .set("Authorization", `Bearer ${ownerJwt}`);
+
+    // Create branch A and branch B
+    const bCreate = await request(app)
+      .post(`/api/projects/${project.id}/snapshot-vcs/branches`)
+      .set("Authorization", `Bearer ${ownerJwt}`)
+      .send({ name: "branch-b", fromSnapshotId: v1Snapshot.id, checkout: true });
+    expect(bCreate.status).toBe(201);
+    const mainId = bCreate.body.data.branches.find((b) => b.name === "main").id;
+    const branchBId = bCreate.body.data.branches.find((b) => b.name === "branch-b").id;
+
+    // Renaming branch-b to 'main' must return 409 BRANCH_ALREADY_EXISTS instead of 500
+    const dupRename = await request(app)
+      .patch(`/api/projects/${project.id}/snapshot-vcs/branches/${branchBId}`)
+      .set("Authorization", `Bearer ${ownerJwt}`)
+      .send({ name: "main" });
+    expect(dupRename.status).toBe(409);
+    expect(dupRename.body.code).toBe("BRANCH_ALREADY_EXISTS");
+
+    // Capture a clean checkpoint on branch-b
+    await fsp.writeFile(path.join(workspaceRoot, "src", "b-feature.js"), "export const b = 1;\n");
+    await request(app)
+      .post(`/api/projects/${project.id}/snapshot-vcs/checkpoints`)
+      .set("Authorization", `Bearer ${ownerJwt}`)
+      .send({ label: "branch-b work", stageAll: true });
+
+    // Switch to main and make uncommitted working tree edits
+    await request(app)
+      .post(`/api/projects/${project.id}/snapshot-vcs/branches/${mainId}/checkout`)
+      .set("Authorization", `Bearer ${ownerJwt}`)
+      .send({});
+    await fsp.writeFile(path.join(workspaceRoot, "src", "dirty-local.js"), "export const dirty = true;\n");
+
+    // Merging branch-b into active dirty main defaults to 409 DIRTY_WORKSPACE (never silently overwrites!)
+    const dirtyBlocked = await request(app)
+      .post(`/api/projects/${project.id}/snapshot-vcs/branches/merge`)
+      .set("Authorization", `Bearer ${ownerJwt}`)
+      .send({ sourceBranchId: branchBId });
+    expect(dirtyBlocked.status).toBe(409);
+    expect(dirtyBlocked.body.code).toBe("DIRTY_WORKSPACE");
+    expect(fs.existsSync(path.join(workspaceRoot, "src", "dirty-local.js"))).toBe(true);
+
+    // Merging with AUTO_BACKUP backs up uncommitted edits into main and merges cleanly preserving both files
+    const mergedRes = await request(app)
+      .post(`/api/projects/${project.id}/snapshot-vcs/branches/merge`)
+      .set("Authorization", `Bearer ${ownerJwt}`)
+      .send({ sourceBranchId: branchBId, dirtyPolicy: "AUTO_BACKUP" });
+    expect(mergedRes.status).toBe(200);
+    expect(mergedRes.body.data.merged).toBe(true);
+    expect(mergedRes.body.data.backupCheckpoint).toBeTruthy();
+    expect(fs.existsSync(path.join(workspaceRoot, "src", "dirty-local.js"))).toBe(true);
+    expect(fs.existsSync(path.join(workspaceRoot, "src", "b-feature.js"))).toBe(true);
+
+    // Merged checkpoint exposes secondParentSnapshotId + 2-parent DAG array
+    const listRes = await request(app)
+      .get(`/api/projects/${project.id}/snapshot-vcs/checkpoints`)
+      .set("Authorization", `Bearer ${ownerJwt}`);
+    const mergeCp = listRes.body.data.checkpoints.find(
+      (c) => c.id === mergedRes.body.data.checkpointId,
+    );
+    expect(mergeCp.secondParentSnapshotId).toBeTruthy();
+    expect(mergeCp.parents.length).toBe(2);
+  });
 });

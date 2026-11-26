@@ -15,6 +15,7 @@ import {
 } from "../../../services/project.service";
 import { useToast } from "../ToastContext";
 import { fetchGithubAuthorizeUrlApi } from "../../../services/auth.service";
+import { isValidGithubRepoUrl } from "../../../services/vcsUiHelpers";
 
 function GithubIcon({ size = 16, className = "" }) {
   return (
@@ -66,8 +67,8 @@ export default function GitHubImport({
     }
   };
 
-  const isValidUrl =
-    urlValue.startsWith("https://github.com/") && urlValue.length > 22;
+  const trimmedUrl = urlValue.trim();
+  const isValidUrl = isValidGithubRepoUrl(trimmedUrl);
 
   const handleImportUrl = async () => {
     if (!isValidUrl || uploading) return;
@@ -77,14 +78,14 @@ export default function GitHubImport({
     let createdNewProject = false;
 
     try {
-      const match = urlValue.match(/github\.com\/([^/]+)\/([^/]+)/);
+      const match = trimmedUrl.match(/github\.com\/([^/]+)\/([^/]+)/i);
       if (!match) throw new Error("Invalid GitHub repository URL.");
-      const repoName = match[2].replace(".git", "");
+      const repoName = match[2].replace(/\.git$/i, "");
 
       try {
         const projRes = await createProjectApi({
           name: repoName,
-          repoUrl: urlValue,
+          repoUrl: trimmedUrl,
         });
         projectId = projRes.data.id;
         createdNewProject = true;
@@ -107,7 +108,7 @@ export default function GitHubImport({
         }
       }
 
-      await importGithubUrlApi(projectId, urlValue);
+      await importGithubUrlApi(projectId, trimmedUrl);
 
       showToast({
         type: "info",

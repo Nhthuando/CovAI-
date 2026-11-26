@@ -211,7 +211,7 @@ export const gitService = {
 
   getDiffPair: async (
     projectId,
-    { filePath, mode = "working", commitHash, parentHash, origPath } = {},
+    { filePath, mode = "working", commitHash, parentHash, origPath, signal } = {},
   ) => {
     const query = encodeQuery({
       projectId,
@@ -223,6 +223,7 @@ export const gitService = {
     });
     const res = await gitFetch(`${BASE_URL}/git/diff-pair?${query}`, {
       headers: getAuthHeaders(),
+      ...(signal ? { signal } : {}),
     });
     return handleResponse(res, "Failed to load diff pair");
   },
@@ -420,6 +421,24 @@ export const gitService = {
     return handleResponse(res, "Failed to continue rebase");
   },
 
+  abortOperation: async (projectId) => {
+    const res = await gitFetch(`${BASE_URL}/git/operation/abort`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ projectId }),
+    });
+    return handleResponse(res, "Failed to abort operation");
+  },
+
+  continueOperation: async (projectId) => {
+    const res = await gitFetch(`${BASE_URL}/git/operation/continue`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ projectId }),
+    });
+    return handleResponse(res, "Failed to continue operation");
+  },
+
   getConflicts: async (projectId) => {
     const query = encodeQuery({ projectId });
     const res = await gitFetch(`${BASE_URL}/git/conflicts?${query}`, {
@@ -612,11 +631,15 @@ export const gitService = {
     return handleResponse(res, "Failed to load CI checks");
   },
 
-  runCommand: async (projectId, command, args = []) => {
+  runCommand: async (projectId, commandOrInput, args) => {
+    const body =
+      args === undefined
+        ? { projectId, input: String(commandOrInput || "") }
+        : { projectId, command: commandOrInput, args };
     const res = await gitFetch(`${BASE_URL}/git/command`, {
       method: "POST",
       headers: getAuthHeaders(),
-      body: JSON.stringify({ projectId, command, args }),
+      body: JSON.stringify(body),
     });
     return handleResponse(res, "Failed to execute git command");
   },

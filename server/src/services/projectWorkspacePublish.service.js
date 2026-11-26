@@ -12,16 +12,19 @@ import { durableWrite,mutationJournalDirectory,mutationKey,recoverProjectMutatio
 import { runtimeIgnoredDirectories } from './projectRuntimePlan.service.js';
 import { hashOperationInput } from '../utils/projectOperationIdentity.js';
 import { withCheckpointGuard, commitCheckpointFiles } from './projectEditorCheckpointStore.service.js';
+import { isVcsSecretFileName } from '../../../shared/versionControlMode.js';
 
-const secret = name => /^\.env(?:\.|$)/i.test(name) || /(?:credential|service[-_]?account|secret|private[-_]?key)/i.test(name) || /\.(pem|key|p12)$/i.test(name);
+const secret = isVcsSecretFileName;
 const runtimeFile = name => /^(?:covai-jest|covai-vitest|covai-setup|covai-resolver|test-results|jest-results|vitest-results)/.test(name);
+const GIT_WORKSPACE_IGNORED_DIRECTORIES = new Set(['node_modules', '.covai-temp', '.covai-system-test', '.covai-collaboration', '.covai_journal']);
 
 export const captureWorkspaceFiles = async (root,{includeGitMetadata = false} = {}) => {
     const files = new Map();
+    const ignoredDirs = includeGitMetadata ? GIT_WORKSPACE_IGNORED_DIRECTORIES : runtimeIgnoredDirectories;
     const visit = async (directory,relative = '') => {
         for (const entry of await fs.readdir(directory,{withFileTypes:true})) {
             const inGit = includeGitMetadata && (relative === '.git' || relative.startsWith('.git/') || !relative && entry.name === '.git');
-            if (!inGit && (runtimeIgnoredDirectories.has(entry.name) || secret(entry.name) || runtimeFile(entry.name))) continue;
+            if (!inGit && (ignoredDirs.has(entry.name) || secret(entry.name) || (!includeGitMetadata && runtimeFile(entry.name)))) continue;
             if (entry.isSymbolicLink()) throw projectFileError('INVALID_FILE_PATH','Prepared changes must not follow symbolic links',400);
             const file = path.join(directory,entry.name);
             const relativePath = relative ? `${relative}/${entry.name}` : entry.name;

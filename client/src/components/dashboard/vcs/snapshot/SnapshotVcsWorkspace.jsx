@@ -37,8 +37,12 @@ import { snapshotVcsService } from "../../../../services/snapshotVcs.service";
 import { useProjectAccess } from "../../../../hooks/useProjectAccess";
 import { useVcsSync } from "../../../../hooks/useVcsSync";
 import {
+  applyOptimisticStage,
+  applyOptimisticUnstage,
   buildVcsPermissions,
+  extractVcsStatusFromResponse,
   formatRelativeTime,
+  getVcsStatusMeta,
 } from "../../../../services/vcsUiHelpers";
 import { VC_MODES } from "../../../../../../shared/versionControlMode.js";
 
@@ -58,6 +62,7 @@ export default function SnapshotVcsWorkspace({
   const [subTab, setSubTab] = useState("diff");
   const [notice, setNotice] = useState(null);
   const [busyAction, setBusyAction] = useState("");
+  const [pendingStageKeys, setPendingStageKeys] = useState(() => new Set());
   const noticeTimerRef = useRef(null);
 
   // Capture Box
@@ -73,6 +78,8 @@ export default function SnapshotVcsWorkspace({
   const [loadingDiff, setLoadingDiff] = useState(false);
   const [diffError, setDiffError] = useState("");
   const [pendingDiscard, setPendingDiscard] = useState(null);
+  const diffRequestSeqRef = useRef(0);
+  const diffAbortRef = useRef(null);
 
   // Timeline / Checkpoints
   const [checkpoints, setCheckpoints] = useState([]);
@@ -86,6 +93,14 @@ export default function SnapshotVcsWorkspace({
   const [editLabelVal, setEditLabelVal] = useState("");
   const [editMsgVal, setEditMsgVal] = useState("");
   const [inlineTagName, setInlineTagName] = useState("");
+  const [showInlineBranchForm, setShowInlineBranchForm] = useState(false);
+  const [inlineBranchName, setInlineBranchName] = useState("");
+  const [inspectorDiffState, setInspectorDiffState] = useState({
+    checkpointId: null,
+    loading: false,
+    changes: [],
+    error: "",
+  });
 
   // Rollback & Delete Confirmations
   const [pendingRollback, setPendingRollback] = useState(null);
@@ -129,6 +144,7 @@ export default function SnapshotVcsWorkspace({
   useEffect(() => {
     return () => {
       if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+      diffAbortRef.current?.abort();
     };
   }, []);
 
@@ -192,36 +208,97 @@ export default function SnapshotVcsWorkspace({
   useEffect(() => {
     if (!projectId) return undefined;
     let active = true;
-    Promise.all([
-      snapshotVcsService.listBranches(projectId),
-      snapshotVcsService.listCheckpoints(projectId, { limit: 100 }),
-      snapshotVcsService.listTags(projectId),
-    ])
-      .then(([brRes, cpRes, tagRes]) => {
-        if (!active) return;
-        if (brRes?.data) setBranchesState(brRes.data);
-        const rows = cpRes?.data?.checkpoints || [];
-        setCheckpoints(rows);
-        setSelectedCheckpoint((prev) => {
-          if (prev) {
-            const updated = rows.find((r) => r.id === prev.id);
-            if (updated) return updated;
-          }
-          return rows.find((r) => r.isCurrent) || rows[0] || null;
-        });
-        setTags(tagRes?.data || []);
+    const needsCheckpoints = ["timeline", "compare", "browse", "branches"].includes(subTab);
+    const needsTags = ["timeline", "tags"].includes(subTab);
+
+    snapshotVcsService
+      .listBranches(projectId)
+      .then((brRes) => {
+        if (active && brRes?.data) setBranchesState(brRes.data);
       })
       .catch((err) => {
-        if (active) showNotice("error", err?.message || "Failed to load snapshot state");
+        if (active) showNotice("error", err?.message || "Failed to load branches");
       });
+
+    if (needsCheckpoints) {
+      snapshotVcsService
+        .listCheckpoints(projectId, { limit: 100 })
+        .then((cpRes) => {
+          if (!active) return;
+          const rows = cpRes?.data?.checkpoints || [];
+          setCheckpoints(rows);
+          setSelectedCheckpoint((prev) => {
+            if (prev) {
+              const updated = rows.find((r) => r.id === prev.id);
+              if (updated) return updated;
+            }
+            return rows.find((r) => r.isCurrent) || rows[0] || null;
+          });
+        })
+        .catch((err) => {
+          if (active) showNotice("error", err?.message || "Failed to load checkpoints");
+        });
+    }
+
+    if (needsTags) {
+      snapshotVcsService
+        .listTags(projectId)
+        .then((tagRes) => {
+          if (active) setTags(tagRes?.data || []);
+        })
+        .catch((err) => {
+          if (active) showNotice("error", err?.message || "Failed to load tags");
+        });
+    }
+
     return () => {
       active = false;
     };
-  }, [projectId, status?.activeSnapshotId, status?.checkpointsCount, showNotice]);
+  }, [projectId, subTab, status?.activeSnapshotId, status?.checkpointsCount, showNotice]);
+
+  useEffect(() => {
+    const cpId = selectedCheckpoint?.id;
+    const parentId = selectedCheckpoint?.parentSnapshotId;
+    if (!projectId || subTab !== "timeline" || !cpId || !parentId) return undefined;
+
+    const controller = new AbortController();
+    snapshotVcsService
+      .compareCheckpoints(projectId, {
+        baseSnapshotId: parentId,
+        targetSnapshotId: cpId,
+        signal: controller.signal,
+      })
+      .then((res) => {
+        setInspectorDiffState({
+          checkpointId: cpId,
+          loading: false,
+          changes: res?.data?.changes || [],
+          error: "",
+        });
+      })
+      .catch((err) => {
+        if (err?.name === "AbortError") return;
+        setInspectorDiffState({
+          checkpointId: cpId,
+          loading: false,
+          changes: [],
+          error: err?.message || "Could not load changed files",
+        });
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [projectId, subTab, selectedCheckpoint?.id, selectedCheckpoint?.parentSnapshotId]);
 
   const loadDiffPair = useCallback(
-    async (item, section) => {
+    async (item, section, { baseSnapshotId, targetSnapshotId } = {}) => {
       if (!projectId || !item?.path) return;
+      diffAbortRef.current?.abort();
+      const controller = new AbortController();
+      diffAbortRef.current = controller;
+      const reqId = ++diffRequestSeqRef.current;
+
       setSelectedFile({ ...item, section });
       setSubTab("diff");
       setLoadingDiff(true);
@@ -230,13 +307,20 @@ export default function SnapshotVcsWorkspace({
         const res = await snapshotVcsService.getDiffPair(projectId, {
           filePath: item.path,
           origPath: item.origPath,
+          baseSnapshotId,
+          targetSnapshotId,
+          signal: controller.signal,
         });
+        if (reqId !== diffRequestSeqRef.current) return;
         setDiffData(res?.data || null);
       } catch (err) {
+        if (err?.name === "AbortError" || reqId !== diffRequestSeqRef.current) return;
         setDiffError(err?.message || "Failed to load file diff");
         setDiffData(null);
       } finally {
-        setLoadingDiff(false);
+        if (reqId === diffRequestSeqRef.current) {
+          setLoadingDiff(false);
+        }
       }
     },
     [projectId],
@@ -248,9 +332,18 @@ export default function SnapshotVcsWorkspace({
     { syncWorkspace = false, reason = "snapshot_op", successText = "" } = {},
   ) => {
     setBusyAction(label);
+    const endLocalMutation = vcsSummary.beginLocalMutation?.() || (() => {});
     try {
       const res = await fn();
-      vcsSummary.invalidateAll();
+      const nextStatus = extractVcsStatusFromResponse(VC_MODES.SNAPSHOT_VCS, res);
+      if (nextStatus) {
+        vcsSummary.applyStatusData(nextStatus);
+      } else {
+        vcsSummary.invalidateAll();
+      }
+      if (res?.data?.branches?.branches) {
+        setBranchesState(res.data.branches);
+      }
       if (syncWorkspace) {
         const nextSnapId =
           res?.data?.checkpoint?.id ||
@@ -258,7 +351,11 @@ export default function SnapshotVcsWorkspace({
           res?.data?.checkpointId ||
           res?.data?.status?.activeSnapshotId ||
           undefined;
-        await onSync?.({ snapshotId: nextSnapId, reason });
+        await onSync?.({
+          snapshotId: nextSnapId,
+          reason,
+          skipVcsRefetch: Boolean(nextStatus),
+        });
       }
       if (successText) showNotice("success", successText);
       return res;
@@ -271,7 +368,66 @@ export default function SnapshotVcsWorkspace({
       }
       throw err;
     } finally {
+      endLocalMutation();
       setBusyAction("");
+    }
+  };
+
+  const buildStageActionKeys = (prefix, { files, folder } = {}) => {
+    if (folder) return [`${prefix}Folder:${folder}`];
+    if (files === "all" || !files) return [`${prefix}:all`];
+    return (Array.isArray(files) ? files : [files]).map((f) => `${prefix}:${f}`);
+  };
+
+  const handleStageOptimistic = async ({ files, folder } = {}) => {
+    const keys = buildStageActionKeys("stage", { files, folder });
+    setPendingStageKeys((prev) => new Set([...prev, ...keys]));
+    const rollback = await vcsSummary.updateStatusOptimistic((prev) =>
+      applyOptimisticStage(VC_MODES.SNAPSHOT_VCS, prev, { files, folder }),
+    );
+    try {
+      const res = await snapshotVcsService.stageFiles(projectId, { files, folder });
+      const nextStatus = extractVcsStatusFromResponse(VC_MODES.SNAPSHOT_VCS, res);
+      if (nextStatus) {
+        vcsSummary.applyStatusData(nextStatus);
+      } else {
+        vcsSummary.invalidateAll();
+      }
+    } catch (err) {
+      rollback();
+      showNotice("error", err?.message || "Failed to stage files");
+    } finally {
+      setPendingStageKeys((prev) => {
+        const next = new Set(prev);
+        keys.forEach((k) => next.delete(k));
+        return next;
+      });
+    }
+  };
+
+  const handleUnstageOptimistic = async ({ files, folder } = {}) => {
+    const keys = buildStageActionKeys("unstage", { files, folder });
+    setPendingStageKeys((prev) => new Set([...prev, ...keys]));
+    const rollback = await vcsSummary.updateStatusOptimistic((prev) =>
+      applyOptimisticUnstage(VC_MODES.SNAPSHOT_VCS, prev, { files, folder }),
+    );
+    try {
+      const res = await snapshotVcsService.unstageFiles(projectId, { files, folder });
+      const nextStatus = extractVcsStatusFromResponse(VC_MODES.SNAPSHOT_VCS, res);
+      if (nextStatus) {
+        vcsSummary.applyStatusData(nextStatus);
+      } else {
+        vcsSummary.invalidateAll();
+      }
+    } catch (err) {
+      rollback();
+      showNotice("error", err?.message || "Failed to unstage files");
+    } finally {
+      setPendingStageKeys((prev) => {
+        const next = new Set(prev);
+        keys.forEach((k) => next.delete(k));
+        return next;
+      });
     }
   };
 
@@ -330,7 +486,6 @@ export default function SnapshotVcsWorkspace({
       setCaptureTag("");
       setSelectedFile(null);
       setDiffData(null);
-      await Promise.all([loadCheckpoints(), loadBranches(), loadTags()]);
     }
   };
 
@@ -354,6 +509,7 @@ export default function SnapshotVcsWorkspace({
     } catch (err) {
       if (err?.code === "DIRTY_WORKSPACE") {
         setDirtyCheckoutPrompt({
+          kind: "checkout",
           branch,
           dirtyCount: err.details?.dirtyCount || totalChanges,
           changes: err.details?.changes || [],
@@ -362,13 +518,14 @@ export default function SnapshotVcsWorkspace({
     }
   };
 
-  const handleMergeBranch = async (sourceBranch) => {
+  const handleMergeBranch = async (sourceBranch, dirtyPolicy = "FAIL_IF_DIRTY") => {
     try {
       const res = await runAction(
         `merge ${sourceBranch.name}`,
         () =>
           snapshotVcsService.mergeBranch(projectId, {
             sourceBranchId: sourceBranch.id,
+            dirtyPolicy,
           }),
         {
           syncWorkspace: true,
@@ -377,11 +534,22 @@ export default function SnapshotVcsWorkspace({
         },
       );
       if (res?.data?.merged) {
+        setDirtyCheckoutPrompt(null);
         setMergeConflictState(null);
         await Promise.all([loadBranches(), loadCheckpoints()]);
       }
     } catch (err) {
+      if (err?.code === "DIRTY_WORKSPACE") {
+        setDirtyCheckoutPrompt({
+          kind: "merge",
+          branch: sourceBranch,
+          dirtyCount: err.details?.dirtyCount || totalChanges,
+          changes: err.details?.changes || [],
+        });
+        return;
+      }
       if (err?.code === "SNAPSHOT_MERGE_CONFLICT") {
+        setDirtyCheckoutPrompt(null);
         setMergeConflictState({
           sourceBranch: err.details?.sourceBranch || sourceBranch,
           targetBranch: err.details?.targetBranch || activeBranch,
@@ -395,7 +563,7 @@ export default function SnapshotVcsWorkspace({
     }
   };
 
-  const handleResolveSnapshotMerge = async (resolutionsMap) => {
+  const handleResolveSnapshotMerge = async (resolutionsMap, dirtyPolicy = "FAIL_IF_DIRTY") => {
     if (!mergeConflictState?.sourceBranch?.id) return;
     setResolvingMerge(true);
     try {
@@ -404,6 +572,7 @@ export default function SnapshotVcsWorkspace({
         () =>
           snapshotVcsService.resolveMergeBranch(projectId, {
             sourceBranchId: mergeConflictState.sourceBranch.id,
+            dirtyPolicy,
             resolutions: resolutionsMap,
           }),
         {
@@ -412,8 +581,19 @@ export default function SnapshotVcsWorkspace({
           successText: "3-way merge completed and new checkpoint captured!",
         },
       );
+      setDirtyCheckoutPrompt(null);
       setMergeConflictState(null);
       await Promise.all([loadBranches(), loadCheckpoints()]);
+    } catch (err) {
+      if (err?.code === "DIRTY_WORKSPACE") {
+        setDirtyCheckoutPrompt({
+          kind: "mergeResolve",
+          branch: mergeConflictState.sourceBranch,
+          resolutionsMap,
+          dirtyCount: err.details?.dirtyCount || totalChanges,
+          changes: err.details?.changes || [],
+        });
+      }
     } finally {
       setResolvingMerge(false);
     }
@@ -429,7 +609,7 @@ export default function SnapshotVcsWorkspace({
     <div className="flex flex-col gap-4">
       {/* Real-time Operation Notice (GC completed) */}
       {vcsSummary.activeOperation && (
-        <div className="flex items-center justify-between gap-3 px-4 py-2 rounded-lg border border-sky-500/25 bg-sky-500/10 text-xs font-mono text-sky-400">
+        <div className="flex items-center justify-between gap-3 px-4 py-2 rounded-lg border border-[var(--color-secondary)]/30 bg-[var(--color-secondary)]/10 text-xs font-mono text-[var(--color-secondary)]">
           <span>{vcsSummary.activeOperation.message}</span>
           <span className="uppercase text-[10px]">
             {vcsSummary.activeOperation.phase}
@@ -441,8 +621,8 @@ export default function SnapshotVcsWorkspace({
         <div
           className={`flex items-center justify-between gap-2 px-4 py-2.5 rounded-lg border text-xs font-medium ${
             notice.type === "error"
-              ? "bg-rose-500/10 text-rose-400 border-rose-500/25"
-              : "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
+              ? "bg-[var(--color-danger)]/10 text-[var(--color-danger)] border-[var(--color-danger)]/30"
+              : "bg-[var(--color-success)]/10 text-[var(--color-success)] border-[var(--color-success)]/30"
           }`}
         >
           <div className="flex items-center gap-2">
@@ -701,41 +881,18 @@ export default function SnapshotVcsWorkspace({
             unstaged={status?.unstaged || []}
             selectedFile={selectedFile}
             onSelectFile={loadDiffPair}
-            onStage={(files) =>
-              runAction("stage files", () =>
-                snapshotVcsService.stageFiles(projectId, { files }),
-              )
-            }
-            onUnstage={(files) =>
-              runAction("unstage files", () =>
-                snapshotVcsService.unstageFiles(projectId, { files }),
-              )
-            }
-            onStageAll={() =>
-              runAction("stage all", () =>
-                snapshotVcsService.stageFiles(projectId, { files: "all" }),
-              )
-            }
-            onUnstageAll={() =>
-              runAction("unstage all", () =>
-                snapshotVcsService.unstageFiles(projectId, { files: "all" }),
-              )
-            }
-            onStageFolder={(folder) =>
-              runAction(`stage ${folder}`, () =>
-                snapshotVcsService.stageFiles(projectId, { folder }),
-              )
-            }
-            onUnstageFolder={(folder) =>
-              runAction(`unstage ${folder}`, () =>
-                snapshotVcsService.unstageFiles(projectId, { folder }),
-              )
-            }
+            onStage={(files) => handleStageOptimistic({ files })}
+            onUnstage={(files) => handleUnstageOptimistic({ files })}
+            onStageAll={() => handleStageOptimistic({ files: "all" })}
+            onUnstageAll={() => handleUnstageOptimistic({ files: "all" })}
+            onStageFolder={(folder) => handleStageOptimistic({ folder })}
+            onUnstageFolder={(folder) => handleUnstageOptimistic({ folder })}
             onDiscard={(item) => setPendingDiscard(item)}
             onDiscardAll={() => setPendingDiscard({ all: true })}
             onOpenInEditor={onOpenFile}
             canLocalWrite={perms.canLocalWrite}
             disabledReason={perms.disabledReason("local")}
+            pendingActions={pendingStageKeys}
           />
         </div>
 
@@ -852,22 +1009,22 @@ export default function SnapshotVcsWorkspace({
                   renderItemMeta={(cp) => (
                     <div className="hidden sm:flex items-center gap-1 shrink-0">
                       {cp.isCurrent && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--color-success)]/12 text-[var(--color-success)] border border-[var(--color-success)]/25">
                           ACTIVE
                         </span>
                       )}
                       {cp.vcsBranch?.name && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-sky-500/10 text-sky-400 border border-sky-500/20">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--color-secondary)]/12 text-[var(--color-secondary)] border border-[var(--color-secondary)]/25">
                           {cp.vcsBranch.name}
                         </span>
                       )}
                       {cp.isPinned && (
-                        <Pin size={11} className="text-amber-400 shrink-0" />
+                        <Pin size={11} className="text-[var(--color-warning)] shrink-0" />
                       )}
                       {(cp.tags || []).slice(0, 2).map((t) => (
                         <span
                           key={t.id}
-                          className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-indigo-500/10 text-indigo-400 border border-indigo-500/20"
+                          className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--color-primary)]/12 text-[var(--color-primary)] border border-[var(--color-primary)]/25"
                         >
                           {t.name}
                         </span>
@@ -893,7 +1050,7 @@ export default function SnapshotVcsWorkspace({
                           {selectedCheckpoint.label}
                         </h4>
                         {selectedCheckpoint.isAutoBackup && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--color-warning)]/12 text-[var(--color-warning)] border border-[var(--color-warning)]/25">
                             AUTO BACKUP
                           </span>
                         )}
@@ -941,6 +1098,28 @@ export default function SnapshotVcsWorkspace({
                         }}
                       >
                         Edit Info
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        icon={GitBranch}
+                        disabled={!perms.canLocalWrite}
+                        title={
+                          !perms.canLocalWrite
+                            ? perms.disabledReason("local")
+                            : "Create a branch starting from this checkpoint"
+                        }
+                        onClick={() => {
+                          setShowInlineBranchForm((v) => !v);
+                          if (!inlineBranchName) {
+                            setInlineBranchName(
+                              `branch-v${selectedCheckpoint.versionNumber || 1}`,
+                            );
+                          }
+                        }}
+                      >
+                        Create Branch Here
                       </Button>
 
                       <Button
@@ -1097,6 +1276,114 @@ export default function SnapshotVcsWorkspace({
                       Attach Tag
                     </Button>
                   </div>
+
+                  {showInlineBranchForm && (
+                    <div className="p-2.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] flex flex-wrap items-center gap-2 text-xs">
+                      <GitBranch size={13} className="text-[var(--color-primary)] shrink-0" />
+                      <input
+                        type="text"
+                        value={inlineBranchName}
+                        onChange={(e) => setInlineBranchName(e.target.value)}
+                        placeholder="feat/from-checkpoint"
+                        className="flex-1 min-w-[160px] h-7 px-2 rounded bg-[var(--color-surface-secondary)] border border-[var(--color-border)] font-mono text-xs text-[var(--color-text)]"
+                      />
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        disabled={!inlineBranchName.trim() || Boolean(busyAction)}
+                        onClick={async () => {
+                          const name = inlineBranchName.trim();
+                          const res = await runAction(
+                            `create branch ${name}`,
+                            () =>
+                              snapshotVcsService.createBranch(projectId, {
+                                name,
+                                fromSnapshotId: selectedCheckpoint.id,
+                                checkout: Boolean(perms.canRestoreAndAdmin),
+                              }),
+                            {
+                              syncWorkspace: Boolean(perms.canRestoreAndAdmin),
+                              reason: "snapshot_branch_create",
+                              successText: `Created branch '${name}' from #v${selectedCheckpoint.versionNumber || 1}`,
+                            },
+                          );
+                          if (res) {
+                            setShowInlineBranchForm(false);
+                            setInlineBranchName("");
+                            await Promise.all([loadBranches(), loadCheckpoints()]);
+                          }
+                        }}
+                      >
+                        {perms.canRestoreAndAdmin ? "Create & Switch" : "Create Branch"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setShowInlineBranchForm(false)}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  )}
+
+                  {selectedCheckpoint.parentSnapshotId && (
+                    <div className="pt-2 border-t border-[var(--color-border)] space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                        <span>
+                          Changed Files vs Parent (
+                          {inspectorDiffState.checkpointId === selectedCheckpoint.id
+                            ? inspectorDiffState.changes.length
+                            : 0}
+                          )
+                        </span>
+                      </div>
+                      {inspectorDiffState.error ? (
+                        <p className="text-[11px] text-[var(--color-danger)]">
+                          {inspectorDiffState.error}
+                        </p>
+                      ) : (inspectorDiffState.checkpointId === selectedCheckpoint.id
+                          ? inspectorDiffState.changes
+                          : []
+                        ).length === 0 ? (
+                        <p className="text-[11px] text-[var(--color-text-muted)]">
+                          No file-level delta recorded against parent checkpoint.
+                        </p>
+                      ) : (
+                        <div className="max-h-40 overflow-y-auto custom-scrollbar space-y-1">
+                          {(inspectorDiffState.checkpointId === selectedCheckpoint.id
+                            ? inspectorDiffState.changes
+                            : []
+                          )
+                            .slice(0, 60)
+                            .map((ch) => {
+                              const meta = getVcsStatusMeta(ch.status);
+                              return (
+                                <button
+                                  key={`${ch.status}:${ch.path}`}
+                                  type="button"
+                                  onClick={() =>
+                                    loadDiffPair(ch, "compare", {
+                                      baseSnapshotId: selectedCheckpoint.parentSnapshotId,
+                                      targetSnapshotId: selectedCheckpoint.id,
+                                    })
+                                  }
+                                  className="w-full flex items-center justify-between gap-2 px-2 py-1 rounded text-left text-xs hover:bg-[var(--color-surface-secondary)] cursor-pointer transition-colors duration-150"
+                                >
+                                  <span className="font-mono text-[11.5px] text-[var(--color-text)] truncate">
+                                    {ch.origPath ? `${ch.origPath} → ${ch.path}` : ch.path}
+                                  </span>
+                                  <span
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold shrink-0 ${meta.badgeClass}`}
+                                  >
+                                    {meta.char}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1563,30 +1850,64 @@ export default function SnapshotVcsWorkspace({
         </label>
       </ConfirmDialog>
 
-      {/* Dirty Workspace Branch Switch Dialog */}
+      {/* Dirty Workspace Prompt (Branch Checkout & 3-Way Merge) */}
       <ConfirmDialog
         isOpen={Boolean(dirtyCheckoutPrompt)}
         onClose={() => setDirtyCheckoutPrompt(null)}
-        onConfirm={() =>
-          handleAttemptCheckoutBranch(dirtyCheckoutPrompt.branch, "AUTO_BACKUP")
-        }
+        onConfirm={() => {
+          if (dirtyCheckoutPrompt?.kind === "merge") {
+            return handleMergeBranch(dirtyCheckoutPrompt.branch, "AUTO_BACKUP");
+          }
+          if (dirtyCheckoutPrompt?.kind === "mergeResolve") {
+            return handleResolveSnapshotMerge(
+              dirtyCheckoutPrompt.resolutionsMap,
+              "AUTO_BACKUP",
+            );
+          }
+          return handleAttemptCheckoutBranch(
+            dirtyCheckoutPrompt.branch,
+            "AUTO_BACKUP",
+          );
+        }}
         title="Uncommitted Changes Detected"
-        message={`You have ${dirtyCheckoutPrompt?.dirtyCount || 0} uncommitted change(s). Create an automatic safety backup checkpoint before switching to '${dirtyCheckoutPrompt?.branch?.name || ""}'?`}
-        confirmText="Auto-Backup & Switch"
+        message={
+          dirtyCheckoutPrompt?.kind === "merge" ||
+          dirtyCheckoutPrompt?.kind === "mergeResolve"
+            ? `You have ${dirtyCheckoutPrompt?.dirtyCount || 0} uncommitted change(s). Create an automatic safety backup checkpoint before merging '${dirtyCheckoutPrompt?.branch?.name || ""}'?`
+            : `You have ${dirtyCheckoutPrompt?.dirtyCount || 0} uncommitted change(s). Create an automatic safety backup checkpoint before switching to '${dirtyCheckoutPrompt?.branch?.name || ""}'?`
+        }
+        confirmText={
+          dirtyCheckoutPrompt?.kind === "merge" ||
+          dirtyCheckoutPrompt?.kind === "mergeResolve"
+            ? "Auto-Backup & Merge"
+            : "Auto-Backup & Switch"
+        }
         variant="warning"
       >
         <div className="pt-1">
           <button
             type="button"
-            onClick={() =>
-              handleAttemptCheckoutBranch(
-                dirtyCheckoutPrompt.branch,
-                "DISCARD_DIRTY",
-              )
-            }
-            className="text-xs font-medium text-rose-400 hover:underline cursor-pointer"
+            onClick={() => {
+              if (dirtyCheckoutPrompt?.kind === "merge") {
+                void handleMergeBranch(dirtyCheckoutPrompt.branch, "DISCARD_DIRTY");
+              } else if (dirtyCheckoutPrompt?.kind === "mergeResolve") {
+                void handleResolveSnapshotMerge(
+                  dirtyCheckoutPrompt.resolutionsMap,
+                  "DISCARD_DIRTY",
+                );
+              } else {
+                void handleAttemptCheckoutBranch(
+                  dirtyCheckoutPrompt.branch,
+                  "DISCARD_DIRTY",
+                );
+              }
+            }}
+            className="text-xs font-medium text-[var(--color-danger)] hover:underline cursor-pointer"
           >
-            Or discard uncommitted edits and switch anyway
+            {dirtyCheckoutPrompt?.kind === "merge" ||
+            dirtyCheckoutPrompt?.kind === "mergeResolve"
+              ? "Or discard uncommitted edits and merge anyway"
+              : "Or discard uncommitted edits and switch anyway"}
           </button>
         </div>
       </ConfirmDialog>

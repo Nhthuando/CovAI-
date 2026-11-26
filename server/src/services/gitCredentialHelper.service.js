@@ -4,6 +4,7 @@ import path from "node:path";
 import prisma from "../config/prisma.js";
 import { decrypt, isEncryptedFormat } from "../utils/crypto.js";
 import { ServiceError } from "../utils/serviceError.js";
+import { getProjectRequestContext } from "./vcsRequestContext.service.js";
 import { AUTH_ERROR_CODES, AUTH_MESSAGES } from "../../../shared/authValidation.js";
 import { GIT_DEFAULT_IGNORE_ENTRIES } from "../../../shared/gitProtocol.js";
 import {
@@ -15,6 +16,15 @@ const DEFAULT_LOCAL_TIMEOUT_MS = 15_000;
 const DEFAULT_NETWORK_TIMEOUT_MS = 120_000;
 const COVAI_EXCLUDE_HEADER = "# CovAI managed runtime/test-runner ignores";
 const WINDOWS_RESERVED_NAME_RE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i;
+const ensuredExcludesRepos = new Set();
+
+export function invalidateGitExcludeCache(rootDir = null) {
+  if (!rootDir) {
+    ensuredExcludesRepos.clear();
+    return;
+  }
+  ensuredExcludesRepos.delete(path.resolve(rootDir));
+}
 
 /**
  * Scrubs any GitHub tokens, basic authorization headers, and embedded URL
@@ -75,7 +85,10 @@ export function normalizeCleanGithubUrl(rawUrl) {
  */
 export function ensureCovaiGitExcludes(rootDir) {
   if (!rootDir) return false;
-  const gitDir = path.join(rootDir, ".git");
+  const resolvedRoot = path.resolve(rootDir);
+  if (ensuredExcludesRepos.has(resolvedRoot)) return false;
+
+  const gitDir = path.join(resolvedRoot, ".git");
   if (!fs.existsSync(gitDir)) return false;
 
   const infoDir = path.join(gitDir, "info");
@@ -95,7 +108,11 @@ export function ensureCovaiGitExcludes(rootDir) {
   const missingEntries = GIT_DEFAULT_IGNORE_ENTRIES.filter(
     (entry) => !existingLines.has(entry),
   );
-  if (missingEntries.length === 0) return false;
+  if (missingEntries.length === 0) {
+    if (ensuredExcludesRepos.size > 1000) ensuredExcludesRepos.clear();
+    ensuredExcludesRepos.add(resolvedRoot);
+    return false;
+  }
 
   const chunks = [];
   if (existingText && !existingText.endsWith("\n")) chunks.push("");
@@ -105,6 +122,8 @@ export function ensureCovaiGitExcludes(rootDir) {
   chunks.push(...missingEntries, "");
 
   fs.appendFileSync(excludePath, chunks.join("\n"), "utf8");
+  if (ensuredExcludesRepos.size > 1000) ensuredExcludesRepos.clear();
+  ensuredExcludesRepos.add(resolvedRoot);
   return true;
 }
 
@@ -169,8 +188,20 @@ export function sanitizeGitRef(value, label = "reference") {
  * unless the owner is the one committing).
  */
 export async function resolveGitAuthorIdentity(userId, override = {}, db = prisma) {
+  const cleanField = (raw) =>
+    typeof raw === "string" ? raw.replace(/[\r\n\0<>]/g, "").trim() : "";
+
+  const overrideName = cleanField(override.authorName);
+  const overrideEmail = cleanField(override.authorEmail);
+  if (overrideName && overrideEmail) {
+    return { name: overrideName, email: overrideEmail };
+  }
+
   let user = null;
-  if (userId && db?.user?.findUnique) {
+  const reqCtxUser = db === prisma ? getProjectRequestContext()?.user : null;
+  if (reqCtxUser?.id === userId && (reqCtxUser.name || reqCtxUser.email)) {
+    user = reqCtxUser;
+  } else if (userId && db?.user?.findUnique) {
     user = await db.user
       .findUnique({
         where: { id: userId },
@@ -179,11 +210,8 @@ export async function resolveGitAuthorIdentity(userId, override = {}, db = prism
       .catch(() => null);
   }
 
-  const cleanField = (raw) =>
-    typeof raw === "string" ? raw.replace(/[\r\n\0<>]/g, "").trim() : "";
-
   const name =
-    cleanField(override.authorName) ||
+    overrideName ||
     cleanField(user?.name) ||
     cleanField(user?.githubLogin) ||
     "CovAI Developer";
@@ -193,7 +221,7 @@ export async function resolveGitAuthorIdentity(userId, override = {}, db = prism
     : "developer@covai.dev";
 
   const email =
-    cleanField(override.authorEmail) ||
+    overrideEmail ||
     cleanField(user?.email) ||
     fallbackEmail;
 

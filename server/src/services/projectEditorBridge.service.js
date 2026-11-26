@@ -7,20 +7,27 @@ export const seededEditorState = text => {
     const doc = new Y.Doc(); doc.getText('content').insert(0, text);
     const state = Buffer.from(Y.encodeStateAsUpdate(doc)); doc.destroy(); return state;
 };
-export async function editorDocumentsFor(tx, where) {
+export const EDITOR_DOC_REVISION_SELECT = {
+    id: true,
+    relativePath: true,
+    revision: true,
+    checkpointRevision: true,
+};
+
+export async function editorDocumentsFor(tx, where, select = null) {
     if (!tx.projectEditorDocument) return [];
-    try { return await tx.projectEditorDocument.findMany({ where }); }
+    try { return await tx.projectEditorDocument.findMany({ where, ...(select ? { select } : {}) }); }
     catch (error) { if (!editorEnabled() && error.code === 'P2021') return []; throw error; }
 }
 export async function assertEditorReplacementAllowed({ tx, projectId, snapshotId, paths }) {
-    const rows = await editorDocumentsFor(tx, { projectId, snapshotId, active: true });
+    const rows = await editorDocumentsFor(tx, { projectId, snapshotId, active: true }, EDITOR_DOC_REVISION_SELECT);
     const affected = rows.filter(row => paths.some(name => row.relativePath === name || row.relativePath.startsWith(`${name}/`)));
     const dirty = affected.filter(row => row.revision !== row.checkpointRevision);
     if (dirty.length) throw projectFileError('EDITOR_DRAFT_CONFLICT', 'Shared changes have not been saved to the workspace. Open the file and save or recover them first.', 409, { paths: dirty.map(row => row.relativePath) });
     return affected;
 }
 export async function assertEditorSnapshotChangeAllowed(tx, projectId) {
-    const rows = await editorDocumentsFor(tx, { projectId, active: true });
+    const rows = await editorDocumentsFor(tx, { projectId, active: true }, EDITOR_DOC_REVISION_SELECT);
     if (rows.some(row => row.revision !== row.checkpointRevision)) throw projectFileError('EDITOR_DRAFT_CONFLICT', 'Save or recover shared changes before replacing the active snapshot.', 409);
 }
 export async function reconcileEditorReplacement({ tx, projectId, snapshotId, changes, actorId, source = 'HUMAN_EDIT' }) {

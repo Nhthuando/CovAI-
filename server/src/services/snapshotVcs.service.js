@@ -5,7 +5,7 @@ import AdmZip from "adm-zip";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import {
-  membershipWhere,
+  invalidateProjectAccessCache,
   resolveProjectAccess,
   withProjectGuard,
 } from "./projectAccess.service.js";
@@ -13,7 +13,13 @@ import {
   hashFileContent,
   projectEditableWorkspaceRoot,
   resolveActiveProjectSnapshot,
+  VCS_SNAPSHOT_LEAN_SELECT,
 } from "./projectFileVersion.service.js";
+import {
+  getProjectRequestContext,
+  invalidateProjectRequestContext,
+  updateProjectRequestContext,
+} from "./vcsRequestContext.service.js";
 import {
   assertEditorReplacementAllowed,
   assertEditorSnapshotChangeAllowed,
@@ -35,6 +41,7 @@ import { withProjectVcsLock } from "./vcsLock.service.js";
 import {
   computeManifestHash,
   ensureProjectCasBaseline,
+  getBlobDiskPath,
   readCasBlob,
   runSnapshotCasGc,
   sanitizeVcsRelativePath,
@@ -47,6 +54,7 @@ import {
   buildDiffPairResult,
   diffManifests,
   findLowestCommonAncestor,
+  resolveConflictMarkersKeepBoth,
   threeWayMergeText,
 } from "./snapshotDiff3.service.js";
 import { generateSnapshotAiSummary } from "./snapshotVcsAi.service.js";
@@ -106,6 +114,11 @@ function formatCheckpointSummary(row, activeSnapshotId, branchHeadIds = new Set(
     label: row.label || `Snapshot #${row.versionNumber || "?"}`,
     commitMessage: row.commitMessage || "",
     parentSnapshotId: row.parentSnapshotId || null,
+    secondParentSnapshotId: row.statsJson?.secondParentSnapshotId || null,
+    parents: [
+      row.parentSnapshotId,
+      row.statsJson?.secondParentSnapshotId,
+    ].filter(Boolean),
     restoredFromSnapshotId: row.restoredFromSnapshotId || null,
     vcsBranchId: row.vcsBranchId || null,
     vcsBranch: row.vcsBranch
@@ -170,37 +183,70 @@ async function loadSnapshotManifestMap(db, snapshotId) {
 }
 
 async function syncFileVersionsForChanges(tx, { snapshotId, userId, changedFiles }) {
-  for (const change of changedFiles) {
+  if (!Array.isArray(changedFiles) || changedFiles.length === 0) return;
+  const normalized = changedFiles.map((change) => {
     const deleted = change.content === null;
-    const sha = deleted
+    const sha256 = deleted
       ? null
       : hashFileContent(
           Buffer.isBuffer(change.content)
             ? change.content
             : Buffer.from(String(change.content || ""), "utf8"),
         );
-    await tx.projectFileVersion.upsert({
-      where: {
-        snapshotId_relativePath: {
-          snapshotId,
-          relativePath: change.path,
+    return { path: change.path, deleted, sha256 };
+  });
+
+  const existingRows = await tx.projectFileVersion.findMany({
+    where: {
+      snapshotId,
+      relativePath: { in: normalized.map((c) => c.path) },
+    },
+    select: { relativePath: true },
+  });
+  const existingSet = new Set(existingRows.map((r) => r.relativePath));
+
+  const toCreate = normalized
+    .filter((c) => !existingSet.has(c.path))
+    .map((c) => ({
+      snapshotId,
+      relativePath: c.path,
+      sha256: c.sha256,
+      deleted: c.deleted,
+      revision: 1,
+      updatedByUserId: userId,
+    }));
+
+  const toUpdate = normalized.filter((c) => existingSet.has(c.path));
+
+  const ops = [];
+  if (toCreate.length > 0) {
+    ops.push(
+      tx.projectFileVersion.createMany({
+        data: toCreate,
+        skipDuplicates: true,
+      }),
+    );
+  }
+  for (const c of toUpdate) {
+    ops.push(
+      tx.projectFileVersion.update({
+        where: {
+          snapshotId_relativePath: {
+            snapshotId,
+            relativePath: c.path,
+          },
         },
-      },
-      create: {
-        snapshotId,
-        relativePath: change.path,
-        sha256: sha,
-        deleted,
-        revision: 1,
-        updatedByUserId: userId,
-      },
-      update: {
-        sha256: sha,
-        deleted,
-        revision: { increment: 1 },
-        updatedByUserId: userId,
-      },
-    });
+        data: {
+          sha256: c.sha256,
+          deleted: c.deleted,
+          revision: { increment: 1 },
+          updatedByUserId: userId,
+        },
+      }),
+    );
+  }
+  if (ops.length > 0) {
+    await Promise.all(ops);
   }
 }
 
@@ -244,8 +290,51 @@ function snapshotInheritedFields(sourceSnap, targetWorkspace, nextStorage, nextR
 
 function invalidateCachesAfterMutation({ projectId, ownerId, snapshotId }) {
   clearProjectTreeCache();
+  invalidateProjectAccessCache(projectId);
   if (ownerId) clearPortfolioCache(ownerId);
   if (snapshotId) clearUnifiedDashboardCache(snapshotId);
+}
+
+const BRANCH_SELECT = {
+  id: true,
+  name: true,
+  description: true,
+  headSnapshotId: true,
+  baseSnapshotId: true,
+  isDefault: true,
+  createdAt: true,
+};
+
+const SNAPSHOT_DETAIL_SELECT = {
+  ...VCS_SNAPSHOT_LEAN_SELECT,
+  vcsTags: {
+    select: { id: true, name: true, description: true, color: true, createdAt: true },
+  },
+  author: { select: { id: true, name: true, email: true, avatarUrl: true } },
+  vcsBranch: { select: { id: true, name: true, isDefault: true } },
+};
+
+function readContainedWorkingFile(workspaceRoot, relativePath) {
+  try {
+    const realRoot = fs.realpathSync(workspaceRoot);
+    const target = path.resolve(realRoot, relativePath);
+    const check = path.relative(realRoot, target);
+    if (!check || check.startsWith("..") || path.isAbsolute(check)) {
+      return Buffer.alloc(0);
+    }
+    let current = realRoot;
+    for (const part of relativePath.split("/")) {
+      current = path.join(current, part);
+      if (!fs.existsSync(current)) return Buffer.alloc(0);
+      if (fs.lstatSync(current).isSymbolicLink()) return Buffer.alloc(0);
+    }
+    if (fs.statSync(target).isFile()) {
+      return fs.readFileSync(target);
+    }
+  } catch {
+    return Buffer.alloc(0);
+  }
+  return Buffer.alloc(0);
 }
 
 export class SnapshotVcsService {
@@ -253,26 +342,54 @@ export class SnapshotVcsService {
    * Resolves project membership, active snapshot, active VCS branch, and ensures
    * immutable CAS baseline has been materialized for legacy projects.
    */
-  static async _ensureProjectContext(projectId, userId, capability = "project.read") {
+  static async _ensureProjectContext(
+    projectId,
+    userId,
+    capability = "project.read",
+    { includeInheritedFields = false } = {},
+  ) {
     validateSafeId(projectId, "projectId");
-    await resolveProjectAccess({ projectId, userId, capability });
-
-    const project = await prisma.project.findFirst({
-      where: { id: projectId, ...membershipWhere(userId) },
-      select: {
-        id: true,
-        name: true,
-        ownerId: true,
-        activeSnapshotId: true,
-        activeVcsBranchId: true,
-        workspaceRevision: true,
-      },
-    });
+    const access = await resolveProjectAccess({ projectId, userId, capability });
+    let project = access.project;
     if (!project) {
       throw new ServiceError("Project not found", 404, "PROJECT_NOT_FOUND");
     }
 
-    let activeSnapshot = await resolveActiveProjectSnapshot(prisma, projectId);
+    const reqCtx = getProjectRequestContext();
+    if (
+      !includeInheritedFields &&
+      reqCtx?.projectId === projectId &&
+      reqCtx.activeSnapshot?.casMaterialized &&
+      reqCtx.activeBranch &&
+      project.activeVcsBranchId
+    ) {
+      const cachedRoot = projectEditableWorkspaceRoot(reqCtx.activeSnapshot);
+      if (cachedRoot && fs.existsSync(cachedRoot)) {
+        return {
+          project,
+          activeSnapshot: reqCtx.activeSnapshot,
+          activeBranch: reqCtx.activeBranch,
+          workspaceRoot: cachedRoot,
+        };
+      }
+    }
+
+    const snapSelect = includeInheritedFields ? undefined : VCS_SNAPSHOT_LEAN_SELECT;
+    let [activeSnapshot, activeBranch] = await Promise.all([
+      resolveActiveProjectSnapshot(prisma, projectId, project.activeSnapshotId, {
+        select: snapSelect,
+      }),
+      project.activeVcsBranchId
+        ? prisma.snapshotVcsBranch.findUnique({
+            where: { id: project.activeVcsBranchId },
+            select: BRANCH_SELECT,
+          })
+        : prisma.snapshotVcsBranch.findFirst({
+            where: { projectId, isDefault: true },
+            select: BRANCH_SELECT,
+          }),
+    ]);
+
     if (!activeSnapshot) {
       throw new ServiceError(
         "Project snapshot not ready or not extracted yet",
@@ -281,27 +398,40 @@ export class SnapshotVcsService {
       );
     }
 
-    if (!activeSnapshot.casMaterialized || !project.activeVcsBranchId) {
+    if (!activeSnapshot.casMaterialized || !project.activeVcsBranchId || !activeBranch) {
       await ensureProjectCasBaseline({
         projectId,
         snapshotId: activeSnapshot.id,
         userId,
         db: prisma,
       });
-      activeSnapshot = await resolveActiveProjectSnapshot(prisma, projectId);
+      invalidateProjectAccessCache(projectId);
+      const [refetchedProj, refetchedSnap] = await Promise.all([
+        prisma.project.findFirst({
+          where: { id: projectId },
+          select: {
+            id: true,
+            name: true,
+            ownerId: true,
+            activeSnapshotId: true,
+            activeVcsBranchId: true,
+            workspaceRevision: true,
+          },
+        }),
+        resolveActiveProjectSnapshot(prisma, projectId, null, { select: snapSelect }),
+      ]);
+      if (refetchedProj) project = refetchedProj;
+      if (refetchedSnap) activeSnapshot = refetchedSnap;
+      activeBranch = project.activeVcsBranchId
+        ? await prisma.snapshotVcsBranch.findUnique({
+            where: { id: project.activeVcsBranchId },
+            select: BRANCH_SELECT,
+          })
+        : await prisma.snapshotVcsBranch.findFirst({
+            where: { projectId, isDefault: true },
+            select: BRANCH_SELECT,
+          });
     }
-
-    const updatedProject = await prisma.project.findFirst({
-      where: { id: projectId },
-      select: {
-        id: true,
-        name: true,
-        ownerId: true,
-        activeSnapshotId: true,
-        activeVcsBranchId: true,
-        workspaceRevision: true,
-      },
-    });
 
     const workspaceRoot = projectEditableWorkspaceRoot(activeSnapshot);
     if (!workspaceRoot || !fs.existsSync(workspaceRoot)) {
@@ -312,94 +442,128 @@ export class SnapshotVcsService {
       );
     }
 
-    const activeBranch = updatedProject.activeVcsBranchId
-      ? await prisma.snapshotVcsBranch.findUnique({
-          where: { id: updatedProject.activeVcsBranchId },
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            headSnapshotId: true,
-            baseSnapshotId: true,
-            isDefault: true,
-            createdAt: true,
-          },
-        })
-      : await prisma.snapshotVcsBranch.findFirst({
-          where: { projectId, isDefault: true },
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            headSnapshotId: true,
-            baseSnapshotId: true,
-            isDefault: true,
-            createdAt: true,
-          },
-        });
+    if (reqCtx?.projectId === projectId) {
+      updateProjectRequestContext({ project, activeSnapshot, activeBranch });
+    }
 
     return {
-      project: updatedProject,
+      project,
       activeSnapshot,
       activeBranch,
       workspaceRoot,
     };
   }
 
-  /**
-   * Returns live working tree changes vs active checkpoint HEAD, split by user staging.
-   */
-  static async getStatus(projectId, userId, { includeUnchanged = false } = {}) {
-    const { project, activeSnapshot, activeBranch, workspaceRoot } =
-      await this._ensureProjectContext(projectId, userId, "project.read");
+  static async _loadStatusState(
+    projectId,
+    userId,
+    { capability = "project.read", includeUnchanged = false } = {},
+  ) {
+    validateSafeId(projectId, "projectId");
+    const access = await resolveProjectAccess({ projectId, userId, capability });
+    let project = access.project;
+    if (!project) {
+      throw new ServiceError("Project not found", 404, "PROJECT_NOT_FOUND");
+    }
 
-    const headSnapshotId = activeBranch?.headSnapshotId || activeSnapshot.id;
-    const [headMap, stagedRows, branchesCount, checkpointsCount, headSnapDetail] =
-      await Promise.all([
-        loadSnapshotManifestMap(prisma, headSnapshotId),
+    let activeSnapshot = null;
+    let activeBranch = null;
+    let headSnapDetail = null;
+    let headMap = null;
+    let stagedRows = null;
+    let branchesCount = null;
+    let checkpointsCount = null;
+
+    if (project.activeSnapshotId && project.activeVcsBranchId) {
+      const [
+        snapRow,
+        branchRow,
+        manifestRows,
+        stagedList,
+        bCount,
+        cCount,
+      ] = await Promise.all([
+        prisma.projectSnapshot.findFirst({
+          where: { id: project.activeSnapshotId, projectId },
+          select: SNAPSHOT_DETAIL_SELECT,
+        }),
+        prisma.snapshotVcsBranch.findUnique({
+          where: { id: project.activeVcsBranchId },
+          select: BRANCH_SELECT,
+        }),
+        loadSnapshotManifestMap(prisma, project.activeSnapshotId),
         prisma.snapshotVcsStaging.findMany({
           where: { projectId, userId },
-          select: { id: true, relativePath: true },
+          select: { relativePath: true },
         }),
         prisma.snapshotVcsBranch.count({ where: { projectId } }),
         prisma.projectSnapshot.count({ where: { projectId } }),
-        prisma.projectSnapshot.findUnique({
-          where: { id: headSnapshotId },
-          select: {
-            id: true,
-            projectId: true,
-            source: true,
-            versionNumber: true,
-            contentHash: true,
-            label: true,
-            commitMessage: true,
-            parentSnapshotId: true,
-            restoredFromSnapshotId: true,
-            vcsBranchId: true,
-            statsJson: true,
-            isPinned: true,
-            isAutoBackup: true,
-            casMaterialized: true,
-            createdAt: true,
-            vcsTags: {
-              select: { id: true, name: true, description: true, color: true, createdAt: true },
-            },
-            author: { select: { id: true, name: true, email: true, avatarUrl: true } },
-            vcsBranch: { select: { id: true, name: true, isDefault: true } },
-          },
-        }),
       ]);
 
+      if (snapRow?.casMaterialized && snapRow?.rootDir && branchRow) {
+        activeSnapshot = snapRow;
+        activeBranch = branchRow;
+        stagedRows = stagedList;
+        branchesCount = bCount;
+        checkpointsCount = cCount;
+
+        const headId = branchRow.headSnapshotId || snapRow.id;
+        if (headId === snapRow.id) {
+          headMap = manifestRows;
+          headSnapDetail = snapRow;
+        } else {
+          [headMap, headSnapDetail] = await Promise.all([
+            loadSnapshotManifestMap(prisma, headId),
+            prisma.projectSnapshot.findUnique({
+              where: { id: headId },
+              select: SNAPSHOT_DETAIL_SELECT,
+            }),
+          ]);
+        }
+      }
+    }
+
+    if (!activeSnapshot || !activeBranch || !headMap) {
+      const ctx = await this._ensureProjectContext(projectId, userId, capability);
+      project = ctx.project;
+      activeSnapshot = ctx.activeSnapshot;
+      activeBranch = ctx.activeBranch;
+      const headSnapshotId = activeBranch?.headSnapshotId || activeSnapshot.id;
+      [headMap, stagedRows, branchesCount, checkpointsCount, headSnapDetail] =
+        await Promise.all([
+          loadSnapshotManifestMap(prisma, headSnapshotId),
+          prisma.snapshotVcsStaging.findMany({
+            where: { projectId, userId },
+            select: { relativePath: true },
+          }),
+          prisma.snapshotVcsBranch.count({ where: { projectId } }),
+          prisma.projectSnapshot.count({ where: { projectId } }),
+          prisma.projectSnapshot.findUnique({
+            where: { id: headSnapshotId },
+            select: SNAPSHOT_DETAIL_SELECT,
+          }),
+        ]);
+    }
+
+    const workspaceRoot = projectEditableWorkspaceRoot(activeSnapshot);
+    if (!workspaceRoot || !fs.existsSync(workspaceRoot)) {
+      throw new ServiceError(
+        "Project workspace directory not found on disk",
+        404,
+        "WORKSPACE_NOT_FOUND",
+      );
+    }
+
+    const headSnapshotId = activeBranch?.headSnapshotId || activeSnapshot.id;
     const workingMap = scanWorkingTree(workspaceRoot);
     const { changes, unchangedPaths, stats } = diffManifests(headMap, workingMap);
 
     const stagedSet = new Set(stagedRows.map((r) => r.relativePath));
     const dirtyPathsSet = new Set(changes.map((c) => c.path));
 
-    // Prune stale staged rows whose files are no longer dirty
     const stalePaths = [...stagedSet].filter((p) => !dirtyPathsSet.has(p));
     if (stalePaths.length > 0) {
-      await prisma.snapshotVcsStaging
+      void prisma.snapshotVcsStaging
         .deleteMany({
           where: { projectId, userId, relativePath: { in: stalePaths } },
         })
@@ -410,7 +574,7 @@ export class SnapshotVcsService {
     const staged = changes.filter((c) => stagedSet.has(c.path));
     const unstaged = changes.filter((c) => !stagedSet.has(c.path));
 
-    return {
+    const status = {
       initialized: true,
       activeBranch: activeBranch || null,
       headCheckpoint: formatCheckpointSummary(
@@ -437,33 +601,69 @@ export class SnapshotVcsService {
       stats,
       workspaceRevision: project.workspaceRevision,
     };
+
+    const reqCtx = getProjectRequestContext();
+    if (reqCtx?.projectId === projectId) {
+      updateProjectRequestContext({ project, activeSnapshot, activeBranch });
+    }
+
+    return {
+      project,
+      activeSnapshot,
+      activeBranch,
+      workspaceRoot,
+      headMap,
+      workingMap,
+      changes,
+      unchangedPaths,
+      stats,
+      stagedSet,
+      branchesCount,
+      checkpointsCount,
+      headSnapDetail,
+      status,
+    };
+  }
+
+  /**
+   * Returns live working tree changes vs active checkpoint HEAD, split by user staging.
+   */
+  static async getStatus(projectId, userId, { includeUnchanged = false } = {}) {
+    const state = await this._loadStatusState(projectId, userId, {
+      capability: "project.read",
+      includeUnchanged,
+    });
+    return state.status;
   }
 
   /**
    * Stages selected changed files, a folder prefix, or `"all"`.
    */
   static async stageFiles(projectId, userId, { files, folder } = {}) {
-    await this._ensureProjectContext(projectId, userId, "vcs.local");
+    await resolveProjectAccess({ projectId, userId, capability: "vcs.local" });
 
     return withProjectVcsLock(projectId, async () => {
-      const currentStatus = await this.getStatus(projectId, userId);
-      const allChanges = [...currentStatus.staged, ...currentStatus.unstaged];
+      const { changes, stagedSet, status } = await this._loadStatusState(
+        projectId,
+        userId,
+        { capability: "vcs.local" },
+      );
       let targetPaths = [];
 
       if (folder) {
         const cleanFolder = sanitizeVcsRelativePath(folder).replace(/\/+$/, "");
-        targetPaths = allChanges
+        targetPaths = changes
           .filter(
             (c) => c.path === cleanFolder || c.path.startsWith(`${cleanFolder}/`),
           )
           .map((c) => c.path);
       } else if (files === "all" || !files) {
-        targetPaths = allChanges.map((c) => c.path);
+        targetPaths = changes.map((c) => c.path);
       } else {
         const requested = new Set(
           (Array.isArray(files) ? files : [files]).map(sanitizeVcsRelativePath),
         );
-        targetPaths = allChanges
+        targetPaths = changes
           .filter((c) => requested.has(c.path))
           .map((c) => c.path);
       }
@@ -477,9 +677,14 @@ export class SnapshotVcsService {
           })),
           skipDuplicates: true,
         });
+        targetPaths.forEach((p) => stagedSet.add(p));
       }
 
-      const nextStatus = await this.getStatus(projectId, userId);
+      const nextStatus = {
+        ...status,
+        staged: changes.filter((c) => stagedSet.has(c.path)),
+        unstaged: changes.filter((c) => !stagedSet.has(c.path)),
+      };
       emitSnapshotVcsUpdated(projectId, { reason: "stage", actorId: userId });
       return nextStatus;
     });
@@ -489,9 +694,15 @@ export class SnapshotVcsService {
    * Unstages selected files, a folder prefix, or `"all"`.
    */
   static async unstageFiles(projectId, userId, { files, folder } = {}) {
-    await this._ensureProjectContext(projectId, userId, "vcs.local");
+    await resolveProjectAccess({ projectId, userId, capability: "vcs.local" });
 
     return withProjectVcsLock(projectId, async () => {
+      const { changes, stagedSet, status } = await this._loadStatusState(
+        projectId,
+        userId,
+        { capability: "vcs.local" },
+      );
+
       if (folder) {
         const cleanFolder = sanitizeVcsRelativePath(folder).replace(/\/+$/, "");
         await prisma.snapshotVcsStaging.deleteMany({
@@ -504,10 +715,16 @@ export class SnapshotVcsService {
             ],
           },
         });
+        for (const p of [...stagedSet]) {
+          if (p === cleanFolder || p.startsWith(`${cleanFolder}/`)) {
+            stagedSet.delete(p);
+          }
+        }
       } else if (files === "all" || !files) {
         await prisma.snapshotVcsStaging.deleteMany({
           where: { projectId, userId },
         });
+        stagedSet.clear();
       } else {
         const cleanPaths = (Array.isArray(files) ? files : [files]).map(
           sanitizeVcsRelativePath,
@@ -516,10 +733,15 @@ export class SnapshotVcsService {
           await prisma.snapshotVcsStaging.deleteMany({
             where: { projectId, userId, relativePath: { in: cleanPaths } },
           });
+          cleanPaths.forEach((p) => stagedSet.delete(p));
         }
       }
 
-      const nextStatus = await this.getStatus(projectId, userId);
+      const nextStatus = {
+        ...status,
+        staged: changes.filter((c) => stagedSet.has(c.path)),
+        unstaged: changes.filter((c) => !stagedSet.has(c.path)),
+      };
       emitSnapshotVcsUpdated(projectId, { reason: "unstage", actorId: userId });
       return nextStatus;
     });
@@ -678,16 +900,49 @@ export class SnapshotVcsService {
         ? activeBranch?.headSnapshotId || activeSnapshot.id
         : baseSnapshotId;
 
-    const baseSnap = await prisma.projectSnapshot.findFirst({
-      where: { id: resolvedBaseId, projectId },
-      select: { id: true, label: true, versionNumber: true, casMaterialized: true },
-    });
+    const lookupPaths = safeOrigPath !== safePath ? [safeOrigPath, safePath] : [safePath];
+    const isWorkingTarget = !targetSnapshotId || targetSnapshotId === "WORKING_TREE";
+
+    const [baseSnap, baseEntries, targetSnap, targetEntry] = await Promise.all([
+      resolvedBaseId === activeSnapshot.id
+        ? Promise.resolve(activeSnapshot)
+        : prisma.projectSnapshot.findFirst({
+            where: { id: resolvedBaseId, projectId },
+            select: { id: true, label: true, versionNumber: true, casMaterialized: true },
+          }),
+      prisma.snapshotVcsEntry.findMany({
+        where: {
+          snapshotId: resolvedBaseId,
+          relativePath: { in: lookupPaths },
+        },
+        select: { relativePath: true, blobSha256: true },
+      }),
+      isWorkingTarget
+        ? Promise.resolve(null)
+        : prisma.projectSnapshot.findFirst({
+            where: { id: targetSnapshotId, projectId },
+            select: { id: true, label: true, versionNumber: true },
+          }),
+      isWorkingTarget
+        ? Promise.resolve(null)
+        : prisma.snapshotVcsEntry.findUnique({
+            where: {
+              snapshotId_relativePath: {
+                snapshotId: targetSnapshotId,
+                relativePath: safePath,
+              },
+            },
+            select: { blobSha256: true },
+          }),
+    ]);
+
     if (!baseSnap) {
       throw new ServiceError("Base checkpoint not found", 404, "SNAPSHOT_NOT_FOUND");
     }
 
-    const baseMap = await loadSnapshotManifestMap(prisma, baseSnap.id);
-    const baseEntry = baseMap.get(safeOrigPath) || baseMap.get(safePath);
+    const baseEntry =
+      baseEntries.find((e) => e.relativePath === safeOrigPath) ||
+      baseEntries.find((e) => e.relativePath === safePath);
     const originalBuf = baseEntry
       ? readCasBlob(projectId, baseEntry.blobSha256)
       : Buffer.alloc(0);
@@ -695,23 +950,13 @@ export class SnapshotVcsService {
     let modifiedBuf = Buffer.alloc(0);
     let modifiedLabel = "Working Tree";
 
-    if (!targetSnapshotId || targetSnapshotId === "WORKING_TREE") {
-      const workingMap = scanWorkingTree(workspaceRoot);
-      const diskEntry = workingMap.get(safePath);
-      if (diskEntry && fs.existsSync(diskEntry.fullPath)) {
-        modifiedBuf = fs.readFileSync(diskEntry.fullPath);
-      }
+    if (isWorkingTarget) {
+      modifiedBuf = readContainedWorkingFile(workspaceRoot, safePath);
     } else {
-      const targetSnap = await prisma.projectSnapshot.findFirst({
-        where: { id: targetSnapshotId, projectId },
-        select: { id: true, label: true, versionNumber: true },
-      });
       if (!targetSnap) {
         throw new ServiceError("Target checkpoint not found", 404, "SNAPSHOT_NOT_FOUND");
       }
       modifiedLabel = targetSnap.label || `#v${targetSnap.versionNumber || "?"}`;
-      const targetMap = await loadSnapshotManifestMap(prisma, targetSnap.id);
-      const targetEntry = targetMap.get(safePath);
       if (targetEntry) {
         modifiedBuf = readCasBlob(projectId, targetEntry.blobSha256);
       }
@@ -906,7 +1151,9 @@ export class SnapshotVcsService {
       throw new ServiceError("Invalid tag name", 400, "INVALID_TAG_NAME");
     }
 
-    const context = await this._ensureProjectContext(projectId, userId, "vcs.local");
+    const context = await this._ensureProjectContext(projectId, userId, "vcs.local", {
+      includeInheritedFields: true,
+    });
     return withProjectVcsLock(projectId, () =>
       this._captureCheckpointUnlocked(context, userId, {
         label,
@@ -925,23 +1172,53 @@ export class SnapshotVcsService {
     { label, message, tag, stageAll, branchId, isAutoBackup = false } = {},
   ) {
     const projectId = project.id;
-    const targetBranch = branchId
-      ? await prisma.snapshotVcsBranch.findFirst({
-          where: { id: branchId, projectId },
-        })
-      : activeBranch;
+    const requestedHeadId =
+      !branchId && activeBranch ? activeBranch.headSnapshotId || activeSnapshot.id : null;
+
+    const [
+      targetBranch,
+      initialHeadMap,
+      stagedRows,
+      maxAgg,
+      authorUser,
+      branchesCount,
+      checkpointsCount,
+    ] = await Promise.all([
+      branchId
+        ? prisma.snapshotVcsBranch.findFirst({
+            where: { id: branchId, projectId },
+            select: BRANCH_SELECT,
+          })
+        : Promise.resolve(activeBranch),
+      requestedHeadId
+        ? loadSnapshotManifestMap(prisma, requestedHeadId)
+        : Promise.resolve(null),
+      prisma.snapshotVcsStaging.findMany({
+        where: { projectId, userId },
+        select: { relativePath: true },
+      }),
+      prisma.projectSnapshot.aggregate({
+        where: { projectId },
+        _max: { versionNumber: true },
+      }),
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, name: true, email: true, avatarUrl: true },
+      }),
+      prisma.snapshotVcsBranch.count({ where: { projectId } }),
+      prisma.projectSnapshot.count({ where: { projectId } }),
+    ]);
 
     if (!targetBranch) {
       throw new ServiceError("Target VCS branch not found", 404, "BRANCH_NOT_FOUND");
     }
 
     const headSnapshotId = targetBranch.headSnapshotId || activeSnapshot.id;
-    const headMap = await loadSnapshotManifestMap(prisma, headSnapshotId);
+    const headMap =
+      initialHeadMap && headSnapshotId === requestedHeadId
+        ? initialHeadMap
+        : await loadSnapshotManifestMap(prisma, headSnapshotId);
     const workingMap = scanWorkingTree(workspaceRoot);
-    const stagedRows = await prisma.snapshotVcsStaging.findMany({
-      where: { projectId, userId },
-      select: { relativePath: true },
-    });
 
     const stagedSet = new Set(stagedRows.map((s) => s.relativePath));
     const useAll = stageAll === true || (stageAll !== false && stagedSet.size === 0);
@@ -995,17 +1272,18 @@ export class SnapshotVcsService {
     for (const [relPath, info] of finalManifest.entries()) {
       const sha = info.sha256 || info.blobSha256;
       const diskInfo = workingMap.get(relPath);
-      if (diskInfo && diskInfo.sha256 === sha && (useAll || stagedSet.has(relPath))) {
-        const buf = fs.readFileSync(diskInfo.fullPath);
-        const stored = writeCasBlob(projectId, buf);
-        uniqueBlobMap.set(stored.sha256, {
-          projectId,
-          sha256: stored.sha256,
-          byteSize: stored.byteSize,
-          isBinary: stored.isBinary,
-          compressed: true,
-        });
-      } else if (diskInfo && !headMap.has(relPath)) {
+      const headEntry = headMap.get(relPath);
+      const alreadyInCas =
+        headEntry &&
+        headEntry.blobSha256 === sha &&
+        fs.existsSync(getBlobDiskPath(projectId, sha));
+
+      if (
+        !alreadyInCas &&
+        diskInfo &&
+        diskInfo.sha256 === sha &&
+        (useAll || stagedSet.has(relPath) || !headMap.has(relPath))
+      ) {
         const buf = fs.readFileSync(diskInfo.fullPath);
         const stored = writeCasBlob(projectId, buf);
         uniqueBlobMap.set(stored.sha256, {
@@ -1034,7 +1312,8 @@ export class SnapshotVcsService {
       totalBytes,
       filesAdded: stats.added,
       filesModified: stats.modified,
-      filesDeleted: stats.deleted + stats.renamed,
+      filesDeleted: stats.deleted,
+      filesRenamed: stats.renamed,
       insertions: 0,
       deletions: 0,
     };
@@ -1051,10 +1330,6 @@ export class SnapshotVcsService {
       }
     })();
 
-    const maxAgg = await prisma.projectSnapshot.aggregate({
-      where: { projectId },
-      _max: { versionNumber: true },
-    });
     const newVersionNumber = (maxAgg?._max?.versionNumber ?? 0) + 1;
     const cleanLabel = label?.trim() || `#${newVersionNumber} Checkpoint`;
     const cleanMessage = message?.trim() || "Manual checkpoint capture";
@@ -1102,48 +1377,69 @@ export class SnapshotVcsService {
           },
         });
 
+        let createdTag = null;
+        const dbWrites = [];
         const blobRows = [...uniqueBlobMap.values()];
         if (blobRows.length > 0) {
-          await tx.snapshotVcsBlobRef.createMany({
-            data: blobRows,
-            skipDuplicates: true,
-          });
+          dbWrites.push(
+            tx.snapshotVcsBlobRef.createMany({
+              data: blobRows,
+              skipDuplicates: true,
+            }),
+          );
         }
-
         if (entryRows.length > 0) {
-          await tx.snapshotVcsEntry.createMany({
-            data: entryRows.map((row) => ({
-              snapshotId: newSnapshot.id,
-              ...row,
-            })),
-          });
+          dbWrites.push(
+            tx.snapshotVcsEntry.createMany({
+              data: entryRows.map((row) => ({
+                snapshotId: newSnapshot.id,
+                ...row,
+              })),
+            }),
+          );
         }
-
-        if (tag && tag.trim()) {
-          await tx.snapshotVcsTag.create({
-            data: {
-              projectId,
-              snapshotId: newSnapshot.id,
-              name: tag.trim(),
-              createdById: userId,
-            },
-          });
-        }
-
-        await tx.snapshotVcsBranch.update({
-          where: { id: targetBranch.id },
-          data: { headSnapshotId: newSnapshot.id },
-        });
-
+        dbWrites.push(
+          tx.snapshotVcsBranch.update({
+            where: { id: targetBranch.id },
+            data: { headSnapshotId: newSnapshot.id },
+          }),
+        );
         if (useAll) {
-          await tx.snapshotVcsStaging.deleteMany({ where: { projectId, userId } });
+          dbWrites.push(
+            tx.snapshotVcsStaging.deleteMany({ where: { projectId, userId } }),
+          );
         } else if (selectedPaths.size > 0) {
-          await tx.snapshotVcsStaging.deleteMany({
-            where: { projectId, userId, relativePath: { in: [...selectedPaths] } },
-          });
+          dbWrites.push(
+            tx.snapshotVcsStaging.deleteMany({
+              where: { projectId, userId, relativePath: { in: [...selectedPaths] } },
+            }),
+          );
+        }
+        if (tag && tag.trim()) {
+          dbWrites.push(
+            tx.snapshotVcsTag
+              .create({
+                data: {
+                  projectId,
+                  snapshotId: newSnapshot.id,
+                  name: tag.trim(),
+                  createdById: userId,
+                },
+                select: {
+                  id: true,
+                  name: true,
+                  description: true,
+                  color: true,
+                  createdAt: true,
+                },
+              })
+              .then((row) => {
+                createdTag = row;
+              }),
+          );
         }
 
-        const updatedProj = await tx.project.update({
+        const updatedProjPromise = tx.project.update({
           where: { id: projectId },
           data: {
             activeSnapshotId: newSnapshot.id,
@@ -1152,6 +1448,10 @@ export class SnapshotVcsService {
           },
           select: { workspaceRevision: true },
         });
+        dbWrites.push(updatedProjPromise);
+
+        await Promise.all(dbWrites);
+        const updatedProj = await updatedProjPromise;
 
         const event = await publishProjectEvent({
           tx,
@@ -1167,42 +1467,60 @@ export class SnapshotVcsService {
           },
         });
 
-        return { newSnapshot, event };
+        return {
+          newSnapshot,
+          createdTag,
+          nextWorkspaceRevision: updatedProj.workspaceRevision,
+          event,
+        };
       },
     );
 
-    await deliverProjectEvent(committed.event).catch(() => {});
+    void deliverProjectEvent(committed.event).catch(() => {});
     invalidateCachesAfterMutation({
       projectId,
       ownerId: project.ownerId,
       snapshotId: committed.newSnapshot.id,
     });
 
-    const fullSnap = await prisma.projectSnapshot.findUnique({
-      where: { id: committed.newSnapshot.id },
-      select: {
-        id: true,
-        projectId: true,
-        source: true,
-        versionNumber: true,
-        contentHash: true,
-        label: true,
-        commitMessage: true,
-        parentSnapshotId: true,
-        restoredFromSnapshotId: true,
-        vcsBranchId: true,
-        statsJson: true,
-        isPinned: true,
-        isAutoBackup: true,
-        casMaterialized: true,
-        createdAt: true,
-        author: { select: { id: true, name: true, email: true, avatarUrl: true } },
-        vcsBranch: { select: { id: true, name: true, isDefault: true } },
-        vcsTags: {
-          select: { id: true, name: true, description: true, color: true, createdAt: true },
-        },
+    const fullSnap = {
+      ...committed.newSnapshot,
+      author: authorUser || null,
+      vcsBranch: {
+        id: targetBranch.id,
+        name: targetBranch.name,
+        isDefault: Boolean(targetBranch.isDefault),
       },
-    });
+      vcsTags: committed.createdTag ? [committed.createdTag] : [],
+    };
+    const checkpoint = formatCheckpointSummary(
+      fullSnap,
+      committed.newSnapshot.id,
+      new Set([committed.newSnapshot.id]),
+    );
+
+    const remainingDiff = diffManifests(finalManifest, workingMap);
+    const remainingStagedSet = useAll
+      ? new Set()
+      : new Set([...stagedSet].filter((p) => !selectedPaths.has(p)));
+
+    const nextStatus = {
+      initialized: true,
+      activeBranch: {
+        ...targetBranch,
+        headSnapshotId: committed.newSnapshot.id,
+      },
+      headCheckpoint: checkpoint,
+      activeSnapshotId: committed.newSnapshot.id,
+      branchesCount,
+      checkpointsCount: checkpointsCount + 1,
+      staged: remainingDiff.changes.filter((c) => remainingStagedSet.has(c.path)),
+      unstaged: remainingDiff.changes.filter((c) => !remainingStagedSet.has(c.path)),
+      unchangedCount: remainingDiff.unchangedPaths.length,
+      clean: remainingDiff.changes.length === 0,
+      stats: remainingDiff.stats,
+      workspaceRevision: committed.nextWorkspaceRevision,
+    };
 
     emitSnapshotVcsUpdated(projectId, {
       reason: "capture",
@@ -1211,12 +1529,8 @@ export class SnapshotVcsService {
     });
 
     return {
-      checkpoint: formatCheckpointSummary(
-        fullSnap,
-        committed.newSnapshot.id,
-        new Set([committed.newSnapshot.id]),
-      ),
-      status: await this.getStatus(projectId, userId),
+      checkpoint,
+      status: nextStatus,
     };
   }
 
@@ -1562,6 +1876,7 @@ export class SnapshotVcsService {
       projectId,
       userId,
       "snapshot.restore",
+      { includeInheritedFields: true },
     );
     const effectivePolicy = normalizeDirtyPolicy(
       dirtyPolicy,
@@ -1615,6 +1930,7 @@ export class SnapshotVcsService {
         projectId,
         userId,
         "snapshot.restore",
+        { includeInheritedFields: true },
       );
       const targetMap = await loadSnapshotManifestMap(prisma, targetSnap.id);
       const entryRows = [...targetMap.values()];
@@ -1815,9 +2131,23 @@ export class SnapshotVcsService {
 
     const entries = await prisma.snapshotVcsEntry.findMany({
       where: { snapshotId: snap.id },
-      select: { relativePath: true, blobSha256: true },
+      select: { relativePath: true, blobSha256: true, byteSize: true },
       orderBy: { relativePath: "asc" },
     });
+
+    const MAX_EXPORT_ZIP_BYTES = 200 * 1024 * 1024;
+    const totalExportBytes = entries.reduce(
+      (sum, entry) => sum + (Number(entry.byteSize) || 0),
+      0,
+    );
+    if (totalExportBytes > MAX_EXPORT_ZIP_BYTES) {
+      throw new ServiceError(
+        "Checkpoint archive exceeds the 200 MiB export size limit.",
+        413,
+        "EXPORT_SIZE_LIMIT_EXCEEDED",
+        { totalBytes: totalExportBytes, maxBytes: MAX_EXPORT_ZIP_BYTES },
+      );
+    }
 
     const zip = new AdmZip();
     for (const entry of entries) {
@@ -1976,6 +2306,7 @@ export class SnapshotVcsService {
       projectId,
       userId,
       "snapshot.restore",
+      { includeInheritedFields: true },
     );
     const effectivePolicy = normalizeDirtyPolicy(
       dirtyPolicy,
@@ -2028,6 +2359,7 @@ export class SnapshotVcsService {
         projectId,
         userId,
         "snapshot.restore",
+        { includeInheritedFields: true },
       );
       const targetSnapId = targetBranch.headSnapshotId || targetBranch.baseSnapshotId;
       const targetMap = await loadSnapshotManifestMap(prisma, targetSnapId);
@@ -2138,7 +2470,21 @@ export class SnapshotVcsService {
       if (!validateSnapshotBranchName(name)) {
         throw new ServiceError("Invalid branch name", 400, "INVALID_BRANCH_NAME");
       }
-      data.name = name.trim();
+      const nextName = name.trim();
+      if (nextName !== existing.name) {
+        const dup = await prisma.snapshotVcsBranch.findUnique({
+          where: { projectId_name: { projectId, name: nextName } },
+          select: { id: true },
+        });
+        if (dup) {
+          throw new ServiceError(
+            `Branch '${nextName}' already exists`,
+            409,
+            "BRANCH_ALREADY_EXISTS",
+          );
+        }
+      }
+      data.name = nextName;
     }
     if (description !== undefined) data.description = description?.trim() || null;
 
@@ -2191,12 +2537,24 @@ export class SnapshotVcsService {
   static async mergeBranch(
     projectId,
     userId,
-    { sourceBranchId, targetBranchId, message, resolutions = {} } = {},
+    {
+      sourceBranchId,
+      targetBranchId,
+      message,
+      dirtyPolicy,
+      dirtyStrategy,
+      resolutions = {},
+    } = {},
   ) {
+    const resolvedDirtyPolicy = normalizeDirtyPolicy(
+      dirtyPolicy || dirtyStrategy,
+      SNAPSHOT_RESTORE_POLICIES.FAIL_IF_DIRTY,
+    );
     const context = await this._ensureProjectContext(
       projectId,
       userId,
       "snapshot.restore",
+      { includeInheritedFields: true },
     );
 
     return withProjectVcsLock(projectId, async () => {
@@ -2210,7 +2568,7 @@ export class SnapshotVcsService {
         }),
         prisma.projectSnapshot.findMany({
           where: { projectId },
-          select: { id: true, parentSnapshotId: true },
+          select: { id: true, parentSnapshotId: true, statsJson: true },
         }),
       ]);
 
@@ -2221,7 +2579,60 @@ export class SnapshotVcsService {
         throw new ServiceError("Cannot merge a branch into itself", 400);
       }
 
-      const oursSnapId = targetBranch.headSnapshotId;
+      const isTargetActive = targetBranch.id === context.project.activeVcsBranchId;
+      let oursSnapId = targetBranch.headSnapshotId;
+      let backupCheckpoint = null;
+
+      if (isTargetActive) {
+        const currentHeadMap = await loadSnapshotManifestMap(
+          prisma,
+          context.activeSnapshot.id,
+        );
+        const workingMap = scanWorkingTree(context.workspaceRoot);
+        const { changes: dirtyChanges } = diffManifests(currentHeadMap, workingMap);
+
+        if (dirtyChanges.length > 0) {
+          if (resolvedDirtyPolicy === SNAPSHOT_RESTORE_POLICIES.FAIL_IF_DIRTY) {
+            throw new ServiceError(
+              `Workspace has ${dirtyChanges.length} uncommitted change(s). Auto-backup or discard before merging.`,
+              409,
+              "DIRTY_WORKSPACE",
+              {
+                dirtyCount: dirtyChanges.length,
+                changes: dirtyChanges.slice(0, 20),
+              },
+            );
+          }
+
+          if (resolvedDirtyPolicy === SNAPSHOT_RESTORE_POLICIES.AUTO_BACKUP) {
+            const backupRes = await this._captureCheckpointUnlocked(
+              context,
+              userId,
+              {
+                label: `Auto-backup before merge '${sourceBranch.name}'`,
+                message: `Automatic safety backup before merging '${sourceBranch.name}' into '${targetBranch.name}'`,
+                stageAll: true,
+                isAutoBackup: true,
+              },
+            );
+            backupCheckpoint = backupRes.checkpoint;
+            oursSnapId = backupRes.checkpoint.id;
+            context.activeSnapshot.id = oursSnapId;
+            context.project.workspaceRevision =
+              backupRes.workspaceRevision ?? context.project.workspaceRevision + 1;
+            const snapIndexEntry = allSnapshots.find(
+              (s) => s.id === targetBranch.headSnapshotId,
+            );
+            allSnapshots.push({
+              id: oursSnapId,
+              parentSnapshotId:
+                snapIndexEntry?.id || targetBranch.headSnapshotId || null,
+              statsJson: null,
+            });
+          }
+        }
+      }
+
       const theirsSnapId = sourceBranch.headSnapshotId;
       const snapById = new Map(allSnapshots.map((s) => [s.id, s]));
       const baseSnapId = findLowestCommonAncestor(snapById, oursSnapId, theirsSnapId);
@@ -2323,10 +2734,14 @@ export class SnapshotVcsService {
             : "";
 
         if (!isAnyBinary && resChoice?.resolution === "both") {
-          const combined =
-            oursText === theirsText
-              ? oursText
-              : `${oursText}${oursText.endsWith("\n") ? "" : "\n"}${theirsText}`;
+          const mergeForBoth = threeWayMergeText(baseText, oursText, theirsText, {
+            oursLabel: targetBranch.name,
+            theirsLabel: sourceBranch.name,
+          });
+          const combined = resolveConflictMarkersKeepBoth(
+            mergeForBoth.mergedText,
+            { ours: oursText, theirs: theirsText },
+          );
           const stored = writeCasBlob(projectId, Buffer.from(combined, "utf8"));
           newBlobMap.set(stored.sha256, {
             projectId,
@@ -2410,6 +2825,7 @@ export class SnapshotVcsService {
       const entryRows = [...mergedEntries.values()];
       const totalBytes = entryRows.reduce((s, e) => s + (e.byteSize || 0), 0);
       const mergedHash = computeManifestHash(entryRows);
+      const { stats: mergeDiffStats } = diffManifests(oursMap, mergedEntries);
       const maxAgg = await prisma.projectSnapshot.aggregate({
         where: { projectId },
         _max: { versionNumber: true },
@@ -2417,14 +2833,14 @@ export class SnapshotVcsService {
       const nextVersion = (maxAgg?._max?.versionNumber ?? 0) + 1;
       const checksum = `merge_${Date.now()}_${randomUUID().slice(0, 8)}`;
 
-      const isTargetActive = targetBranch.id === context.project.activeVcsBranchId;
-
       const committed = await withProjectGuard(
         { projectId, userId, capability: "snapshot.restore" },
         async (tx) => {
           let changedFiles = [];
           if (isTargetActive) {
-            await assertEditorSnapshotChangeAllowed(tx, projectId);
+            if (resolvedDirtyPolicy !== SNAPSHOT_RESTORE_POLICIES.DISCARD_DIRTY) {
+              await assertEditorSnapshotChangeAllowed(tx, projectId);
+            }
             const syncRes = syncWorkspaceFromManifest({
               projectId,
               rootDir: context.workspaceRoot,
@@ -2450,11 +2866,13 @@ export class SnapshotVcsService {
               statsJson: {
                 filesTotal: entryRows.length,
                 totalBytes,
-                filesAdded: 0,
-                filesModified: changedFiles.length,
-                filesDeleted: 0,
+                filesAdded: mergeDiffStats.added,
+                filesModified: mergeDiffStats.modified,
+                filesDeleted: mergeDiffStats.deleted,
+                filesRenamed: mergeDiffStats.renamed,
                 insertions: 0,
                 deletions: 0,
+                secondParentSnapshotId: theirsSnapId,
               },
               casMaterialized: true,
               commitSha: null,
@@ -2555,6 +2973,7 @@ export class SnapshotVcsService {
         merged: true,
         conflicted: false,
         autoMergedCount,
+        backupCheckpoint,
         checkpointId: committed.mergedSnap.id,
         branches: await this.listBranches(projectId, userId),
         status: await this.getStatus(projectId, userId),

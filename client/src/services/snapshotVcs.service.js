@@ -94,7 +94,7 @@ export const snapshotVcsService = {
 
   getDiffPair: async (
     projectId,
-    { filePath, baseSnapshotId, targetSnapshotId, origPath } = {},
+    { filePath, baseSnapshotId, targetSnapshotId, origPath, signal } = {},
   ) => {
     const query = encodeQuery({
       filePath,
@@ -104,17 +104,19 @@ export const snapshotVcsService = {
     });
     const res = await vcsFetch(`${baseVcsUrl(projectId)}/diff-pair${query}`, {
       headers: getAuthHeaders(false),
+      ...(signal ? { signal } : {}),
     });
     return handleResponse(res, "Failed to load file diff");
   },
 
   compareCheckpoints: async (
     projectId,
-    { baseSnapshotId, targetSnapshotId = "WORKING_TREE" } = {},
+    { baseSnapshotId, targetSnapshotId = "WORKING_TREE", signal } = {},
   ) => {
     const query = encodeQuery({ baseSnapshotId, targetSnapshotId });
     const res = await vcsFetch(`${baseVcsUrl(projectId)}/compare${query}`, {
       headers: getAuthHeaders(false),
+      ...(signal ? { signal } : {}),
     });
     return handleResponse(res, "Failed to compare checkpoints");
   },

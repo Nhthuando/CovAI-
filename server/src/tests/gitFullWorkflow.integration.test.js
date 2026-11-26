@@ -13,7 +13,7 @@ import { createAuthTestDatabase } from "./helpers/authTestDatabase.js";
 import { encrypt } from "../utils/crypto.js";
 
 const execFileAsync = promisify(execFile);
-jest.setTimeout(30000);
+jest.setTimeout(60000);
 const testDb = await createAuthTestDatabase();
 
 jest.unstable_mockModule("../config/prisma.js", () => ({
@@ -660,5 +660,218 @@ describe("Phase 1 Full Git & GitHub Workflow Integration", () => {
     expect(checks.status).toBe(200);
     expect(checks.body.data.overallState).toBe("success");
     expect(checks.body.data.checkRuns[0].name).toBe("CI Tests");
+  });
+
+  it("preserves tracked .env.example templates and existing core.autocrlf across stage & commit", async () => {
+    const ownerJwt = makeJwt(owner, AUTH_PROVIDERS.GITHUB);
+
+    fs.writeFileSync(
+      path.join(repoRoot, ".env.example"),
+      "DATABASE_URL=postgresql://localhost:5432/demo\n",
+      "utf8",
+    );
+    fs.mkdirSync(path.join(repoRoot, ".agents"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, ".agents", "guide.md"),
+      "# Agent Guidelines\n",
+      "utf8",
+    );
+    fs.writeFileSync(path.join(repoRoot, "README.md"), "# Demo Repo\n", "utf8");
+
+    await GitService.initRepo(project.id, owner.id, {
+      defaultBranch: "main",
+      createInitialCommit: true,
+    });
+
+    // Simulate a repo that explicitly uses core.autocrlf=true prior to CovAI staging
+    await execFileAsync("git", ["config", "core.autocrlf", "true"], {
+      cwd: repoRoot,
+      windowsHide: true,
+    });
+    fs.writeFileSync(path.join(repoRoot, "README.md"), "# Demo Repo\nAdded line\n", "utf8");
+
+    const stageRes = await request(app)
+      .post("/api/git/stage")
+      .set("Authorization", `Bearer ${ownerJwt}`)
+      .send({ projectId: project.id, files: "all" });
+    expect(stageRes.status).toBe(200);
+
+    const stagedPaths = stageRes.body.data.staged.map((f) => `${f.status}:${f.path}`);
+    expect(stagedPaths).toContain("M:README.md");
+    expect(stagedPaths).not.toContain("D:.env.example");
+    expect(stagedPaths).not.toContain("D:.agents/guide.md");
+    expect(fs.existsSync(path.join(repoRoot, ".env.example"))).toBe(true);
+    expect(fs.existsSync(path.join(repoRoot, ".agents", "guide.md"))).toBe(true);
+
+    // Standard Git mutations execute directly inside repoRoot under per-project VCS lock without sandbox copies
+    const ops = await testDb.db.projectOperation.findMany({
+      where: { projectId: project.id },
+      select: { id: true },
+    });
+    expect(ops).toHaveLength(0);
+
+    const { stdout: autocrlfOut } = await execFileAsync(
+      "git",
+      ["config", "--local", "core.autocrlf"],
+      { cwd: repoRoot, windowsHide: true },
+    );
+    expect(autocrlfOut.trim()).toBe("true");
+  });
+
+  it("Smart Git Console parses CLI commands, executes real git pull against bare remote, enforces RBAC, and blocks shell/destructive injection", async () => {
+    const ownerJwt = makeJwt(owner, AUTH_PROVIDERS.GITHUB);
+    const editorJwt = makeJwt(editor, AUTH_PROVIDERS.GITHUB);
+    const viewerJwt = makeJwt(viewer, AUTH_PROVIDERS.GITHUB);
+
+    await GitService.initRepo(project.id, owner.id, {
+      defaultBranch: "main",
+      createInitialCommit: true,
+    });
+    await execFileAsync("git", ["remote", "add", "origin", bareRemoteDir], {
+      cwd: repoRoot,
+      windowsHide: true,
+    });
+    await execFileAsync("git", ["push", "-u", "origin", "main"], {
+      cwd: repoRoot,
+      windowsHide: true,
+    });
+
+    // Peer pushes a new commit to the bare remote
+    await execFileAsync("git", ["clone", bareRemoteDir, peerCloneDir], {
+      windowsHide: true,
+    });
+    await execFileAsync("git", ["config", "user.name", "Peer Dev"], {
+      cwd: peerCloneDir,
+      windowsHide: true,
+    });
+    await execFileAsync("git", ["config", "user.email", "peer@covai.dev"], {
+      cwd: peerCloneDir,
+      windowsHide: true,
+    });
+    fs.writeFileSync(path.join(peerCloneDir, "from-remote.txt"), "synced via smart console\n", "utf8");
+    await execFileAsync("git", ["add", "from-remote.txt"], {
+      cwd: peerCloneDir,
+      windowsHide: true,
+    });
+    await execFileAsync("git", ["commit", "-m", "feat: peer remote commit"], {
+      cwd: peerCloneDir,
+      windowsHide: true,
+    });
+    await execFileAsync("git", ["push", "origin", "main"], {
+      cwd: peerCloneDir,
+      windowsHide: true,
+    });
+
+    // 1. Read-only console commands (with or without leading "git ")
+    const statusCmd = await request(app)
+      .post("/api/git/command")
+      .set("Authorization", `Bearer ${viewerJwt}`)
+      .send({ projectId: project.id, input: "status -s -b" });
+    expect(statusCmd.status).toBe(200);
+    expect(statusCmd.body.data.mutated).toBe(false);
+    expect(statusCmd.body.result).toContain("main");
+
+    const logCmd = await request(app)
+      .post("/api/git/command")
+      .set("Authorization", `Bearer ${viewerJwt}`)
+      .send({ projectId: project.id, input: "git log -n 3 --oneline" });
+    expect(logCmd.status).toBe(200);
+    expect(logCmd.body.result).toContain("initial");
+
+    const remoteCmd = await request(app)
+      .post("/api/git/command")
+      .set("Authorization", `Bearer ${viewerJwt}`)
+      .send({ projectId: project.id, input: "git remote -v" });
+    expect(remoteCmd.status).toBe(200);
+    expect(remoteCmd.body.result).toContain("origin");
+
+    // 2. EDITOR cannot run remote or branch commands via console
+    for (const blockedForEditor of [
+      "git pull origin main",
+      "git push origin main",
+      "git checkout -b hack",
+      "git branch hack",
+    ]) {
+      const denied = await request(app)
+        .post("/api/git/command")
+        .set("Authorization", `Bearer ${editorJwt}`)
+        .send({ projectId: project.id, input: blockedForEditor });
+      expect(denied.status).toBe(403);
+      expect(denied.body.code).toBe("CAPABILITY_DENIED");
+    }
+
+    // 3. OWNER executes real `git pull origin main` from console -> updates workspace & returns mutated=true + status
+    const pullCmd = await request(app)
+      .post("/api/git/command")
+      .set("Authorization", `Bearer ${ownerJwt}`)
+      .send({ projectId: project.id, input: "git pull origin main" });
+    expect(pullCmd.status).toBe(200);
+    expect(pullCmd.body.data).toMatchObject({
+      command: "git pull origin main",
+      mutated: true,
+      syncWorkspace: true,
+      conflicted: false,
+    });
+    expect(pullCmd.body.data.status.hasGit).toBe(true);
+    expect(fs.readFileSync(path.join(repoRoot, "from-remote.txt"), "utf8")).toBe(
+      "synced via smart console\n",
+    );
+
+    // 4. EDITOR can stage & commit locally via console using EDITOR identity; VIEWER is blocked
+    fs.writeFileSync(path.join(repoRoot, "console-note.md"), "# Console test\n", "utf8");
+
+    const viewerAdd = await request(app)
+      .post("/api/git/command")
+      .set("Authorization", `Bearer ${viewerJwt}`)
+      .send({ projectId: project.id, input: "git add ." });
+    expect(viewerAdd.status).toBe(403);
+
+    const editorAdd = await request(app)
+      .post("/api/git/command")
+      .set("Authorization", `Bearer ${editorJwt}`)
+      .send({ projectId: project.id, input: "git add console-note.md" });
+    expect(editorAdd.status).toBe(200);
+    expect(editorAdd.body.data.mutated).toBe(true);
+    expect(editorAdd.body.data.status.staged.map((f) => f.path)).toContain("console-note.md");
+
+    const editorCommit = await request(app)
+      .post("/api/git/command")
+      .set("Authorization", `Bearer ${editorJwt}`)
+      .send({ projectId: project.id, input: 'git commit -m "feat: console commit"' });
+    expect(editorCommit.status).toBe(200);
+    expect(editorCommit.body.data.mutated).toBe(true);
+    expect(editorCommit.body.data.syncWorkspace).toBe(true);
+    expect(editorCommit.body.data.status.clean).toBe(true);
+
+    const logAfterCommit = await request(app)
+      .get(`/api/git/log?projectId=${project.id}&limit=5`)
+      .set("Authorization", `Bearer ${editorJwt}`);
+    expect(logAfterCommit.body.data[0]).toMatchObject({
+      author: "Editor Octo",
+      email: "editor@gh.dev",
+      subject: "feat: console commit",
+    });
+
+    // 5. Blocked/malicious/unsupported commands fail clearly and NEVER fall back to `git status`
+    for (const [badCmd, expectedStatuses] of [
+      ["git status; echo pwned", [403]],
+      ["git log | cat", [403]],
+      ["git status && ls", [403]],
+      ["git log $(whoami)", [403]],
+      ["git diff --ext-diff", [403]],
+      ["git -c core.sshCommand=bad status", [403]],
+      ["git reset --hard HEAD~1", [403]],
+      ["git push --force origin main", [403]],
+      ["git branch -D main", [403]],
+      ["git config user.name evil", [403]],
+      ["git foobar", [400]],
+    ]) {
+      const badRes = await request(app)
+        .post("/api/git/command")
+        .set("Authorization", `Bearer ${ownerJwt}`)
+        .send({ projectId: project.id, input: badCmd });
+      expect(expectedStatuses).toContain(badRes.status);
+      expect(badRes.body.success).toBe(false);
+    }
   });
 });

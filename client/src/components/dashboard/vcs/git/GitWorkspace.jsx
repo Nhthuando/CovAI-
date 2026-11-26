@@ -34,6 +34,7 @@ import VcsChangesTree from "../shared/VcsChangesTree";
 import VcsMonacoDiffEditor from "../shared/VcsMonacoDiffEditor";
 import VcsCommitGraph from "../shared/VcsCommitGraph";
 import VcsConflictResolver from "../shared/VcsConflictResolver";
+import GitOutputConsole from "./GitOutputConsole";
 import GitPublishModal from "./GitPublishModal";
 import GitPullRequestsPanel from "./GitPullRequestsPanel";
 import { gitService } from "../../../../services/git.service";
@@ -44,7 +45,11 @@ import {
 import { useProjectAccess } from "../../../../hooks/useProjectAccess";
 import { useVcsSync } from "../../../../hooks/useVcsSync";
 import {
+  applyOptimisticStage,
+  applyOptimisticUnstage,
   buildVcsPermissions,
+  extractVcsStatusFromResponse,
+  formatAiCommitSubject,
   formatRelativeTime,
 } from "../../../../services/vcsUiHelpers";
 import { VC_MODES } from "../../../../../../shared/versionControlMode.js";
@@ -68,10 +73,10 @@ export default function GitWorkspace({
   const [subTab, setSubTab] = useState("diff");
   const [notice, setNotice] = useState(null);
   const [busyAction, setBusyAction] = useState("");
+  const [pendingStageKeys, setPendingStageKeys] = useState(() => new Set());
   const [logs, setLogs] = useState([]);
   const [showConsole, setShowConsole] = useState(false);
-  const [cmdName, setCmdName] = useState("status");
-  const [cmdArgs, setCmdArgs] = useState("");
+  const [runningConsole, setRunningConsole] = useState(false);
 
   // Capabilities
   const [capabilities, setCapabilities] = useState(null);
@@ -84,6 +89,7 @@ export default function GitWorkspace({
   const [showSplitMenu, setShowSplitMenu] = useState(false);
   const [aiDrafting, setAiDrafting] = useState(false);
   const [confirmUndoPushed, setConfirmUndoPushed] = useState(false);
+  const [confirmForcePush, setConfirmForcePush] = useState(false);
   const splitMenuRef = useRef(null);
 
   // Selected diff
@@ -91,6 +97,8 @@ export default function GitWorkspace({
   const [diffData, setDiffData] = useState(null);
   const [loadingDiff, setLoadingDiff] = useState(false);
   const [diffError, setDiffError] = useState("");
+  const diffRequestSeqRef = useRef(0);
+  const diffAbortRef = useRef(null);
 
   // Conflicts
   const [conflictsDetail, setConflictsDetail] = useState([]);
@@ -151,22 +159,35 @@ export default function GitWorkspace({
 
   const noticeTimerRef = useRef(null);
 
-  const appendLog = useCallback((line) => {
+  const appendLog = useCallback((line, { isError = false } = {}) => {
     const stamp = new Date().toLocaleTimeString();
-    setLogs((prev) => [`[${stamp}] ${line}`, ...prev].slice(0, 80));
+    setLogs((prev) =>
+      [
+        {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          timestamp: stamp,
+          text: String(line ?? ""),
+          isError,
+        },
+        ...prev,
+      ].slice(0, 80),
+    );
   }, []);
 
-  const showNotice = useCallback((type, text) => {
+  const showNotice = useCallback((type, text, code = null) => {
     if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
-    setNotice({ type, text });
-    noticeTimerRef.current = setTimeout(() => {
-      setNotice(null);
-    }, 5000);
+    setNotice({ type, text, code });
+    if (!["GIT_PUSH_REJECTED", "GIT_AUTH_FAILED"].includes(code)) {
+      noticeTimerRef.current = setTimeout(() => {
+        setNotice(null);
+      }, 5000);
+    }
   }, []);
 
   useEffect(() => {
     return () => {
       if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+      diffAbortRef.current?.abort();
     };
   }, []);
 
@@ -345,6 +366,11 @@ export default function GitWorkspace({
   const loadDiffPair = useCallback(
     async (item, section) => {
       if (!projectId || !item?.path) return;
+      diffAbortRef.current?.abort();
+      const controller = new AbortController();
+      diffAbortRef.current = controller;
+      const reqId = ++diffRequestSeqRef.current;
+
       setSelectedFile({ ...item, section });
       setSubTab("diff");
       setLoadingDiff(true);
@@ -354,13 +380,18 @@ export default function GitWorkspace({
           filePath: item.path,
           origPath: item.origPath,
           mode: section === "staged" ? "staged" : "working",
+          signal: controller.signal,
         });
+        if (reqId !== diffRequestSeqRef.current) return;
         setDiffData(res?.data || null);
       } catch (err) {
+        if (err?.name === "AbortError" || reqId !== diffRequestSeqRef.current) return;
         setDiffError(err?.message || "Failed to load diff");
         setDiffData(null);
       } finally {
-        setLoadingDiff(false);
+        if (reqId === diffRequestSeqRef.current) {
+          setLoadingDiff(false);
+        }
       }
     },
     [projectId],
@@ -380,6 +411,11 @@ export default function GitWorkspace({
   };
 
   const handleLoadCommitFileDiff = async (commitHash, file) => {
+    diffAbortRef.current?.abort();
+    const controller = new AbortController();
+    diffAbortRef.current = controller;
+    const reqId = ++diffRequestSeqRef.current;
+
     setSelectedFile({ path: file.path, origPath: file.origPath, section: "commit" });
     setSubTab("diff");
     setLoadingDiff(true);
@@ -390,13 +426,18 @@ export default function GitWorkspace({
         origPath: file.origPath,
         mode: "commit",
         commitHash,
+        signal: controller.signal,
       });
+      if (reqId !== diffRequestSeqRef.current) return;
       setDiffData(res?.data || null);
     } catch (err) {
+      if (err?.name === "AbortError" || reqId !== diffRequestSeqRef.current) return;
       setDiffError(err?.message || "Failed to load commit diff");
       setDiffData(null);
     } finally {
-      setLoadingDiff(false);
+      if (reqId === diffRequestSeqRef.current) {
+        setLoadingDiff(false);
+      }
     }
   };
 
@@ -423,20 +464,30 @@ export default function GitWorkspace({
     { syncWorkspace = false, reason = "git_op", successText = "" } = {},
   ) => {
     setBusyAction(label);
+    const endLocalMutation = vcsSummary.beginLocalMutation?.() || (() => {});
     try {
       const result = await fn();
       appendLog(`${label} -> OK`);
-      vcsSummary.invalidateAll();
+      const nextStatus = extractVcsStatusFromResponse(VC_MODES.GIT_GITHUB, result);
+      if (nextStatus) {
+        vcsSummary.applyStatusData(nextStatus);
+      } else {
+        vcsSummary.invalidateAll();
+      }
+      if (result?.data?.localBranches) {
+        setBranchesData(result.data);
+      }
       if (syncWorkspace) {
-        await onSync?.({ reason });
+        await onSync?.({ reason, skipVcsRefetch: Boolean(nextStatus) });
       }
       if (successText) showNotice("success", successText);
       return result;
     } catch (err) {
-      appendLog(`${label} -> ERROR: ${err?.message || err}`);
-      showNotice("error", err?.message || `Failed to execute ${label}`);
+      appendLog(`${label} -> ERROR: ${err?.message || err}`, { isError: true });
+      showNotice("error", err?.message || `Failed to execute ${label}`, err?.code || null);
       throw err;
     } finally {
+      endLocalMutation();
       setBusyAction("");
     }
   };
@@ -471,21 +522,73 @@ export default function GitWorkspace({
     await loadBranches();
   };
 
+  const buildStageActionKeys = (prefix, files, folder) => {
+    if (folder) return [`${prefix}Folder:${folder}`];
+    if (files === "all" || !files) return [`${prefix}:all`];
+    return (Array.isArray(files) ? files : [files]).map((f) => `${prefix}:${f}`);
+  };
+
   const handleStage = async (files, folder) => {
-    await runAction(folder ? `git add ${folder}` : "git add", () =>
-      gitService.stageFiles(projectId, files, folder),
+    const keys = buildStageActionKeys("stage", files, folder);
+    setPendingStageKeys((prev) => new Set([...prev, ...keys]));
+    const rollback = await vcsSummary.updateStatusOptimistic((prev) =>
+      applyOptimisticStage(VC_MODES.GIT_GITHUB, prev, { files, folder }),
     );
-    if (selectedFile && (!files || files === "all" || files.includes(selectedFile.path))) {
-      void loadDiffPair(selectedFile, "staged");
+    try {
+      const result = await gitService.stageFiles(projectId, files, folder);
+      const nextStatus = extractVcsStatusFromResponse(VC_MODES.GIT_GITHUB, result);
+      if (nextStatus) {
+        vcsSummary.applyStatusData(nextStatus);
+      } else {
+        vcsSummary.invalidateAll();
+      }
+      appendLog(folder ? `git add ${folder} -> OK` : "git add -> OK");
+      if (selectedFile && (!files || files === "all" || files.includes(selectedFile.path))) {
+        void loadDiffPair(selectedFile, "staged");
+      }
+    } catch (err) {
+      rollback();
+      const msg = err?.message || "Failed to stage files";
+      appendLog(`git add -> ERROR: ${msg}`, { isError: true });
+      showNotice("error", msg, err?.code || null);
+    } finally {
+      setPendingStageKeys((prev) => {
+        const next = new Set(prev);
+        keys.forEach((k) => next.delete(k));
+        return next;
+      });
     }
   };
 
   const handleUnstage = async (files, folder) => {
-    await runAction(folder ? `git restore --staged ${folder}` : "git unstage", () =>
-      gitService.unstageFiles(projectId, files, folder),
+    const keys = buildStageActionKeys("unstage", files, folder);
+    setPendingStageKeys((prev) => new Set([...prev, ...keys]));
+    const rollback = await vcsSummary.updateStatusOptimistic((prev) =>
+      applyOptimisticUnstage(VC_MODES.GIT_GITHUB, prev, { files, folder }),
     );
-    if (selectedFile && (!files || files === "all" || files.includes(selectedFile.path))) {
-      void loadDiffPair(selectedFile, "unstaged");
+    try {
+      const result = await gitService.unstageFiles(projectId, files, folder);
+      const nextStatus = extractVcsStatusFromResponse(VC_MODES.GIT_GITHUB, result);
+      if (nextStatus) {
+        vcsSummary.applyStatusData(nextStatus);
+      } else {
+        vcsSummary.invalidateAll();
+      }
+      appendLog(folder ? `git restore --staged ${folder} -> OK` : "git unstage -> OK");
+      if (selectedFile && (!files || files === "all" || files.includes(selectedFile.path))) {
+        void loadDiffPair(selectedFile, "unstaged");
+      }
+    } catch (err) {
+      rollback();
+      const msg = err?.message || "Failed to unstage files";
+      appendLog(`git unstage -> ERROR: ${msg}`, { isError: true });
+      showNotice("error", msg, err?.code || null);
+    } finally {
+      setPendingStageKeys((prev) => {
+        const next = new Set(prev);
+        keys.forEach((k) => next.delete(k));
+        return next;
+      });
     }
   };
 
@@ -512,7 +615,7 @@ export default function GitWorkspace({
           gitService.discardChanges(
             projectId,
             target.path,
-            Boolean(target.isUntracked),
+            Boolean(target.isUntracked || target.status === "U"),
           ),
         {
           syncWorkspace: true,
@@ -566,7 +669,7 @@ export default function GitWorkspace({
         successText: pushAfter
           ? "Committed and pushed to GitHub"
           : syncAfter
-            ? "Committed and synced with GitHub"
+            ? ""
             : "Changes committed",
       },
     );
@@ -575,7 +678,20 @@ export default function GitWorkspace({
       setCommitDescription("");
       setSelectedFile(null);
       setDiffData(null);
+      if (syncAfter) {
+        if (res?.data?.conflicted) {
+          showNotice(
+            "error",
+            "Committed locally, but Sync hit merge conflicts — resolve them in Diff Editor",
+          );
+          await loadConflicts();
+          setSubTab("diff");
+        } else {
+          showNotice("success", "Committed and synced with GitHub");
+        }
+      }
       if (subTab === "history") void loadHistory({ reset: true });
+      void loadBranches();
     }
   };
 
@@ -592,6 +708,7 @@ export default function GitWorkspace({
         },
       );
       if (subTab === "history") void loadHistory({ reset: true });
+      void loadBranches();
     } catch (err) {
       if (err?.code === "COMMIT_ALREADY_PUSHED") {
         setConfirmUndoPushed(true);
@@ -606,9 +723,7 @@ export default function GitWorkspace({
       const res = await gitService.generateAiCommitMessage(projectId);
       const data = res?.data;
       if (data) {
-        const subjectLine = data.scope
-          ? `${data.type || "feat"}(${data.scope}): ${data.subject}`
-          : `${data.type || "feat"}: ${data.subject}`;
+        const subjectLine = formatAiCommitSubject(data);
         setCommitMessage(subjectLine);
         if (data.body) {
           setCommitDescription(data.body);
@@ -659,15 +774,54 @@ export default function GitWorkspace({
     }
   };
 
-  const handleRunConsoleCommand = async (e) => {
-    e.preventDefault();
-    const args = cmdArgs
-      .split(/\s+/)
-      .map((a) => a.trim())
-      .filter(Boolean);
-    const res = await gitService.runCommand(projectId, cmdName, args);
-    appendLog(`$ git ${cmdName} ${args.join(" ")}\n${res?.result || "(empty)"}`);
-    setCmdArgs("");
+  const handleRunConsoleCommand = async (rawInput) => {
+    const trimmed = String(rawInput || "").trim();
+    if (!trimmed) return;
+    setRunningConsole(true);
+    try {
+      const res = await gitService.runCommand(projectId, trimmed);
+      const data = res?.data || {};
+      const cmdLabel = data.command || trimmed;
+      const outText = data.output ?? res?.result ?? "";
+      appendLog(`$ ${cmdLabel}\n${outText || "(no output)"}`);
+
+      if (data.mutated) {
+        if (data.status) {
+          vcsSummary.applyStatusData(data.status);
+        } else {
+          vcsSummary.invalidateAll();
+        }
+        if (data.branches) {
+          setBranchesData(data.branches);
+        } else if (/\b(pull|fetch|push|checkout|switch|branch)\b/i.test(cmdLabel)) {
+          void loadBranches();
+        }
+        if (data.conflicted) {
+          showNotice(
+            "error",
+            `Command hit merge conflicts (${data.conflicts?.length || 1} file(s)) — resolve them in Diff Editor`,
+          );
+          await loadConflicts();
+          setSubTab("diff");
+        }
+        if (data.syncWorkspace) {
+          await onSync?.({
+            reason: "git_console",
+            skipVcsRefetch: Boolean(data.status),
+          });
+        }
+        if (subTab === "history") {
+          void loadHistory({ reset: true });
+        }
+      }
+    } catch (err) {
+      const msg = err?.message || "Git command failed";
+      const codeTag = err?.code ? ` [${err.code}]` : "";
+      appendLog(`$ ${trimmed}\nERROR${codeTag}: ${msg}`, { isError: true });
+      showNotice("error", msg, err?.code || null);
+    } finally {
+      setRunningConsole(false);
+    }
   };
 
   const hasConflicts =
@@ -733,27 +887,93 @@ export default function GitWorkspace({
       {/* Transient Notice */}
       {notice && (
         <div
-          className={`flex items-center justify-between gap-2 px-4 py-2.5 rounded-lg border text-xs font-medium ${
+          className={`flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 rounded-lg border text-xs font-medium ${
             notice.type === "error"
-              ? "bg-rose-500/10 text-rose-400 border-rose-500/25"
-              : "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
+              ? "bg-[var(--color-danger)]/10 text-[var(--color-danger)] border-[var(--color-danger)]/30"
+              : "bg-[var(--color-success)]/10 text-[var(--color-success)] border-[var(--color-success)]/30"
           }`}
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
             {notice.type === "error" ? (
-              <AlertCircle size={14} />
+              <AlertCircle size={14} className="shrink-0" />
             ) : (
-              <CheckCircle2 size={14} />
+              <CheckCircle2 size={14} className="shrink-0" />
             )}
             <span>{notice.text}</span>
           </div>
-          <button
-            type="button"
-            onClick={() => setNotice(null)}
-            className="opacity-75 hover:opacity-100 cursor-pointer"
-          >
-            ✕
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {notice.code === "GIT_PUSH_REJECTED" && (
+              <>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  loading={busyAction === "git sync"}
+                  disabled={!perms.canRemoteWrite || Boolean(busyAction)}
+                  onClick={async () => {
+                    const res = await runAction(
+                      "git sync",
+                      () => gitService.sync(projectId),
+                      { syncWorkspace: true, reason: "git_sync" },
+                    );
+                    if (res?.data?.conflicted) {
+                      showNotice(
+                        "error",
+                        "Sync resulted in merge conflicts — resolve them in Diff Editor",
+                      );
+                      await loadConflicts();
+                      setSubTab("diff");
+                    } else {
+                      showNotice("success", "Synchronized with GitHub");
+                    }
+                    void loadBranches();
+                  }}
+                >
+                  Sync (Pull &amp; Push)
+                </Button>
+                {(() => {
+                  const curBranch = status?.branch || branchesData.current || "";
+                  const defaultBr = project?.defaultBranch || status?.defaultBranch || "main";
+                  const isProtectedBranch =
+                    curBranch === defaultBr ||
+                    curBranch === "main" ||
+                    curBranch === "master";
+                  return (
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      disabled={!perms.canRemoteWrite || isProtectedBranch || Boolean(busyAction)}
+                      title={
+                        isProtectedBranch
+                          ? `Force push is disabled on protected/default branch '${curBranch}'`
+                          : "Force push rewritten local history safely (--force-with-lease)"
+                      }
+                      onClick={() => setConfirmForcePush(true)}
+                    >
+                      Force Push (--force-with-lease)
+                    </Button>
+                  );
+                })()}
+              </>
+            )}
+            {notice.code === "GIT_AUTH_FAILED" && (
+              <Button
+                size="sm"
+                variant="primary"
+                loading={reauthorizing}
+                onClick={handleGrantRepoScope}
+              >
+                Reconnect GitHub
+              </Button>
+            )}
+            <button
+              type="button"
+              onClick={() => setNotice(null)}
+              className="opacity-75 hover:opacity-100 cursor-pointer px-1"
+              aria-label="Dismiss notification"
+            >
+              ✕
+            </button>
+          </div>
         </div>
       )}
 
@@ -940,7 +1160,7 @@ export default function GitWorkspace({
                 onClick={() =>
                   runAction("git fetch", () => gitService.fetch(projectId), {
                     successText: "Fetched remote references",
-                  })
+                  }).then(() => loadBranches())
                 }
               >
                 Fetch
@@ -968,6 +1188,7 @@ export default function GitWorkspace({
                   } else {
                     showNotice("success", "Pulled latest commits from origin");
                   }
+                  void loadBranches();
                 }}
               >
                 Pull
@@ -986,7 +1207,7 @@ export default function GitWorkspace({
                 onClick={() =>
                   runAction("git push", () => gitService.push(projectId), {
                     successText: "Pushed commits to GitHub",
-                  })
+                  }).then(() => loadBranches())
                 }
               >
                 Push
@@ -1002,13 +1223,27 @@ export default function GitWorkspace({
                     ? perms.disabledReason("remote")
                     : "Fetch, Pull, and Push in one click"
                 }
-                onClick={() =>
-                  runAction("git sync", () => gitService.sync(projectId), {
-                    syncWorkspace: true,
-                    reason: "git_sync",
-                    successText: "Synchronized with GitHub",
-                  })
-                }
+                onClick={async () => {
+                  const res = await runAction(
+                    "git sync",
+                    () => gitService.sync(projectId),
+                    {
+                      syncWorkspace: true,
+                      reason: "git_sync",
+                    },
+                  );
+                  if (res?.data?.conflicted) {
+                    showNotice(
+                      "error",
+                      "Sync resulted in merge conflicts — resolve them in Diff Editor",
+                    );
+                    await loadConflicts();
+                    setSubTab("diff");
+                  } else {
+                    showNotice("success", "Synchronized with GitHub");
+                  }
+                  void loadBranches();
+                }}
               >
                 <span className="font-mono tabular-nums">
                   Sync ↓{status?.behind || 0} ↑{status?.ahead || 0}
@@ -1198,7 +1433,7 @@ export default function GitWorkspace({
                     <div className="absolute right-0 top-full mt-1 z-40 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-xl p-1 text-xs">
                       <button
                         type="button"
-                        disabled={!perms.canRemoteWrite || !commitMessage.trim()}
+                        disabled={!perms.canRemoteWrite || !commitMessage.trim() || totalChanges === 0}
                         title={
                           !perms.canRemoteWrite
                             ? perms.disabledReason("remote")
@@ -1211,7 +1446,7 @@ export default function GitWorkspace({
                       </button>
                       <button
                         type="button"
-                        disabled={!perms.canRemoteWrite || !commitMessage.trim()}
+                        disabled={!perms.canRemoteWrite || !commitMessage.trim() || totalChanges === 0}
                         title={
                           !perms.canRemoteWrite
                             ? perms.disabledReason("remote")
@@ -1244,6 +1479,44 @@ export default function GitWorkspace({
                     </div>
                   )}
                 </div>
+
+                {totalChanges > 0 && !commitMessage.trim() && perms.canLocalWrite && (
+                  <p className="text-[11px] text-[var(--color-text-muted)]">
+                    Enter a commit message above (or click AI Draft) to commit.
+                  </p>
+                )}
+
+                {status?.repoUrl && perms.canRemoteWrite && totalChanges > 0 && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon={ArrowUp}
+                    loading={busyAction === "git commit & push"}
+                    disabled={!commitMessage.trim() || Boolean(busyAction)}
+                    onClick={() => handleCommit({ pushAfter: true })}
+                    className="w-full"
+                  >
+                    Commit &amp; Push to {status?.branch || "main"}
+                  </Button>
+                )}
+
+                {status?.repoUrl && perms.canRemoteWrite && totalChanges === 0 && (status?.ahead || 0) > 0 && (
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    icon={ArrowUp}
+                    loading={busyAction === "git push"}
+                    disabled={Boolean(busyAction)}
+                    onClick={() =>
+                      runAction("git push", () => gitService.push(projectId), {
+                        successText: "Pushed commits to GitHub",
+                      }).then(() => loadBranches())
+                    }
+                    className="w-full"
+                  >
+                    Push {status.ahead} Commit(s) to origin
+                  </Button>
+                )}
               </div>
 
               {/* Changes Tree */}
@@ -1273,6 +1546,7 @@ export default function GitWorkspace({
                 onOpenInEditor={onOpenFile}
                 canLocalWrite={perms.canLocalWrite}
                 disabledReason={perms.disabledReason("local")}
+                pendingActions={pendingStageKeys}
               />
             </div>
 
@@ -1347,10 +1621,7 @@ export default function GitWorkspace({
                         try {
                           await runAction(
                             "git abort",
-                            () =>
-                              status?.operationState === "REBASING"
-                                ? gitService.rebaseAbort(projectId)
-                                : gitService.mergeAbort(projectId),
+                            () => gitService.abortOperation(projectId),
                             {
                               syncWorkspace: true,
                               reason: "git_abort",
@@ -1363,21 +1634,33 @@ export default function GitWorkspace({
                         }
                       }}
                       onContinue={async () => {
+                        const prevOpState = status?.operationState;
                         setResolvingConflict(true);
                         try {
-                          await runAction(
+                          const res = await runAction(
                             "git continue",
-                            () =>
-                              status?.operationState === "REBASING"
-                                ? gitService.rebaseContinue(projectId)
-                                : gitService.mergeContinue(projectId),
+                            () => gitService.continueOperation(projectId),
                             {
                               syncWorkspace: true,
                               reason: "git_continue",
-                              successText: "Merge / Rebase completed successfully",
                             },
                           );
-                          setConflictsDetail([]);
+                          if (res?.data?.conflicted) {
+                            await loadConflicts();
+                            showNotice(
+                              "error",
+                              `Next commit has ${res.data.conflicts?.length || 1} conflict(s). Resolve to continue.`,
+                            );
+                          } else {
+                            setConflictsDetail([]);
+                            const doneText =
+                              prevOpState === "CHERRY_PICKING"
+                                ? "Cherry-pick completed successfully"
+                                : prevOpState === "REVERTING"
+                                  ? "Revert completed successfully"
+                                  : "Merge / Rebase completed successfully";
+                            showNotice("success", doneText);
+                          }
                         } finally {
                           setResolvingConflict(false);
                         }
@@ -2149,59 +2432,12 @@ export default function GitWorkspace({
 
       {/* Collapsible Git Output Console */}
       {showConsole && (
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-          <div className="flex items-center justify-between px-3.5 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)]/60 text-xs">
-            <span className="font-mono font-semibold text-[var(--color-text)] flex items-center gap-1.5">
-              <Terminal size={13} className="text-[var(--color-primary)]" />
-              Git Output Console (Read-only diagnostic CLI + action log)
-            </span>
-            <button
-              type="button"
-              onClick={() => setLogs([])}
-              className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
-            >
-              Clear
-            </button>
-          </div>
-          <form
-            onSubmit={handleRunConsoleCommand}
-            className="flex items-center gap-2 px-3.5 py-2 border-b border-[var(--color-border)] bg-[var(--color-bg)]"
-          >
-            <select
-              value={cmdName}
-              onChange={(e) => setCmdName(e.target.value)}
-              className="h-7 px-2 rounded bg-[var(--color-surface-secondary)] border border-[var(--color-border)] font-mono text-xs text-[var(--color-text)]"
-            >
-              <option value="status">git status</option>
-              <option value="log">git log</option>
-              <option value="diff">git diff</option>
-              <option value="branch">git branch</option>
-            </select>
-            <input
-              type="text"
-              value={cmdArgs}
-              onChange={(e) => setCmdArgs(e.target.value)}
-              placeholder="Optional safe flags e.g. --stat or -n 5"
-              className="flex-1 h-7 px-2.5 rounded bg-[var(--color-surface-secondary)] border border-[var(--color-border)] font-mono text-xs text-[var(--color-text)] outline-none"
-            />
-            <Button type="submit" size="sm" variant="secondary">
-              Run
-            </Button>
-          </form>
-          <div className="p-3 max-h-44 overflow-y-auto bg-[var(--color-bg)] font-mono text-[11px] text-[var(--color-text-secondary)] space-y-1 custom-scrollbar">
-            {logs.length === 0 ? (
-              <div className="text-[var(--color-text-muted)]">
-                No Git console output recorded in this session yet.
-              </div>
-            ) : (
-              logs.map((entry, idx) => (
-                <pre key={idx} className="m-0 whitespace-pre-wrap break-all">
-                  {entry}
-                </pre>
-              ))
-            )}
-          </div>
-        </div>
+        <GitOutputConsole
+          logs={logs}
+          onClearLogs={() => setLogs([])}
+          onRunCommand={handleRunConsoleCommand}
+          running={runningConsole}
+        />
       )}
 
       {/* Modals & Confirmation Dialogs */}
@@ -2253,7 +2489,7 @@ export default function GitWorkspace({
         message={
           pendingDiscard?.all
             ? "All unstaged edits will be reverted and untracked files removed. This cannot be undone."
-            : pendingDiscard?.isUntracked
+            : pendingDiscard?.isUntracked || pendingDiscard?.status === "U"
               ? "This untracked file will be permanently deleted from the workspace."
               : "Unstaged changes to this file will be overwritten with HEAD."
         }
@@ -2271,6 +2507,25 @@ export default function GitWorkspace({
         confirmText="Undo Commit Anyway"
         variant="warning"
         loading={busyAction.startsWith("git reset")}
+      />
+
+      <ConfirmDialog
+        isOpen={confirmForcePush}
+        onClose={() => setConfirmForcePush(false)}
+        onConfirm={async () => {
+          setConfirmForcePush(false);
+          await runAction(
+            "git push --force-with-lease",
+            () => gitService.push(projectId, { forceWithLease: true }),
+            { successText: "Force-pushed branch with lease safely" },
+          );
+          await loadBranches();
+        }}
+        title={`Force Push Branch "${status?.branch || branchesData.current || ""}"?`}
+        message="This will rewrite remote branch history using --force-with-lease (refusing if others pushed newer commits). Proceed?"
+        confirmText="Confirm Force Push"
+        variant="danger"
+        loading={busyAction.startsWith("git push")}
       />
 
       <ConfirmDialog

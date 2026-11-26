@@ -30,6 +30,44 @@ async function waitForHttp(url, timeoutMs = 45000) {
   throw new Error(`Timed out waiting for ${url}`);
 }
 
+async function markAllToursSeen(page) {
+  await page.evaluate(() => {
+    const seenAll = JSON.stringify({
+      portfolio: true,
+      explorer: true,
+      overview: true,
+      unit: true,
+      integration: true,
+      system: true,
+      trustworthiness: true,
+      architecture: true,
+      "logic-analysis": true,
+      "version-control": true,
+      jobs: true,
+      settings: true,
+    });
+    const keys = new Set(["covai_tour_seen_v1_anon"]);
+    try {
+      const token = localStorage.getItem("token");
+      if (token && token.includes(".")) {
+        const payload = JSON.parse(atob(token.split(".")[1]));
+        const uid = payload?.userId || payload?.id || payload?.sub;
+        if (uid) keys.add(`covai_tour_seen_v1_${uid}`);
+      }
+      const userRaw = localStorage.getItem("user");
+      if (userRaw) {
+        const u = JSON.parse(userRaw);
+        if (u?.id) keys.add(`covai_tour_seen_v1_${u.id}`);
+      }
+    } catch {
+      // ignore token parse fallback
+    }
+    for (const k of keys) {
+      localStorage.setItem(k, seenAll);
+    }
+  });
+}
+
 async function loginAsGithubUser(page) {
   await page.route("https://github.com/login/oauth/authorize*", async (route) => {
     const reqUrl = new URL(route.request().url());
@@ -45,6 +83,7 @@ async function loginAsGithubUser(page) {
   await page.goto("/login");
   await page.locator("#auth-github-btn").click();
   await expect(page).toHaveURL(/\/projects$/);
+  await markAllToursSeen(page);
 }
 
 async function loginAsEmailUser(page) {
@@ -55,6 +94,7 @@ async function loginAsEmailUser(page) {
   await page.locator("#auth-password").fill("ValidPass123!");
   await page.locator("#auth-submit-btn").click();
   await expect(page).toHaveURL(/\/projects$/);
+  await markAllToursSeen(page);
 }
 
 async function writeWorkspaceFileFromBrowser(page, projectId, filePath, content) {
@@ -84,10 +124,24 @@ async function writeWorkspaceFileFromBrowser(page, projectId, filePath, content)
   expect(res.ok).toBe(true);
 }
 
+async function dismissSpotlightIfOpen(page) {
+  const skipBtn = page.getByRole("button", { name: "Skip", exact: true });
+  if (await skipBtn.isVisible({ timeout: 1200 }).catch(() => false)) {
+    await skipBtn.click();
+    await skipBtn.waitFor({ state: "hidden", timeout: 3000 }).catch(() => {});
+  }
+}
+
 async function expectExplorerModified(page, fileName) {
+  await dismissSpotlightIfOpen(page);
   await page.locator("#activity-explorer").click();
+  await dismissSpotlightIfOpen(page);
   const modifiedBadge = page.getByTitle(`${fileName} (Modified)`);
-  if (!(await modifiedBadge.isVisible().catch(() => false))) {
+  const fileEntry = page.getByText(fileName, { exact: true }).first();
+  const alreadyVisible = await fileEntry
+    .waitFor({ state: "visible", timeout: 4000 })
+    .then(() => true, () => false);
+  if (!alreadyVisible) {
     const srcFolder = page.getByText("src", { exact: true }).first();
     if (await srcFolder.isVisible().catch(() => false)) {
       await srcFolder.click();
@@ -95,6 +149,8 @@ async function expectExplorerModified(page, fileName) {
   }
   await expect(modifiedBadge).toBeVisible();
   await page.locator("#activity-version-control").click();
+  await dismissSpotlightIfOpen(page);
+  await page.getByTestId("vcs-mode-badge").waitFor({ state: "visible" });
 }
 
 test.beforeAll(async () => {
@@ -280,6 +336,7 @@ test("2. VS Code Git & GitHub Workflow E2E (Explorer badges, DiffEditor, Stage/C
   await page.goto(
     `/main-editor?projectId=${seeded.gitProject.id}&snapshotId=${seeded.gitProject.snapshotId}&tab=version-control`,
   );
+  await dismissSpotlightIfOpen(page);
   await expect(page.getByTestId("vcs-mode-badge")).toHaveText("GIT & GITHUB");
 
   // 1. Modify 2 files -> verify live ActivityBar badge (`2`) & Explorer `M` decoration
@@ -400,6 +457,7 @@ test("3. Mini-GitHub Snapshot & Checkpoints Workflow E2E (Diff, Partial Capture,
   await page.goto(
     `/main-editor?projectId=${seeded.snapshotProject.id}&snapshotId=${seeded.snapshotProject.snapshotId}&tab=version-control`,
   );
+  await dismissSpotlightIfOpen(page);
   await expect(page.getByTestId("vcs-mode-badge")).toHaveText("SNAPSHOT VCS");
 
   // 1. Modify 2 files -> live ActivityBar badge (`2`) & Explorer `M` decoration

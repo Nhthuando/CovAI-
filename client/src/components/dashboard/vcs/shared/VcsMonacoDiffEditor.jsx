@@ -42,6 +42,59 @@ function defineDiffThemes(monaco) {
   });
 }
 
+function MountedDiffCanvas({
+  language,
+  original,
+  modified,
+  theme,
+  renderSideBySide,
+  diffEditorRef,
+}) {
+  useEffect(() => {
+    return () => {
+      const editor = diffEditorRef.current;
+      diffEditorRef.current = null;
+      if (!editor) return;
+      try {
+        const model = editor.getModel?.();
+        editor.setModel?.(null);
+        model?.original?.dispose?.();
+        model?.modified?.dispose?.();
+      } catch (err) {
+        console.warn("[VcsMonacoDiffEditor] Model cleanup notice:", err?.message || err);
+      }
+    };
+  }, [diffEditorRef]);
+
+  return (
+    <DiffEditor
+      height="100%"
+      language={language || "plaintext"}
+      original={original ?? ""}
+      modified={modified ?? ""}
+      theme={theme}
+      keepCurrentOriginalModel
+      keepCurrentModifiedModel
+      beforeMount={defineDiffThemes}
+      onMount={(editor) => {
+        diffEditorRef.current = editor;
+      }}
+      options={{
+        readOnly: true,
+        renderSideBySide,
+        automaticLayout: true,
+        minimap: { enabled: false },
+        scrollBeyondLastLine: false,
+        fontSize: 12.5,
+        lineHeight: 20,
+        fontFamily: "var(--font-mono), monospace",
+        renderOverviewRuler: true,
+        ignoreTrimWhitespace: false,
+      }}
+    />
+  );
+}
+
 export default function VcsMonacoDiffEditor({
   diffData = null,
   loading = false,
@@ -62,22 +115,18 @@ export default function VcsMonacoDiffEditor({
   const [renderSideBySide, setRenderSideBySide] = useState(true);
   const [hunkBusyIndex, setHunkBusyIndex] = useState(null);
   const diffEditorRef = useRef(null);
-
-  useEffect(() => {
-    return () => {
-      const editor = diffEditorRef.current;
-      diffEditorRef.current = null;
-      if (!editor) return;
-      try {
-        const model = editor.getModel?.();
-        editor.setModel?.(null);
-        model?.original?.dispose?.();
-        model?.modified?.dispose?.();
-      } catch (err) {
-        console.warn("[VcsMonacoDiffEditor] Model cleanup notice:", err?.message || err);
-      }
-    };
-  }, []);
+  const canRenderDiff = Boolean(
+    !error && diffData && !diffData.isBinary && !diffData.isTooLarge,
+  );
+  const [hasMountedDiff, setHasMountedDiff] = useState(false);
+  const [lastLanguage, setLastLanguage] = useState("plaintext");
+  if (canRenderDiff && !hasMountedDiff) {
+    setHasMountedDiff(true);
+  }
+  const nextLanguage = canRenderDiff ? diffData.language || "plaintext" : lastLanguage;
+  if (canRenderDiff && nextLanguage !== lastLanguage) {
+    setLastLanguage(nextLanguage);
+  }
 
   const navigateDiff = (direction) => {
     const editor = diffEditorRef.current;
@@ -146,8 +195,8 @@ export default function VcsMonacoDiffEditor({
           )}
           {diffData && !diffData.isBinary && !diffData.isTooLarge && (
             <span className="inline-flex items-center gap-1.5 text-[11px] font-mono tabular-nums">
-              <span className="text-emerald-400">+{insertions}</span>
-              <span className="text-rose-400">-{deletions}</span>
+              <span className="text-[var(--color-success)]">+{insertions}</span>
+              <span className="text-[var(--color-danger)]">-{deletions}</span>
             </span>
           )}
         </div>
@@ -276,15 +325,34 @@ export default function VcsMonacoDiffEditor({
         </div>
       )}
 
-      {/* Body */}
+      {/* Body — keep DiffEditor mounted after first diff open to avoid aborting Monaco workers mid-boot */}
       <div className="flex-1 min-h-[320px] relative bg-[var(--color-bg)]">
+        {hasMountedDiff && (
+          <div className={canRenderDiff ? "h-full w-full" : "hidden"}>
+            <MountedDiffCanvas
+              language={lastLanguage}
+              original={canRenderDiff ? (diffData.originalContent ?? "") : ""}
+              modified={canRenderDiff ? (diffData.modifiedContent ?? "") : ""}
+              theme={resolvedTheme === "light" ? "covai-vcs-light" : "covai-vcs-dark"}
+              renderSideBySide={renderSideBySide}
+              diffEditorRef={diffEditorRef}
+            />
+          </div>
+        )}
+
         {loading ? (
-          <div className="p-4 h-full">
+          <div
+            className={`${
+              !error && diffData && !diffData.isBinary && !diffData.isTooLarge
+                ? "absolute inset-0 z-10 bg-[var(--color-bg)]/85 backdrop-blur-[1px]"
+                : "h-full"
+            } p-4`}
+          >
             <EditorCodeSkeleton lines={14} />
           </div>
         ) : error ? (
           <div className="flex flex-col items-center justify-center h-full p-8 text-center gap-2">
-            <AlertCircle size={24} className="text-rose-400" />
+            <AlertCircle size={24} className="text-[var(--color-danger)]" />
             <p className="text-sm font-medium text-[var(--color-text)]">
               Unable to load diff preview
             </p>
@@ -300,7 +368,7 @@ export default function VcsMonacoDiffEditor({
           </div>
         ) : diffData.isBinary ? (
           <div className="flex flex-col items-center justify-center h-full p-8 text-center">
-            <FileWarning size={26} className="text-amber-400 mb-2.5" />
+            <FileWarning size={26} className="text-[var(--color-warning)] mb-2.5" />
             <p className="text-sm font-medium text-[var(--color-text)]">
               Binary file cannot be displayed in diff viewer
             </p>
@@ -310,7 +378,7 @@ export default function VcsMonacoDiffEditor({
           </div>
         ) : diffData.isTooLarge ? (
           <div className="flex flex-col items-center justify-center h-full p-8 text-center">
-            <FileWarning size={26} className="text-amber-400 mb-2.5" />
+            <FileWarning size={26} className="text-[var(--color-warning)] mb-2.5" />
             <p className="text-sm font-medium text-[var(--color-text)]">
               File exceeds 1 MiB inline diff limit
             </p>
@@ -318,33 +386,7 @@ export default function VcsMonacoDiffEditor({
               You can still stage, commit, or restore this file safely.
             </p>
           </div>
-        ) : (
-          <DiffEditor
-            height="100%"
-            language={diffData.language || "plaintext"}
-            original={diffData.originalContent ?? ""}
-            modified={diffData.modifiedContent ?? ""}
-            theme={resolvedTheme === "light" ? "covai-vcs-light" : "covai-vcs-dark"}
-            keepCurrentOriginalModel
-            keepCurrentModifiedModel
-            beforeMount={defineDiffThemes}
-            onMount={(editor) => {
-              diffEditorRef.current = editor;
-            }}
-            options={{
-              readOnly: true,
-              renderSideBySide,
-              automaticLayout: true,
-              minimap: { enabled: false },
-              scrollBeyondLastLine: false,
-              fontSize: 12.5,
-              lineHeight: 20,
-              fontFamily: "var(--font-mono), monospace",
-              renderOverviewRuler: true,
-              ignoreTrimWhitespace: false,
-            }}
-          />
-        )}
+        ) : null}
       </div>
     </div>
   );

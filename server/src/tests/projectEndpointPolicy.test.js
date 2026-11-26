@@ -24,7 +24,9 @@ it.each([
     ["coverage", "POST", "/s1/system/generate-tests", {}, "ai.use"],
     ["coverage", "GET", "/s1/system/assessments/a1/events", {}, "project.read"],
     ["coverage", "GET", "/project/p1/comparison", {}, "project.read"],
-    ["git", "POST", "/command", { projectId: "p1" }, "integrations.write"],
+    ["git", "POST", "/command", { projectId: "p1" }, "project.read"],
+    ["git", "POST", "/operation/abort", { projectId: "p1" }, "integrations.write"],
+    ["git", "POST", "/operation/continue", { projectId: "p1" }, "integrations.write"],
     ["git", "GET", "/status", { projectId: "p1" }, "project.read"],
     ["git", "POST", "/stage", { projectId: "p1" }, "vcs.local"],
     ["git", "POST", "/stage-hunk", { projectId: "p1" }, "vcs.local"],
@@ -115,4 +117,34 @@ it("rejects a denied role before the controller and dependent work", async () =>
     await middleware({ method: "POST", path: "/p1/run-analysis", query: {}, body: {}, user: { id: "viewer" } }, res, next);
     expect(res.status).toHaveBeenCalledWith(403);
     expect(next).not.toHaveBeenCalled();
+});
+it("skips EDITOR_DRAFT_CONFLICT checks on read-only git command and index-only stage/unstage routes", async () => {
+    const origFlag = process.env.COLLABORATION_EDITOR_ENABLED;
+    process.env.COLLABORATION_EDITOR_ENABLED = "true";
+    try {
+        const fakeDb = {
+            editorDocument: {
+                findMany: jest.fn(async () => [{ revision: 2, checkpointRevision: 1 }]),
+            },
+        };
+        const fakeAccess = jest.fn(async () => ({ project: { id: "p1" } }));
+
+        for (const [family, path] of [
+            ["git", "/command"],
+            ["git", "/stage"],
+            ["git", "/unstage"],
+            ["snapshot-vcs", "/p1/stage"],
+            ["snapshot-vcs", "/p1/unstage"],
+        ]) {
+            const next = jest.fn();
+            const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+            const mw = enforceProjectEndpointPolicy(family, { db: fakeDb, resolveProjectAccess: fakeAccess });
+            await mw({ method: "POST", path, query: {}, body: { projectId: "p1" }, user: { id: "owner" } }, res, next);
+            expect(next).toHaveBeenCalledTimes(1);
+            expect(res.status).not.toHaveBeenCalledWith(409);
+        }
+    } finally {
+        if (origFlag === undefined) delete process.env.COLLABORATION_EDITOR_ENABLED;
+        else process.env.COLLABORATION_EDITOR_ENABLED = origFlag;
+    }
 });

@@ -138,16 +138,43 @@ export function readCasBlob(projectId, sha256, baseDir = process.cwd()) {
   return gunzipSync(compressed);
 }
 
+const workingTreeStatCache = new Map();
+const MAX_STAT_CACHE_ENTRIES = 50_000;
+const RACY_STAT_GUARD_MS = 1000;
+
+/**
+ * Clears cached `(mtimeMs, size) -> { sha256, isBinary }` file metadata for a workspace
+ * root (or all roots when omitted).
+ */
+export function clearWorkingTreeStatCache(rootDirPrefix = null) {
+  if (!rootDirPrefix) {
+    workingTreeStatCache.clear();
+    return;
+  }
+  const resolvedPrefix = path.resolve(rootDirPrefix);
+  const withSep = resolvedPrefix.endsWith(path.sep)
+    ? resolvedPrefix
+    : `${resolvedPrefix}${path.sep}`;
+  for (const key of workingTreeStatCache.keys()) {
+    if (key === resolvedPrefix || key.startsWith(withSep)) {
+      workingTreeStatCache.delete(key);
+    }
+  }
+}
+
 /**
  * Recursively scans a workspace working tree while strictly skipping symlinks,
  * CovAI test-runner artifacts, `.git/`, `node_modules/`, and secret files.
+ * Uses an in-memory `(mtimeMs, size)` cache guarded against same-second writes (`> 1s`).
  */
 export function scanWorkingTree(
   rootDir,
-  { maxFiles = SNAPSHOT_VCS_LIMITS.MAX_FILES_PER_CHECKPOINT } = {},
+  { maxFiles = SNAPSHOT_VCS_LIMITS.MAX_FILES_PER_CHECKPOINT, useCache = true } = {},
 ) {
   const manifest = new Map();
   if (!rootDir || !fs.existsSync(rootDir)) return manifest;
+
+  const now = Date.now();
 
   const visit = (dirPath, relPrefix = "") => {
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
@@ -162,14 +189,46 @@ export function scanWorkingTree(
       if (entry.isDirectory()) {
         visit(fullPath, relPath);
       } else if (entry.isFile()) {
-        const buf = fs.readFileSync(fullPath);
-        const sha256 = createHash("sha256").update(buf).digest("hex");
-        manifest.set(relPath, {
-          sha256,
-          byteSize: buf.length,
-          isBinary: detectBinaryBuffer(buf),
-          fullPath,
-        });
+        const stat = fs.statSync(fullPath);
+        const cacheKey = path.resolve(fullPath);
+        const isStatSafe = now - stat.mtimeMs > RACY_STAT_GUARD_MS;
+        const cached =
+          useCache && isStatSafe ? workingTreeStatCache.get(cacheKey) : null;
+
+        if (
+          cached &&
+          cached.mtimeMs === stat.mtimeMs &&
+          cached.size === stat.size
+        ) {
+          manifest.set(relPath, {
+            sha256: cached.sha256,
+            byteSize: stat.size,
+            isBinary: cached.isBinary,
+            fullPath,
+          });
+        } else {
+          const buf = fs.readFileSync(fullPath);
+          const sha256 = createHash("sha256").update(buf).digest("hex");
+          const isBinary = detectBinaryBuffer(buf);
+          if (useCache && isStatSafe) {
+            if (workingTreeStatCache.size >= MAX_STAT_CACHE_ENTRIES) {
+              const oldestKey = workingTreeStatCache.keys().next().value;
+              if (oldestKey !== undefined) workingTreeStatCache.delete(oldestKey);
+            }
+            workingTreeStatCache.set(cacheKey, {
+              mtimeMs: stat.mtimeMs,
+              size: stat.size,
+              sha256,
+              isBinary,
+            });
+          }
+          manifest.set(relPath, {
+            sha256,
+            byteSize: buf.length,
+            isBinary,
+            fullPath,
+          });
+        }
         if (manifest.size > maxFiles) {
           throw new ServiceError(
             `Workspace exceeds ${maxFiles} tracked snapshot files limit`,
@@ -325,6 +384,7 @@ export function syncWorkspaceFromManifest({
     }
   }
 
+  clearWorkingTreeStatCache(rootDir);
   return { changedFiles, writtenCount, deletedCount };
 }
 

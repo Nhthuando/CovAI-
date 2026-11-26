@@ -75,7 +75,8 @@ jobs:
             src/tests/gitFullWorkflow.integration.test.js \
             src/tests/snapshotCas.service.test.js \
             src/tests/snapshotWorkspace.test.js \
-            src/tests/snapshotVcs.integration.test.js
+            src/tests/snapshotVcs.integration.test.js \
+            src/tests/versionControlHardening.test.js
 
   client-verify:
     name: Client Lint, Tests & Production Build

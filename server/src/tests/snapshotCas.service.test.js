@@ -152,6 +152,26 @@ describe("Snapshot CAS Storage, Diff, 3-Way Merge & GC Unit Tests", () => {
     expect(hash1).toBe(hash2);
   });
 
+  it("tracks allowed env templates and source files with secret/credential names while excluding actual secret files", async () => {
+    const ws = path.join(tempRoot, "env-filter-ws");
+    await fsp.mkdir(path.join(ws, "src"), { recursive: true });
+    await fsp.writeFile(path.join(ws, ".env.example"), "PORT=3000\n", "utf8");
+    await fsp.writeFile(path.join(ws, ".env.sample"), "HOST=localhost\n", "utf8");
+    await fsp.writeFile(path.join(ws, ".env.template"), "API_URL=\n", "utf8");
+    await fsp.writeFile(path.join(ws, ".env"), "SECRET=real\n", "utf8");
+    await fsp.writeFile(path.join(ws, ".env.local"), "SECRET=local\n", "utf8");
+    await fsp.writeFile(path.join(ws, "src", "secretHelper.js"), "export const ok = 1;\n", "utf8");
+    await fsp.writeFile(path.join(ws, "service-account.json"), '{"private_key":"x"}', "utf8");
+
+    const scanned = scanWorkingTree(ws);
+    expect([...scanned.keys()].sort()).toEqual([
+      ".env.example",
+      ".env.sample",
+      ".env.template",
+      "src/secretHelper.js",
+    ]);
+  });
+
   it("syncs workspace from manifest while strictly preserving node_modules, coverage, and .env", async () => {
     const baseDir = path.join(tempRoot, "cas-sync");
     const ws = path.join(tempRoot, "live-ws");
