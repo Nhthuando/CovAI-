@@ -37,7 +37,6 @@ import MissingTestFilesModal from "./MissingTestFilesModal";
 import GlobalAiTokenPill from "./GlobalAiTokenPill";
 import PanelResizer from "./PanelResizer";
 import ConfirmDialog from "../common/ConfirmDialog";
-import ProjectExportDialog from "./ProjectExportDialog";
 import PlatformGuidanceModal from "./guidance/PlatformGuidanceModal";
 import {
   PanelLeftClose,
@@ -54,7 +53,6 @@ import {
   X,
   MoreHorizontal,
   LogOut,
-  Download,
   FlaskConical,
   Network,
   Layers,
@@ -138,7 +136,6 @@ function LayoutInner() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
-  const [showExport, setShowExport] = useState(false);
   const [showCFG, setShowCFG] = useState(false);
   const [showGuidance, setShowGuidance] = useState(false);
   const [guidanceInitialStepId, setGuidanceInitialStepId] = useState(null);
@@ -1689,18 +1686,6 @@ function LayoutInner() {
             </button>
           )}
 
-          {project?.id && (
-            <button
-              type="button"
-              onClick={() => setShowExport(true)}
-              aria-label="Export project and analysis"
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] bg-[var(--ps-surface-2)] hover:border-[var(--ps-line-strong)] border border-[var(--ps-line)] transition-colors duration-150 cursor-pointer focus-visible:outline-2 focus-visible:outline-[var(--ps-cobalt)]"
-            >
-              <Download size={13} />
-              {!isMobile && <span>Export</span>}
-            </button>
-          )}
-
           <button
             type="button"
             id="covai-guide-toggle"
@@ -2338,18 +2323,6 @@ function LayoutInner() {
         variant="danger"
         icon={LogOut}
       />
-      {showExport && project?.id && (
-        <ProjectExportDialog
-          key={project.id}
-          project={project}
-          initialSnapshotId={
-            project.snapshots?.[0]?.id ||
-            project.latestSnapshotId ||
-            localStorage.getItem(`latestSnapshot_${project.id}`)
-          }
-          onClose={() => setShowExport(false)}
-        />
-      )}
       <PlatformGuidanceModal
         isOpen={showGuidance}
         onClose={() => setShowGuidance(false)}

@@ -1,26 +1,44 @@
 import { useState } from "react";
 import {
   Sparkles,
-  Download,
   FileText,
   Code2,
   GitBranch,
   Clock,
   RefreshCw,
   X,
+  ChevronDown,
+  Globe,
+  FileCode2,
+  Printer,
 } from "lucide-react";
 import { useToast } from "../../ToastContext.jsx";
 import { PillarBadge } from "../primitives/PillarBadge.jsx";
 import { StatusPill } from "../primitives/StatusPill.jsx";
-import { ExportReportModal } from "../modals/ExportReportModal.jsx";
 import { Button } from "../../../common/Button.jsx";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuCheckboxItem,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
+} from "../../../ui/dropdown-menu.jsx";
 import { fmtRelativeTime } from "../../../../services/unifiedDashboard/format.js";
 import {
+  DEFAULT_EXPORT_SECTIONS,
   buildDashboardAiAnalysisPrompt,
   exportUnifiedDashboardPdf,
   exportUnifiedDashboardReport,
 } from "../../../../services/unifiedDashboard/unifiedDashboard.export.js";
 import { activateProjectSnapshotApi } from "../../../../services/project.service.js";
+
+const REPORT_LANGUAGE_LABELS = {
+  bilingual: "EN/VI",
+  en: "EN",
+  vi: "VI",
+};
 
 export function GlobalCommandHeader({
   vm,
@@ -36,7 +54,7 @@ export function GlobalCommandHeader({
   className = "",
 }) {
   const { addToast } = useToast?.() || {};
-  const [showExportModal, setShowExportModal] = useState(false);
+  const [reportLanguage, setReportLanguage] = useState("bilingual");
 
   const {
     isRunning,
@@ -95,11 +113,12 @@ export function GlobalCommandHeader({
   const handleQuickExportPdf = () => {
     if (!vm) return;
     try {
-      exportUnifiedDashboardPdf(vm);
+      exportUnifiedDashboardPdf(vm, DEFAULT_EXPORT_SECTIONS, {
+        language: reportLanguage,
+      });
       addToast?.({
         title: "PDF Print Ready",
-        message:
-          "Prepared formatted A4 quality report for printing or saving as PDF.",
+        message: `Prepared formatted A4 quality report (${REPORT_LANGUAGE_LABELS[reportLanguage] || "EN/VI"}) for printing or saving as PDF.`,
         type: "success",
       });
     } catch (err) {
@@ -111,19 +130,30 @@ export function GlobalCommandHeader({
     }
   };
 
-  const handleQuickExportJson = () => {
+  const handleQuickExportFormat = (format) => {
     if (!vm) return;
+    const formatNames = {
+      html: "HTML",
+      markdown: "Markdown",
+      json: "JSON",
+    };
+    const label = formatNames[format] || format.toUpperCase();
     try {
-      const filename = exportUnifiedDashboardReport(vm, "json");
+      const filename = exportUnifiedDashboardReport(
+        vm,
+        format,
+        DEFAULT_EXPORT_SECTIONS,
+        { language: reportLanguage },
+      );
       addToast?.({
-        title: "JSON Exported",
-        message: `Downloaded ${filename}`,
+        title: `${label} Exported`,
+        message: `Downloaded ${filename} (${REPORT_LANGUAGE_LABELS[reportLanguage] || "EN/VI"})`,
         type: "success",
       });
     } catch (err) {
       addToast?.({
-        title: "JSON Export Failed",
-        message: err.message || "Could not export JSON report.",
+        title: `${label} Export Failed`,
+        message: err.message || `Could not export ${label} report.`,
         type: "error",
       });
     }
@@ -257,38 +287,97 @@ export function GlobalCommandHeader({
             disabled={!vm}
             onClick={handleQuickExportPdf}
             className="ud-no-print"
-            title="Export formatted A4 PDF report"
+            title={`Export formatted A4 PDF report (${REPORT_LANGUAGE_LABELS[reportLanguage] || "EN/VI"})`}
           >
             Export PDF
           </Button>
 
-          {/* Action 3: Direct Export JSON */}
-          <Button
-            id="ud-header-export-json"
-            variant="outline"
-            size="sm"
-            icon={Code2}
-            disabled={!vm}
-            onClick={handleQuickExportJson}
-            className="ud-no-print"
-            title="Download structured JSON quality report"
-          >
-            Export JSON
-          </Button>
+          {/* Action 3: Quick Export Format & Language Menu */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                id="ud-header-quick-export"
+                variant="outline"
+                size="sm"
+                icon={ChevronDown}
+                iconPosition="right"
+                disabled={!vm}
+                className="ud-no-print"
+                title="Download Overview report in HTML, Markdown, JSON, or PDF and choose report language"
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <span>Quick Export</span>
+                  <span className="font-mono text-[10px] px-1 py-0.5 rounded-[var(--radius-sm)] bg-[var(--ud-surface-2)] border border-[var(--ud-border)] text-[var(--ud-text-muted)]">
+                    {REPORT_LANGUAGE_LABELS[reportLanguage] || "EN/VI"}
+                  </span>
+                </span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="w-64 bg-[var(--ud-surface)] border-[var(--ud-border)] text-[var(--ud-text)]"
+            >
+              <DropdownMenuLabel className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-[var(--ud-text-muted)]">
+                <Globe className="size-3.5" />
+                <span>Report Language</span>
+              </DropdownMenuLabel>
+              <DropdownMenuCheckboxItem
+                id="ud-header-lang-bilingual"
+                checked={reportLanguage === "bilingual"}
+                onCheckedChange={() => setReportLanguage("bilingual")}
+              >
+                <span>Bilingual (EN / VI)</span>
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem
+                id="ud-header-lang-en"
+                checked={reportLanguage === "en"}
+                onCheckedChange={() => setReportLanguage("en")}
+              >
+                <span>English (EN)</span>
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem
+                id="ud-header-lang-vi"
+                checked={reportLanguage === "vi"}
+                onCheckedChange={() => setReportLanguage("vi")}
+              >
+                <span>Tiếng Việt (VI)</span>
+              </DropdownMenuCheckboxItem>
 
-          {/* Action 4: Customize Export Modal */}
-          <Button
-            id="ud-header-export"
-            variant="ghost"
-            size="sm"
-            icon={Download}
-            disabled={!vm}
-            onClick={() => setShowExportModal(true)}
-            className="ud-no-print"
-            title="Customize sections or export Markdown"
-          >
-            Options
-          </Button>
+              <DropdownMenuSeparator className="bg-[var(--ud-border)]" />
+
+              <DropdownMenuLabel className="text-[11px] uppercase tracking-wider text-[var(--ud-text-muted)]">
+                Export Format
+              </DropdownMenuLabel>
+              <DropdownMenuItem
+                id="ud-header-export-html"
+                onSelect={() => handleQuickExportFormat("html")}
+              >
+                <FileCode2 className="text-[var(--ud-unit)]" />
+                <span>Download HTML (.html)</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                id="ud-header-export-md"
+                onSelect={() => handleQuickExportFormat("markdown")}
+              >
+                <FileText className="text-[var(--ud-integration)]" />
+                <span>Download Markdown (.md)</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                id="ud-header-export-json"
+                onSelect={() => handleQuickExportFormat("json")}
+              >
+                <Code2 className="text-[var(--ud-system)]" />
+                <span>Download JSON (.json)</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                id="ud-header-export-pdf-menu"
+                onSelect={handleQuickExportPdf}
+              >
+                <Printer className="text-[var(--ud-text-muted)]" />
+                <span>Print / Save PDF (.pdf)</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -491,15 +580,6 @@ export function GlobalCommandHeader({
             </div>
           </div>
         </div>
-      )}
-
-      {/* Export Report Modal */}
-      {showExportModal && (
-        <ExportReportModal
-          isOpen={showExportModal}
-          onClose={() => setShowExportModal(false)}
-          vm={vm}
-        />
       )}
     </header>
   );

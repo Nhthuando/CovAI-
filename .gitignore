@@ -66,6 +66,8 @@ test-results/
 /client/.evidence-review/
 /client/evidence-preview.html
 /.agents/teamwork/
+/.agents/skills/build-report/
+/.agents/skills/visualize-data/
 
 # Office, Binary & Document Exports
 *.docx
