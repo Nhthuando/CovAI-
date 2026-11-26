@@ -100,6 +100,7 @@ function ActivityItem({ item, isActive, onClick, delay = 0 }) {
 export default function ActivityBar({ active, onSelect }) {
   return (
     <div
+      data-guide="activity-bar"
       className="h-full flex flex-col items-center justify-between py-2.5 select-none shrink-0 bg-[var(--ps-surface)] border-r border-[var(--ps-line)] font-sans"
       style={{ width: 54 }}
     >

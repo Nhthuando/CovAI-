@@ -1,58 +1,107 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  GUIDANCE_STEPS,
-  GUIDANCE_TRACKS,
-  resolveInitialGuideStep,
+  GUIDANCE_TOURS,
+  resolveTourKey,
 } from "../components/dashboard/guidance/platformGuidanceData.js";
+import {
+  hasSeenTour,
+  markTourSeen,
+  resetGuidanceTours,
+} from "../components/dashboard/guidance/guidanceStorage.js";
 
-test("GUIDANCE_STEPS covers all tracks, sequential numbering, and valid connection links", () => {
-  const trackIds = new Set(GUIDANCE_TRACKS.map((t) => t.id));
-  const stepIds = new Set(GUIDANCE_STEPS.map((s) => s.id));
+function createMemoryStorage() {
+  const map = new Map();
+  return {
+    get length() {
+      return map.size;
+    },
+    key(i) {
+      return Array.from(map.keys())[i] ?? null;
+    },
+    getItem(k) {
+      return map.has(k) ? map.get(k) : null;
+    },
+    setItem(k, v) {
+      map.set(k, String(v));
+    },
+    removeItem(k) {
+      map.delete(k);
+    },
+  };
+}
 
-  assert.equal(GUIDANCE_STEPS.length, 12);
-  assert.equal(stepIds.size, GUIDANCE_STEPS.length);
+test("GUIDANCE_TOURS defines valid selectors and detailed steps for all core tabs", () => {
+  const requiredTours = [
+    "portfolio",
+    "explorer",
+    "overview",
+    "unit",
+    "integration",
+    "system",
+    "trustworthiness",
+    "architecture",
+    "logic-analysis",
+    "version-control",
+    "jobs",
+    "settings",
+  ];
 
-  GUIDANCE_STEPS.forEach((step, idx) => {
-    assert.equal(step.number, idx + 1);
-    assert.ok(trackIds.has(step.track), `Unknown track ${step.track}`);
-    assert.ok(Array.isArray(step.stages) && step.stages.length >= 3);
-    assert.ok(Array.isArray(step.connections) && step.connections.length >= 2);
-    for (const conn of step.connections) {
-      if (conn.stepId) {
-        assert.ok(stepIds.has(conn.stepId), `Broken connection stepId: ${conn.stepId}`);
-      }
+  for (const key of requiredTours) {
+    const tour = GUIDANCE_TOURS[key];
+    assert.ok(tour, `Missing tour: ${key}`);
+    assert.ok(tour.label);
+    assert.ok(Array.isArray(tour.steps) && tour.steps.length >= 1);
+    for (const step of tour.steps) {
+      assert.ok(step.id);
+      assert.ok(step.selector);
+      assert.ok(step.title);
+      assert.ok(step.description);
     }
-  });
+  }
+
+  assert.ok(GUIDANCE_TOURS.unit.steps.length >= 5);
+  assert.ok(GUIDANCE_TOURS.integration.steps.length >= 5);
+  assert.ok(GUIDANCE_TOURS.system.steps.length >= 5);
+  assert.ok(GUIDANCE_TOURS.trustworthiness.steps.length >= 4);
 });
 
-test("resolveInitialGuideStep maps pages, test tiers, and chatbot evaluation views accurately", () => {
-  assert.equal(resolveInitialGuideStep({ page: "portfolio" }), "portfolio-import");
-  assert.equal(resolveInitialGuideStep({ activeActivity: "explorer" }), "explorer-editor");
-  assert.equal(resolveInitialGuideStep({ activeActivity: "overview" }), "unified-overview");
+test("resolveTourKey resolves pages, coverage types, and activity tabs accurately", () => {
+  assert.equal(resolveTourKey({ page: "portfolio" }), "portfolio");
+  assert.equal(resolveTourKey({ activeActivity: "explorer" }), "explorer");
+  assert.equal(resolveTourKey({ activeActivity: "overview" }), "overview");
   assert.equal(
-    resolveInitialGuideStep({ activeActivity: "coverage", coverageType: "unit" }),
-    "unit-setup-run",
+    resolveTourKey({ activeActivity: "coverage", coverageType: "unit" }),
+    "unit",
   );
   assert.equal(
-    resolveInitialGuideStep({ activeActivity: "coverage", coverageType: "integration" }),
-    "integration-scan-setup",
+    resolveTourKey({ activeActivity: "coverage", coverageType: "integration" }),
+    "integration",
   );
   assert.equal(
-    resolveInitialGuideStep({ activeActivity: "coverage", coverageType: "system" }),
-    "system-setup-matrix",
+    resolveTourKey({ activeActivity: "coverage", coverageType: "system" }),
+    "system",
   );
   assert.equal(
-    resolveInitialGuideStep({ activeActivity: "trustworthiness", evalView: "audit" }),
-    "chatbot-audit-connect",
+    resolveTourKey({ activeActivity: "trustworthiness" }),
+    "trustworthiness",
   );
+  assert.equal(resolveTourKey({ showCFG: true }), "logic-analysis");
   assert.equal(
-    resolveInitialGuideStep({ activeActivity: "trustworthiness", evalView: "connect" }),
-    "chatbot-audit-connect",
+    resolveTourKey({ activeActivity: "version-control" }),
+    "version-control",
   );
-  assert.equal(
-    resolveInitialGuideStep({ activeActivity: "trustworthiness", evalView: "run" }),
-    "chatbot-benchmark-run",
-  );
-  assert.equal(resolveInitialGuideStep({ showCFG: true }), "arch-cfg-git-rbac");
+});
+
+test("guidanceStorage tracks per-user per-tab tour completion and resets on login/logout", () => {
+  const storage = createMemoryStorage();
+  assert.equal(hasSeenTour("user_1", "unit", storage), false);
+
+  markTourSeen("user_1", "unit", storage);
+  assert.equal(hasSeenTour("user_1", "unit", storage), true);
+  assert.equal(hasSeenTour("user_1", "integration", storage), false);
+  assert.equal(hasSeenTour("user_2", "unit", storage), false);
+
+  resetGuidanceTours(storage);
+  assert.equal(hasSeenTour("user_1", "unit", storage), false);
 });

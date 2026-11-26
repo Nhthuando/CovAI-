@@ -992,6 +992,7 @@ export default function CFGCalculator({
 
   return (
     <motion.div
+      data-guide="cfg-calculator"
       variants={containerVariants}
       initial="hidden"
       animate="visible"

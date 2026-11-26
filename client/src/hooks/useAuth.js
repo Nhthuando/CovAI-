@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { queryClient } from "../lib/queryClient";
 import { API_BASE } from "../lib/authSession";
+import { resetGuidanceTours } from "../components/dashboard/guidance/guidanceStorage";
 
 function readUserFromStorage() {
   const token = localStorage.getItem("token");
@@ -36,6 +37,7 @@ export const useAuth = () => {
   const login = useCallback((userData, token) => {
     queryClient.cancelQueries();
     queryClient.clear();
+    resetGuidanceTours();
     localStorage.setItem("token", token);
     localStorage.setItem("user", JSON.stringify(userData));
     setUser({ ...userData, token });
@@ -55,6 +57,7 @@ export const useAuth = () => {
     }
     queryClient.cancelQueries();
     queryClient.clear();
+    resetGuidanceTours();
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     localStorage.removeItem("userName");

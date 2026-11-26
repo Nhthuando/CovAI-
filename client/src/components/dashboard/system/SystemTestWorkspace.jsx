@@ -14,7 +14,6 @@ import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
-  BookOpen,
 } from "lucide-react";
 import { useProjectAccess } from "../../../hooks/useProjectAccess";
 import { useChatTestContext } from "../../../hooks/useChatTestContext";
@@ -1136,7 +1135,10 @@ export default function SystemTestWorkspace({
             </h1>
 
             {/* Runner Switcher */}
-            <div className="inline-flex items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-0.5 text-[11px] font-mono">
+            <div
+              data-guide="sys-framework"
+              className="inline-flex items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-0.5 text-[11px] font-mono"
+            >
               {["playwright", "cypress"].map((fw) => (
                 <button
                   key={fw}
@@ -1157,6 +1159,7 @@ export default function SystemTestWorkspace({
           <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
+              data-guide="sys-setup"
               onClick={() => setSetupOpen(true)}
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors cursor-pointer"
               title="Inspect runtime server URL, start command and test setup"
@@ -1196,6 +1199,7 @@ export default function SystemTestWorkspace({
 
             <button
               type="button"
+              data-guide="sys-run"
               onClick={() => handleRunTests()}
               disabled={!projectAccess.can("tests.run") || runningTests}
               className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold transition-colors active:scale-[0.98] cursor-pointer disabled:opacity-50"
@@ -1211,6 +1215,7 @@ export default function SystemTestWorkspace({
 
             <button
               type="button"
+              data-guide="sys-history"
               onClick={() => setHistoryOpen(true)}
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors cursor-pointer"
               title="System test suite version history (v1 / v2) and restore"
@@ -1218,28 +1223,14 @@ export default function SystemTestWorkspace({
               <Clock size={13} />
               <span className="hidden md:inline">History</span>
             </button>
-
-            <button
-              type="button"
-              onClick={() =>
-                window.dispatchEvent(
-                  new CustomEvent("covai:open-guide", {
-                    detail: { stepId: "system-setup-matrix" },
-                  }),
-                )
-              }
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors cursor-pointer"
-              title="System / E2E Testing Guide (setup, generator, live stream & reports)"
-              aria-label="System Testing Guide"
-            >
-              <BookOpen size={13} className="text-[var(--color-primary)]" />
-              <span className="hidden lg:inline">Guide</span>
-            </button>
           </div>
         </div>
 
         {/* ── 2. UNIFIED TELEMETRY STRIP ── */}
-        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-bg)]/60">
+        <div
+          data-guide="sys-telemetry"
+          className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-bg)]/60"
+        >
           <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-[var(--color-border)] overflow-hidden">
             {/* Primary Anchor: Measured Code Coverage & E2E Scenario Verification */}
             <div className="lg:col-span-5 px-4 py-3 flex flex-col justify-between gap-2">
@@ -1325,7 +1316,7 @@ export default function SystemTestWorkspace({
 
         {/* ── 3. NAVIGATION TABS (3 Tabs matching A1) ── */}
         <div className="px-5 border-t border-[var(--color-border)] flex items-center justify-between gap-3">
-          <nav className="flex items-center gap-1 -mb-px">
+          <nav data-guide="sys-tabs" className="flex items-center gap-1 -mb-px">
             <button
               type="button"
               onClick={() => setActiveTab("matrix")}
@@ -1437,6 +1428,7 @@ export default function SystemTestWorkspace({
         )}
 
         {activeTab === "matrix" && (
+          <div data-guide="sys-matrix">
           <SystemSpecMatrixTable
             key={snapshotId || "system"}
             snapshotId={snapshotId}
@@ -1504,6 +1496,7 @@ export default function SystemTestWorkspace({
               setPendingConfirmAction({ kind: "discard" })
             }
           />
+          </div>
         )}
 
         {activeTab === "live" && (

@@ -146,6 +146,7 @@ export function GlobalCommandHeader({
   return (
     <header
       id="ud-zone-header"
+      data-guide="ud-header"
       className={`relative bg-[var(--ud-surface)] border border-[var(--ud-border)] rounded-[var(--radius-lg)] p-5 shadow-[var(--shadow-sm)] transition-colors duration-150 ${className}`}
     >
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">

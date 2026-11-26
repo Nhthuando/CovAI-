@@ -53,6 +53,7 @@ export function PortfolioExecutiveKpiRow({
   return (
     <section
       id="portfolio-executive-kpi-row"
+      data-guide="portfolio-kpis"
       aria-label="Portfolio Metrics Overview"
       className={`ps-panel overflow-hidden grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-[var(--ps-line)] ${className}`}
     >
