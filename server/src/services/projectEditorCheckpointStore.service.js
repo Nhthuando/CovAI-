@@ -12,7 +12,7 @@ export async function withCheckpointGuard({ projectId, snapshotId, userId, docum
         // after waiting for any preceding writer or membership change.
         const [row] = await tx.$queryRaw`
             SELECT p.*, to_jsonb(s) AS "checkpointSnapshot",
-                (SELECT id FROM "ProjectSnapshot" WHERE "projectId" = p.id ORDER BY "createdAt" DESC LIMIT 1) AS "latestSnapshotId",
+                COALESCE((SELECT id FROM "ProjectSnapshot" WHERE id = p."activeSnapshotId" AND "projectId" = p.id), (SELECT id FROM "ProjectSnapshot" WHERE "projectId" = p.id ORDER BY "createdAt" DESC LIMIT 1)) AS "latestSnapshotId",
                 CASE WHEN p."ownerId" = ${userId} THEN 'OWNER' ELSE m.role END AS "accessRole"
                 , COALESCE((SELECT jsonb_agg(jsonb_build_object('id',d.id,'generation',d.generation,'revision',d.revision,
                     'versionId',v.id,'versionRevision',v.revision,'versionHash',v.sha256,'versionDeleted',v.deleted))

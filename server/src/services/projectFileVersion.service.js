@@ -121,21 +121,33 @@ export const resolveContainedProjectPath = async (snapshot, value, options = {})
     return { root, target: candidate, relativePath: canonicalPath };
 };
 
-export const findEditableSnapshot = async (tx, projectId, snapshotId) => {
-    let effectiveSnapshotId = snapshotId;
-    if (!effectiveSnapshotId) {
-        const project = await tx.project.findUnique({
-            where: { id: projectId },
-            select: { activeSnapshotId: true },
-        });
-        if (project?.activeSnapshotId) {
-            effectiveSnapshotId = project.activeSnapshotId;
+export const resolveActiveProjectSnapshot = async (tx, projectId, preferredSnapshotId = null) => {
+    if (!projectId || !tx?.projectSnapshot) return null;
+    let targetSnapshotId = preferredSnapshotId || null;
+    if (!targetSnapshotId && tx.project) {
+        const findProject = tx.project.findFirst || tx.project.findUnique;
+        if (typeof findProject === 'function') {
+            const project = await findProject.call(tx.project, {
+                where: { id: projectId },
+                select: { activeSnapshotId: true },
+            });
+            targetSnapshotId = project?.activeSnapshotId || null;
         }
     }
-    const snapshot = await tx.projectSnapshot.findFirst({
-        where: { projectId, ...(effectiveSnapshotId ? { id: effectiveSnapshotId } : {}) },
-        orderBy: effectiveSnapshotId ? undefined : { createdAt: 'desc' },
+    if (targetSnapshotId) {
+        const active = await tx.projectSnapshot.findFirst({
+            where: { id: targetSnapshotId, projectId },
+        });
+        if (active?.rootDir) return active;
+    }
+    return tx.projectSnapshot.findFirst({
+        where: { projectId },
+        orderBy: { createdAt: 'desc' },
     });
+};
+
+export const findEditableSnapshot = async (tx, projectId, snapshotId) => {
+    const snapshot = await resolveActiveProjectSnapshot(tx, projectId, snapshotId);
     if (!snapshot?.rootDir) throw projectFileError('SNAPSHOT_CHANGED', 'Project snapshot is unavailable; select it again', 409);
     return snapshot;
 };

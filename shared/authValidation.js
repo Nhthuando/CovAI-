@@ -41,6 +41,9 @@ export const AUTH_ERROR_CODES = Object.freeze({
   ENCRYPTION_CONFIG_ERROR: "ENCRYPTION_CONFIG_ERROR",
   RATE_LIMIT_EXCEEDED: "RATE_LIMIT_EXCEEDED",
   ACCOUNT_EXISTS: "ACCOUNT_EXISTS",
+  AUTH_PROVIDER_MISMATCH: "AUTH_PROVIDER_MISMATCH",
+  GITHUB_REPO_SCOPE_REQUIRED: "GITHUB_REPO_SCOPE_REQUIRED",
+  GITHUB_TOKEN_REVOKED: "GITHUB_TOKEN_REVOKED",
 });
 
 export const AUTH_MESSAGES = Object.freeze({
@@ -68,6 +71,14 @@ export const AUTH_MESSAGES = Object.freeze({
     "Your GitHub account does not have a verified email address. Please verify an email on GitHub and try again.",
   EMAIL_ALREADY_LINKED_TO_OTHER_GITHUB:
     "This email is already linked to a different GitHub account.",
+  AUTH_PROVIDER_MISMATCH_GITHUB:
+    "Git & GitHub Repository requires signing in with a GitHub account.",
+  AUTH_PROVIDER_MISMATCH_EMAIL:
+    "Snapshots & Checkpoints Version Control is dedicated to personal email accounts.",
+  GITHUB_REPO_SCOPE_REQUIRED:
+    "Repository write permission ('repo' scope) is required to push or manage GitHub repositories. Please authorize repository access.",
+  GITHUB_TOKEN_REVOKED:
+    "Your GitHub access token has expired or been revoked. Please reconnect GitHub.",
 });
 
 export function formatLockoutMessage(retryAfterSeconds) {

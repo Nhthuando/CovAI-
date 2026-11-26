@@ -273,6 +273,7 @@ export const processInstallDepsJob = async (jobId) => {
     const command = process.platform === "win32" ? "npm.cmd" : "npm";
     const args = [
       "install",
+      "--include=dev",
       "--prefer-offline",
       "--ignore-scripts",
       "--legacy-peer-deps",
@@ -287,7 +288,8 @@ export const processInstallDepsJob = async (jobId) => {
     const child = spawn(command, args, {
       cwd: installTargetDir,
       shell: process.platform === "win32",
-      env: { ...process.env, CI: "true" },
+      // Override container NODE_ENV=production so project devDependencies (jest, supertest, vitest) are installed.
+      env: { ...process.env, CI: "true", NODE_ENV: "development" },
       stdio: ["ignore", "pipe", "pipe"],
     });
 

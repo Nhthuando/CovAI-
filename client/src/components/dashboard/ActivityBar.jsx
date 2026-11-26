@@ -12,8 +12,9 @@ import {
 } from "lucide-react";
 import CovaiLogo from "../common/CovaiLogo";
 import { useState } from "react";
+import { VC_MODES } from "../../../../shared/versionControlMode.js";
 
-const TOP_ITEMS = [
+const BASE_TOP_ITEMS = [
   { id: "explorer", icon: Files, label: "Explorer" },
   { id: "overview", icon: LayoutDashboard, label: "Overview" },
   { id: "version-control", icon: GitBranch, label: "Version Control" },
@@ -25,9 +26,17 @@ const TOP_ITEMS = [
 
 const BOTTOM_ITEMS = [{ id: "settings", icon: Settings, label: "Settings" }];
 
-function ActivityItem({ item, isActive, onClick, delay = 0 }) {
+function ActivityItem({
+  item,
+  isActive,
+  onClick,
+  delay = 0,
+  badgeCount = 0,
+  hasConflicts = false,
+}) {
   const [hovered, setHovered] = useState(false);
   const Icon = item.icon;
+  const formattedBadge = badgeCount > 99 ? "99+" : String(badgeCount);
 
   return (
     <motion.div
@@ -77,6 +86,18 @@ function ActivityItem({ item, isActive, onClick, delay = 0 }) {
         aria-label={item.label}
       >
         <Icon size={18} strokeWidth={isActive ? 1.9 : 1.65} />
+        {badgeCount > 0 && (
+          <span
+            data-testid="vcs-activity-badge"
+            className={`absolute -bottom-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded text-[9px] font-mono font-bold tabular-nums flex items-center justify-center border ${
+              hasConflicts
+                ? "bg-rose-500 text-white border-rose-600"
+                : "bg-[var(--color-primary)] text-white border-[var(--ps-surface)]"
+            }`}
+          >
+            {formattedBadge}
+          </span>
+        )}
       </button>
 
       {/* Tooltip */}
@@ -90,6 +111,7 @@ function ActivityItem({ item, isActive, onClick, delay = 0 }) {
             className="absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2.5 py-1 rounded-md bg-[var(--ps-surface-2)] border border-[var(--ps-line-strong)] text-xs font-medium text-[var(--ps-ink)] whitespace-nowrap z-50 pointer-events-none"
           >
             {item.label}
+            {badgeCount > 0 ? ` (${badgeCount})` : ""}
           </motion.div>
         )}
       </AnimatePresence>
@@ -97,14 +119,28 @@ function ActivityItem({ item, isActive, onClick, delay = 0 }) {
   );
 }
 
-export default function ActivityBar({ active, onSelect }) {
+export default function ActivityBar({ active, onSelect, vcsSummary = null }) {
+  const isSnapshotMode = vcsSummary?.mode === VC_MODES.SNAPSHOT_VCS;
+  const vcsDirtyCount = vcsSummary?.dirtyCount || 0;
+  const vcsConflictCount = vcsSummary?.conflictCount || 0;
+
+  const topItems = BASE_TOP_ITEMS.map((item) =>
+    item.id === "version-control"
+      ? {
+          ...item,
+          icon: isSnapshotMode ? Layers : GitBranch,
+          label: isSnapshotMode ? "Snapshots & Checkpoints" : "Git & GitHub",
+        }
+      : item,
+  );
+
   return (
     <div
       data-guide="activity-bar"
       className="h-full flex flex-col items-center justify-between py-2.5 select-none shrink-0 bg-[var(--ps-surface)] border-r border-[var(--ps-line)] font-sans"
       style={{ width: 54 }}
     >
-      {/* Brand Icon (Click to return to Projects Portfolio) & Top nav items */}
+      {/* Brand Icon & Top nav items */}
       <div className="flex flex-col items-center gap-1 w-full">
         <button
           type="button"
@@ -119,19 +155,21 @@ export default function ActivityBar({ active, onSelect }) {
         {/* Divider */}
         <div className="w-6 h-px bg-[var(--ps-line)] mb-1" />
 
-        {/* Top nav icons */}
-        {TOP_ITEMS.map((item, i) => (
+        {/* Top nav items */}
+        {topItems.map((item, i) => (
           <ActivityItem
             key={item.id}
             item={item}
             isActive={active === item.id}
             onClick={onSelect}
             delay={0.02 + i * 0.03}
+            badgeCount={item.id === "version-control" ? vcsDirtyCount : 0}
+            hasConflicts={item.id === "version-control" && vcsConflictCount > 0}
           />
         ))}
       </div>
 
-      {/* Bottom icons (Settings pinned at bottom with separate divider) */}
+      {/* Bottom icons */}
       <div className="flex flex-col items-center gap-1 pb-1 w-full mt-auto shrink-0">
         <div className="w-6 h-px bg-[var(--color-border)] mb-1" />
         {BOTTOM_ITEMS.map((item, i) => (

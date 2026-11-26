@@ -19,6 +19,7 @@ import {
   confirmGithubAccountLink,
   cancelGithubAccountLink,
   connectGithubForUser,
+  getGithubCapabilitiesForUser,
 } from "../services/githubOAuth.service.js";
 import prisma from "../config/prisma.js";
 import { decrypt } from "../utils/crypto.js";
@@ -126,6 +127,7 @@ export const register = async (req, res) => {
       success: true,
       message: response.message,
       accessToken: response.accessToken,
+      authProvider: response.authProvider,
       userId: response.userId,
       userName: response.userName,
       userEmail: response.userEmail,
@@ -166,6 +168,7 @@ export const login = async (req, res) => {
       success: true,
       message: response.message,
       accessToken: response.accessToken,
+      authProvider: response.authProvider,
       userId: response.userId,
       name: response.name,
       email: response.email,
@@ -503,6 +506,10 @@ export const oAuthGithub = async (req, res) => {
       message: "GitHub login successful!",
       token: result.accessToken,
       accessToken: result.accessToken,
+      authProvider: result.authProvider,
+      githubLogin: result.githubLogin,
+      githubScopes: result.githubScopes,
+      hasGithubRepoWriteScope: result.hasGithubRepoWriteScope,
       userId: result.user.id,
       name: result.user.name,
       email: result.user.email,
@@ -554,6 +561,10 @@ export const confirmGithubLink = async (req, res) => {
       message: "GitHub account linked and signed in successfully!",
       token: result.accessToken,
       accessToken: result.accessToken,
+      authProvider: result.authProvider,
+      githubLogin: result.githubLogin,
+      githubScopes: result.githubScopes,
+      hasGithubRepoWriteScope: result.hasGithubRepoWriteScope,
       userId: result.user.id,
       name: result.user.name,
       email: result.user.email,
@@ -597,6 +608,29 @@ export const cancelGithubLink = async (req, res) => {
   } catch (error) {
     logger.error(
       "[cancelGithubLink] Unexpected error:",
+      error?.message || "Unknown error",
+    );
+    return res.status(500).json({ message: "Internal server error!" });
+  }
+};
+
+export const getGithubCapabilities = async (req, res) => {
+  try {
+    const forceRefresh = req.query?.refresh === "true";
+    const data = await getGithubCapabilitiesForUser(req.user.id, {
+      forceRefresh,
+    });
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    if (error instanceof GithubNetworkError || error instanceof ServiceError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        code: error.code,
+        message: error.message,
+      });
+    }
+    logger.error(
+      "[getGithubCapabilities] Unexpected error:",
       error?.message || "Unknown error",
     );
     return res.status(500).json({ message: "Internal server error!" });

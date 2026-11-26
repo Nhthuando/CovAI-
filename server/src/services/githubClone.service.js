@@ -1,33 +1,47 @@
-import { exec } from "child_process";
-import fs from "fs";
-import path from "path";
-import util from "util";
-import { GitHubRepositoryAccessService } from "./github.service.js";
+import fs from "node:fs";
+import path from "node:path";
 import { ServiceError } from "../utils/serviceError.js";
 import { purgeDisallowedSecretFiles } from "../middlewares/upload.middleware.js";
-
-const execAsync = util.promisify(exec);
+import {
+  ensureCovaiGitExcludes,
+  execGit,
+  normalizeCleanGithubUrl,
+  redactGitOutput,
+  resolveActingUserGithubToken,
+  resolveGitAuthorIdentity,
+  sanitizeGitRef,
+} from "./gitCredentialHelper.service.js";
 
 /**
- * Service to handle cloning GitHub repositories into local storage.
+ * Service to handle cloning GitHub repositories into local storage
+ * using strictly transient HTTP credentials (zero token persistence in `.git/config`).
  */
 export class GitHubCloneService {
   /**
    * Clones a GitHub repository to the local storage directory.
    *
-   * @param {string} userId - The ID of the user requesting the clone.
+   * @param {string|null} userId - The ID of the user requesting the clone.
    * @param {string} projectId - The ID of the project for storage organization.
    * @param {string} owner - GitHub repository owner.
    * @param {string} repo - GitHub repository name.
-   * @returns {Promise<{localPath: string, commitSha: string}>}
+   * @param {boolean} useAuth - Whether to inject transient GitHub OAuth credentials.
+   * @returns {Promise<{localPath: string, commitSha: string, defaultBranch: string, repoUrl: string}>}
    */
   static async cloneRepository(userId, projectId, owner, repo, useAuth = true) {
+    const cleanOwner = sanitizeGitRef(owner, "repository owner");
+    const cleanRepo = sanitizeGitRef(String(repo || "").replace(/\.git$/i, ""), "repository name");
+    const { cleanUrl, webUrl } = normalizeCleanGithubUrl(
+      `https://github.com/${cleanOwner}/${cleanRepo}`,
+    );
+
     let accessToken = null;
     if (useAuth) {
-      accessToken = await GitHubRepositoryAccessService.getGitHubToken(userId);
+      const tokenInfo = await resolveActingUserGithubToken(userId, {
+        requireRepoScope: false,
+      });
+      accessToken = tokenInfo.token;
     }
 
-    // Define storage path: storage/projects/{projectId}/github/{timestamp}
     const timestamp = Date.now();
     const baseDir = path.join(
       process.cwd(),
@@ -37,77 +51,43 @@ export class GitHubCloneService {
       "github",
       timestamp.toString(),
     );
-
-    if (!fs.existsSync(baseDir)) {
-      fs.mkdirSync(baseDir, { recursive: true });
-    }
-
-    const cloneUrl = accessToken
-      ? `https://x-access-token:${accessToken}@github.com/${owner}/${repo}.git`
-      : `https://github.com/${owner}/${repo}.git`;
-
-    const gitEnv = {
-      ...process.env,
-      GIT_TERMINAL_PROMPT: "0",
-      GIT_ASKPASS: "echo",
-      GIT_CONFIG_COUNT: "1",
-      GIT_CONFIG_KEY_0: "safe.directory",
-      GIT_CONFIG_VALUE_0: "*",
-    };
-
-    // Ensure safe.directory is configured globally in environment / container
-    await execAsync('git config --global --add safe.directory "*"', { env: gitEnv }).catch(() => {});
+    const repoDir = path.join(baseDir, "repo");
+    fs.mkdirSync(repoDir, { recursive: true });
 
     try {
-      // 1. Clone repository into a 'repo' subfolder to avoid messing with current directory
-      const repoDir = path.join(baseDir, "repo");
-      fs.mkdirSync(repoDir, { recursive: true });
-      await execAsync(
-        `git -c credential.helper= -c safe.directory=* clone ${cloneUrl} .`,
-        { cwd: repoDir, env: gitEnv },
-      );
-
-      // 2. Get latest commit SHA from the repo folder
-      const { stdout: commitSha } = await execAsync(`git -c safe.directory=* rev-parse HEAD`, {
-        cwd: repoDir,
-        env: gitEnv,
+      await execGit(repoDir, ["clone", cleanUrl, "."], {
+        githubToken: accessToken,
+        isNetwork: true,
       });
 
-      // 3. Get default branch
+      const { stdout: commitSha } = await execGit(repoDir, ["rev-parse", "HEAD"]);
+
       let defaultBranch = "main";
       try {
-        const { stdout: branchOut } = await execAsync(
-          `git -c safe.directory=* rev-parse --abbrev-ref HEAD`,
-          { cwd: repoDir, env: gitEnv },
-        );
-        if (branchOut && branchOut.trim()) {
+        const { stdout: branchOut } = await execGit(repoDir, [
+          "rev-parse",
+          "--abbrev-ref",
+          "HEAD",
+        ]);
+        if (branchOut && branchOut.trim() && branchOut.trim() !== "HEAD") {
           defaultBranch = branchOut.trim();
         }
-      } catch (_) {}
+      } catch {
+        // Default to main on unborn repositories
+      }
 
-      // Configure local git user info and settings inside repo
-      try {
-        const authorName = owner || "CovAI Developer";
-        const authorEmail = owner
-          ? `${owner}@users.noreply.github.com`
-          : "developer@covai.dev";
-        await execAsync(`git -c safe.directory=* config user.name "${authorName}"`, {
-          cwd: repoDir,
-          env: gitEnv,
-        });
-        await execAsync(`git -c safe.directory=* config user.email "${authorEmail}"`, {
-          cwd: repoDir,
-          env: gitEnv,
-        });
-        await execAsync(`git -c safe.directory=* config commit.gpgsign false`, {
-          cwd: repoDir,
-          env: gitEnv,
-        });
-      } catch (_) {}
+      const author = await resolveGitAuthorIdentity(userId, {
+        authorName: cleanOwner,
+        authorEmail: `${cleanOwner}@users.noreply.github.com`,
+      });
+      await execGit(repoDir, ["config", "user.name", author.name]).catch(() => {});
+      await execGit(repoDir, ["config", "user.email", author.email]).catch(() => {});
+      await execGit(repoDir, ["config", "commit.gpgsign", "false"]).catch(() => {});
+      await execGit(repoDir, ["config", "core.autocrlf", "false"]).catch(() => {});
+      await execGit(repoDir, ["config", "core.quotepath", "false"]).catch(() => {});
 
-      // IMPORTANT: DO NOT remove .git! Keeping .git preserves the repository history,
-      // branches, and origin remote so the user can push, pull, checkout, and commit.
-      // Only remove node_modules if accidentally committed in the repository
+      ensureCovaiGitExcludes(repoDir);
+
       fs.rmSync(path.join(repoDir, "node_modules"), {
         recursive: true,
         force: true,
@@ -118,15 +98,18 @@ export class GitHubCloneService {
         localPath: repoDir,
         commitSha: commitSha.trim(),
         defaultBranch,
-        repoUrl: `https://github.com/${owner}/${repo}`,
+        repoUrl: webUrl,
       };
     } catch (error) {
-      // Cleanup on failure
       if (fs.existsSync(baseDir)) {
         fs.rmSync(baseDir, { recursive: true, force: true });
       }
 
-      const errMsg = error.message || "";
+      if (error instanceof ServiceError && [401, 403].includes(error.statusCode)) {
+        throw error;
+      }
+
+      const errMsg = redactGitOutput(error?.message || "");
       if (
         errMsg.includes("Authentication failed") ||
         errMsg.includes("could not read Username") ||

@@ -1,5 +1,6 @@
 import prisma from '../config/prisma.js';
 import { resolveProjectAccess } from './projectAccess.service.js';
+import { SNAPSHOT_SOCKET_EVENTS } from '../../../shared/snapshotVcsProtocol.js';
 
 export async function publishProjectEvent({ tx, projectId, type, actorId, resourceId, revision, payload = {} }) {
     const project = await tx.project.update({ where: { id: projectId }, data: { eventSequence: { increment: 1 } }, select: { eventSequence: true } });
@@ -14,10 +15,22 @@ export async function listProjectEvents({ projectId, userId, after = 0, limit = 
 }
 export async function deliverProjectEvent(event) {
     // The subscription service revalidates individual recipients before emitting.
-    const { deliverToProjectSubscribers } = await import('./projectSubscription.service.js');
+    const { deliverToProjectSubscribers, deliverScopedProjectTransport } = await import('./projectSubscription.service.js');
     await deliverToProjectSubscribers(event);
     if (/workspace|snapshot|project.deleted/.test(event.type)) {
         const { notifyEditorProjectChange } = await import('../realtime/projectEditor.gateway.js');
         await notifyEditorProjectChange(event.projectId);
+        if (event.type === 'workspace.changed') {
+            await deliverScopedProjectTransport({
+                projectId: event.projectId,
+                event: SNAPSHOT_SOCKET_EVENTS.UPDATED,
+                payload: {
+                    projectId: event.projectId,
+                    reason: event.payload?.kind || 'workspace.changed',
+                    revision: event.revision,
+                    actorId: event.actorId,
+                },
+            }).catch(() => {});
+        }
     }
 }

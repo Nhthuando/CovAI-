@@ -275,7 +275,16 @@ export async function updateFileContentApi(
     filePath,
     content,
   );
-  if (live) return live;
+  if (live) {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("covai:workspace-saved", {
+          detail: { projectId, path: filePath },
+        }),
+      );
+    }
+    return live;
+  }
   const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/file-content`,
     {
@@ -308,6 +317,13 @@ export async function updateFileContentApi(
         snapshotId,
       },
       snapshotId,
+    );
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("covai:workspace-saved", {
+        detail: { projectId, path: filePath },
+      }),
     );
   }
   return data;

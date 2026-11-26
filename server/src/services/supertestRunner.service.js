@@ -83,8 +83,19 @@ const resolveJestBinPath = (rootDir) => {
     path.join(rootDir, "server", "node_modules", "jest", "bin", "jest.js"),
     path.join(rootDir, "backend", "node_modules", "jest", "bin", "jest.js"),
     path.join(rootDir, "api", "node_modules", "jest", "bin", "jest.js"),
+    ...(process.platform !== "win32"
+      ? ["/app/node_modules/jest/bin/jest.js"]
+      : []),
   ];
   return candidates.find((p) => fs.existsSync(p)) || null;
+};
+
+const formatJestBinArg = (resolvedRoot, jestBinPath) => {
+  const rel = path.relative(resolvedRoot, jestBinPath).replace(/\\/g, "/");
+  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) {
+    return jestBinPath.replace(/\\/g, "/");
+  }
+  return rel;
 };
 
 const findBackendJestConfig = (rootDir) => {
@@ -191,11 +202,11 @@ export const runSupertest = async (
       : {}),
     ...(usesEsm ? { NODE_OPTIONS: "--experimental-vm-modules" } : {}),
   };
+  // NODE_OPTIONS already carries --experimental-vm-modules when usesEsm is true,
+  // so npx --no-install jest inherits it without passing `npx` as a script to `node`.
   const jestBinary = jestBinPath
-    ? `${quoteForShell(process.execPath)} ${usesEsm ? "--experimental-vm-modules " : ""}${quoteForShell(path.relative(resolvedRoot, jestBinPath).replace(/\\/g, "/"))}`
-    : usesEsm
-      ? `${quoteForShell(process.execPath)} --experimental-vm-modules npx --no-install jest`
-      : "npx --no-install jest";
+    ? `${quoteForShell(process.execPath)} ${usesEsm ? "--experimental-vm-modules " : ""}${quoteForShell(formatJestBinArg(resolvedRoot, jestBinPath))}`
+    : "npx --no-install jest";
 
   const coverageDir = path.join(resolvedRoot, "coverage", "integration");
   if (!fs.existsSync(coverageDir)) {

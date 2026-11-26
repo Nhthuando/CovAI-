@@ -20,11 +20,15 @@ import {
   Sliders,
   File,
   FolderGit2,
+  GitBranch,
+  Layers,
   ChevronsDownUp,
   ChevronsUpDown,
 } from "lucide-react";
 import ConfirmDialog from "../common/ConfirmDialog";
 import { FileTreeSkeleton } from "../common/Skeleton";
+import { getVcsStatusMeta } from "../../services/vcsUiHelpers";
+import { VC_MODES } from "../../../../shared/versionControlMode.js";
 
 /* ── Smart Icon Resolver ─────────────────────────────────── */
 function getFileIcon(fileName = "") {
@@ -240,6 +244,7 @@ function TreeNode({
   onCancelAction,
   onSubmitAction,
   treeToggleTrigger,
+  vcsSummary,
 }) {
   const [open, setOpen] = useState(
     treeToggleTrigger ? !treeToggleTrigger.collapsed : depth < 1,
@@ -252,6 +257,9 @@ function TreeNode({
   const isActive = activeFileId === node.id;
   const isSelected = selectedNode?.id === node.id;
   const indent = depth * 14 + 14;
+  const vcsFileStatus = !isFolder ? vcsSummary?.fileStatusMap?.get(node.id) : null;
+  const vcsStatusMeta = vcsFileStatus ? getVcsStatusMeta(vcsFileStatus) : null;
+  const folderChanged = isFolder && vcsSummary?.folderHasChanges?.has(node.id);
 
   const isRenaming = action?.type === "rename" && action?.node?.id === node.id;
   const isCreatingInside =
@@ -383,9 +391,33 @@ function TreeNode({
             />
           </form>
         ) : (
-          <span className="truncate leading-tight flex-1" title={node.name}>
+          <span
+            className={`truncate leading-tight flex-1 ${
+              vcsStatusMeta ? vcsStatusMeta.textClass : ""
+            }`}
+            title={
+              vcsStatusMeta
+                ? `${node.name} (${vcsStatusMeta.label})`
+                : node.name
+            }
+          >
             {node.name}
           </span>
+        )}
+
+        {!isRenaming && vcsStatusMeta && (
+          <span
+            className={`ml-auto text-[10px] font-mono font-bold tabular-nums shrink-0 ${vcsStatusMeta.textClass}`}
+            title={vcsStatusMeta.label}
+          >
+            {vcsStatusMeta.char}
+          </span>
+        )}
+        {!isRenaming && folderChanged && (
+          <span
+            className="ml-auto w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0"
+            title="Contains uncommitted changes"
+          />
         )}
       </div>
 
@@ -422,6 +454,7 @@ function TreeNode({
               onCancelAction={onCancelAction}
               onSubmitAction={onSubmitAction}
               treeToggleTrigger={treeToggleTrigger}
+              vcsSummary={vcsSummary}
             />
           ))}
         </div>
@@ -446,6 +479,8 @@ export default function Sidebar({
   onCreateFolder,
   onRenameEntry,
   onDeleteEntry,
+  vcsSummary = null,
+  onOpenVersionControl,
 }) {
   const access = useProjectAccess(project?.id);
   const [projectToDelete, setProjectToDelete] = useState(null);
@@ -772,17 +807,53 @@ export default function Sidebar({
               onCancelAction={handleCancelAction}
               onSubmitAction={handleSubmitAction}
               treeToggleTrigger={treeToggleTrigger}
+              vcsSummary={vcsSummary}
             />
           ))
         )}
       </div>
 
-      {/* ── Footer / Git Status ──────────────────────────── */}
-      <div className="flex items-center gap-2 shrink-0 border-t border-[var(--ps-line)] text-[11px] text-[var(--ps-ink-secondary)] ps-mono py-2 px-4 bg-[var(--ps-surface)]">
-        <span className="w-1.5 h-1.5 rounded-full bg-[var(--ps-emerald)] inline-block shrink-0" />
-        <span className="text-[var(--ps-ink-secondary)]">main</span>
-        <span className="text-[var(--ps-emerald)] ml-auto">↑ 2 commits</span>
-      </div>
+      {/* ── Footer / Live Version Control Status ─────────── */}
+      <button
+        type="button"
+        onClick={() => onOpenVersionControl?.()}
+        title="Open Version Control Workbench"
+        className="w-full flex items-center gap-2 shrink-0 border-t border-[var(--ps-line)] text-[11px] text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] ps-mono py-2 px-4 bg-[var(--ps-surface)] hover:bg-[var(--ps-surface-2)]/60 transition-colors cursor-pointer text-left"
+      >
+        <span
+          className={`w-1.5 h-1.5 rounded-full inline-block shrink-0 ${
+            (vcsSummary?.conflictCount || 0) > 0
+              ? "bg-rose-400"
+              : (vcsSummary?.dirtyCount || 0) > 0
+                ? "bg-amber-400"
+                : "bg-[var(--ps-emerald)]"
+          }`}
+        />
+        {vcsSummary?.mode === VC_MODES.GIT_GITHUB ? (
+          <GitBranch size={11} className="text-[var(--ps-ink-muted)] shrink-0" />
+        ) : (
+          <Layers size={11} className="text-[var(--ps-ink-muted)] shrink-0" />
+        )}
+        <span className="truncate font-medium">
+          {vcsSummary?.branchLabel || "main"}
+        </span>
+        {vcsSummary?.versionBadge && (
+          <span className="text-[10px] text-[var(--ps-cobalt)] shrink-0">
+            {vcsSummary.versionBadge}
+          </span>
+        )}
+        <span
+          className={`ml-auto text-[10.5px] shrink-0 ${
+            (vcsSummary?.dirtyCount || 0) > 0
+              ? "text-amber-400"
+              : "text-[var(--ps-emerald)]"
+          }`}
+        >
+          {(vcsSummary?.dirtyCount || 0) > 0
+            ? `${vcsSummary.dirtyCount} changed`
+            : "Clean"}
+        </span>
+      </button>
 
       {/* ── Context Menu (VS Code style) ─────────────────── */}
       {contextMenu && (
