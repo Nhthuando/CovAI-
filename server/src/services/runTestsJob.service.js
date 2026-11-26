@@ -1979,6 +1979,7 @@ export const runNpmInstall = async (jobId, rootDir) => {
         "npm install --include=dev --prefer-offline --legacy-peer-deps --no-audit --no-fund --progress=false",
       timeoutMs: INSTALL_TIMEOUT_MS,
       jobId,
+      env: { NODE_ENV: "development" },
     });
 
     if (result.success) {
@@ -2056,9 +2057,10 @@ export const runNpmInstall = async (jobId, rootDir) => {
         ).catch(() => {});
         await dockerRunner.run({
           snapshotPath: rootDir,
-          command: `npm install --prefix ${relSub} --prefer-offline --legacy-peer-deps --no-audit --no-fund --progress=false`,
+          command: `npm install --prefix ${relSub} --include=dev --prefer-offline --legacy-peer-deps --no-audit --no-fund --progress=false`,
           timeoutMs: INSTALL_TIMEOUT_MS,
           jobId,
+          env: { NODE_ENV: "development" },
         });
       }
     }
