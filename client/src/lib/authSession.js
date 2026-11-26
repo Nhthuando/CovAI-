@@ -2,6 +2,12 @@
 // The API issues 15-minute access tokens plus an HttpOnly refresh cookie.
 // Long System Test runs and active/idle dashboards outlive the access token, so
 // every HTTP client and socket must renew it instead of logging the user out.
+import {
+  AUTH_PROVIDERS,
+  normalizeAuthProvider,
+  resolveVersionControlMode,
+} from "../../../shared/versionControlMode.js";
+
 const LOCAL_DEV_API_RE = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\/api\/?$/i;
 
 export function resolveApiBaseUrl() {
@@ -39,22 +45,43 @@ export function getAccessToken() {
   }
 }
 
-export function setStoredAccessToken(accessToken) {
+export function setStoredAccessToken(accessToken, extra = {}) {
   if (!accessToken) return;
   localStorage.setItem("token", accessToken);
+  const decodedProvider = getAccessTokenAuthProvider(accessToken);
+  const explicitProvider = normalizeAuthProvider(extra?.authProvider);
+  const effectiveProvider = explicitProvider || decodedProvider;
   try {
     const rawUser = localStorage.getItem("user");
     if (rawUser) {
       const parsed = JSON.parse(rawUser);
-      if (parsed && typeof parsed === "object" && parsed.token !== accessToken) {
-        parsed.token = accessToken;
-        localStorage.setItem("user", JSON.stringify(parsed));
+      if (parsed && typeof parsed === "object") {
+        let changed = false;
+        if (parsed.token !== accessToken) {
+          parsed.token = accessToken;
+          changed = true;
+        }
+        if (effectiveProvider && parsed.authProvider !== effectiveProvider) {
+          parsed.authProvider = effectiveProvider;
+          parsed.vcMode = resolveVersionControlMode(effectiveProvider);
+          changed = true;
+        }
+        if (changed) {
+          localStorage.setItem("user", JSON.stringify(parsed));
+        }
       }
     }
   } catch (error) {
     console.error("[auth] Failed to sync refreshed token to stored user:", error);
   }
-  window.dispatchEvent(new CustomEvent("covai:token-refreshed", { detail: { token: accessToken } }));
+  window.dispatchEvent(
+    new CustomEvent("covai:token-refreshed", {
+      detail: {
+        token: accessToken,
+        authProvider: effectiveProvider,
+      },
+    }),
+  );
 }
 
 function decodeAccessTokenPayload(token = getAccessToken()) {
@@ -65,6 +92,22 @@ function decodeAccessTokenPayload(token = getAccessToken()) {
     console.error("[auth] Access token payload could not be decoded:", error);
     return null;
   }
+}
+
+export function getAccessTokenAuthProvider(token = getAccessToken()) {
+  const payload = decodeAccessTokenPayload(token);
+  const fromToken = normalizeAuthProvider(payload?.authProvider);
+  if (fromToken) return fromToken;
+  try {
+    const rawUser = localStorage.getItem("user");
+    if (rawUser) {
+      const fromUser = normalizeAuthProvider(JSON.parse(rawUser)?.authProvider);
+      if (fromUser) return fromUser;
+    }
+  } catch {
+    // Ignore invalid JSON in stored user
+  }
+  return payload ? AUTH_PROVIDERS.EMAIL : null;
 }
 
 export function accessTokenExpiresAt(token = getAccessToken()) {
@@ -106,7 +149,7 @@ async function requestTokenRefreshOnce() {
   if (!data?.accessToken) {
     return { token: null, invalidSession: false, status: response.status };
   }
-  setStoredAccessToken(data.accessToken);
+  setStoredAccessToken(data.accessToken, { authProvider: data.authProvider });
   return { token: data.accessToken, invalidSession: false, status: response.status };
 }
 

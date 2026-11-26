@@ -208,3 +208,23 @@ export async function resetPasswordApi(token, newPassword) {
   }
   return data;
 }
+
+/**
+ * GET /api/auth/github/capabilities
+ * Returns live GitHub OAuth connection & scope capabilities for the current user.
+ */
+export async function getGithubCapabilitiesApi(forceRefresh = false) {
+  const query = forceRefresh ? "?refresh=true" : "";
+  const res = await fetchWithAuth(
+    `${BASE_URL}/auth/github/capabilities${query}`,
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw parseAuthErrorResponse(
+      res,
+      data,
+      "Unable to inspect GitHub capabilities.",
+    );
+  }
+  return data?.data || data;
+}

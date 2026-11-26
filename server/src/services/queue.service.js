@@ -282,6 +282,15 @@ const executeUnscopedJob = async (type, jobId, customData = {}) => {
       case 'PLAYWRIGHT_SYSTEM_COVERAGE':
         await runPreparedSystemJob(jobId,()=>processSystemTestAnalysisJob(jobId));
         break;
+      case 'GIT_PUSH':
+      case 'GIT_PULL':
+      case 'GIT_FETCH':
+      case 'GIT_PUBLISH_REPO':
+        await (await import('./gitJob.service.js')).processGitRemoteJob(type, jobId, customData);
+        break;
+      case 'SNAPSHOT_CAS_GC':
+        await (await import('./snapshotCasGcJob.service.js')).processSnapshotCasGcJob(jobId, customData);
+        break;
       default:
         console.warn(`[DirectExecutor] Unknown job type: ${type}`);
     }

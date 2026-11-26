@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
+import { normalizeAuthProvider } from "../../../shared/versionControlMode.js";
 
 dotenv.config();
 
@@ -28,8 +29,9 @@ export const authMiddleware = (req, res, next) => {
 
         const decode = jwt.verify(token, jwtsecret);
         const { userId: id, userName: name, userEmail: email } = decode;
+        const authProvider = normalizeAuthProvider(decode.authProvider);
 
-        req.user = { id, name, email };
+        req.user = { id, name, email, authProvider };
         return next();
     } catch (error) {
         console.error("[authMiddleware]", error?.message || error);

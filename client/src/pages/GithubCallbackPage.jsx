@@ -72,6 +72,10 @@ function persistAuthenticatedSession(data) {
     id: data.userId || data.id || null,
     name: data.name || "",
     email: data.email || "",
+    authProvider: data.authProvider || "github",
+    githubLogin: data.githubLogin || null,
+    githubScopes: Array.isArray(data.githubScopes) ? data.githubScopes : [],
+    hasGithubRepoWriteScope: Boolean(data.hasGithubRepoWriteScope),
     token: accessToken,
   };
   localStorage.setItem("token", accessToken);
