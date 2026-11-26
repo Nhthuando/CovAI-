@@ -8,6 +8,9 @@ test('roles deny unknown capabilities and do not leak mutable policy arrays', ()
     expect(roleAllows('EDITOR', 'files.write')).toBe(true);
     expect(roleAllows('EDITOR', 'members.manage')).toBe(false);
     expect(roleAllows('VIEWER', 'project.export')).toBe(true);
+    expect(roleAllows('OWNER', 'vcs.local')).toBe(true);
+    expect(roleAllows('EDITOR', 'vcs.local')).toBe(true);
+    expect(roleAllows('VIEWER', 'vcs.local')).toBe(false);
     expect(capabilitiesForRole('admin')).toEqual([]);
     const values = capabilitiesForRole('VIEWER'); values.push('files.write');
     expect(roleAllows('VIEWER', 'files.write')).toBe(false);

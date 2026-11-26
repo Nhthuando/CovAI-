@@ -81,9 +81,9 @@ describe("GitHub OAuth 2.0 & Identity Linking Integration Tests (TC_LOG_15 – T
       });
   }
 
-  it("TC_LOG_23: enforces minimal read:user user:email scopes and blocks missing/tampered CSRF state", async () => {
+  it("TC_LOG_23: enforces repo read:user user:email scopes and blocks missing/tampered CSRF state", async () => {
     const { url, state, cookie } = await issueOAuthStateCookie("login");
-    expect(url.searchParams.get("scope")).toBe("read:user user:email");
+    expect(url.searchParams.get("scope")).toBe("repo read:user user:email");
     expect(cookie).toMatch(/HttpOnly/i);
     expect(state).toMatch(/^login\.[0-9a-f]{64}$/);
 

@@ -6,6 +6,10 @@ import {
   isStoredRefreshTokenValid,
   issueSessionTokensForUser,
 } from "../services/auth.service.js";
+import {
+  AUTH_PROVIDERS,
+  normalizeAuthProvider,
+} from "../../../shared/versionControlMode.js";
 
 const router = express.Router();
 const SLIDING_RENEW_THRESHOLD_SEC = 7 * 24 * 60 * 60; // renew refresh token if < 7 days remaining
@@ -40,7 +44,15 @@ router.post("/", async (req, res) => {
   try {
     user = await prisma.user.findUnique({
       where: { id: payload.userId },
-      select: { id: true, email: true, name: true, refreshToken: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        refreshToken: true,
+        passwordHash: true,
+        githubUserId: true,
+        lastAuthProvider: true,
+      },
     });
   } catch (dbError) {
     console.error(
@@ -64,6 +76,13 @@ router.post("/", async (req, res) => {
       });
   }
 
+  const authProvider =
+    normalizeAuthProvider(payload.authProvider) ||
+    normalizeAuthProvider(user.lastAuthProvider) ||
+    (!user.passwordHash && user.githubUserId
+      ? AUTH_PROVIDERS.GITHUB
+      : AUTH_PROVIDERS.EMAIL);
+
   const nowSec = Math.floor(Date.now() / 1000);
   const remainingSec =
     typeof payload.exp === "number" ? payload.exp - nowSec : 0;
@@ -71,9 +90,16 @@ router.post("/", async (req, res) => {
   // Slide refresh token expiry forward when approaching threshold so active users stay signed in
   if (remainingSec < SLIDING_RENEW_THRESHOLD_SEC) {
     try {
-      const issued = await issueSessionTokensForUser(user);
+      const issued = await issueSessionTokensForUser(
+        user,
+        {},
+        { authProvider },
+      );
       setRefreshTokenCookie(req, res, issued.refreshToken);
-      return res.status(200).json({ accessToken: issued.accessToken });
+      return res.status(200).json({
+        accessToken: issued.accessToken,
+        authProvider: issued.authProvider,
+      });
     } catch (err) {
       console.error(
         "[refresh] Sliding renewal failed, issuing access token only:",
@@ -83,12 +109,17 @@ router.post("/", async (req, res) => {
   }
 
   const accessToken = jwt.sign(
-    { userId: user.id, userEmail: user.email, userName: user.name },
+    {
+      userId: user.id,
+      userEmail: user.email,
+      userName: user.name,
+      authProvider,
+    },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_ACCESS_EXPIRES_IN || "15m" },
   );
   setRefreshTokenCookie(req, res, refreshToken);
-  return res.status(200).json({ accessToken });
+  return res.status(200).json({ accessToken, authProvider });
 });
 
 export default router;
