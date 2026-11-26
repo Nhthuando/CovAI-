@@ -11,29 +11,50 @@ jest.unstable_mockModule("../config/prisma.js", () => ({
   default: testDb.db,
 }));
 
-const {
-  validateSafeId,
-  validateSha256,
-  sanitizeVcsRelativePath,
-  getBlobDiskPath,
-  writeCasBlob,
-  readCasBlob,
-  scanWorkingTree,
-  computeManifestHash,
-  syncWorkspaceFromManifest,
-  runSnapshotCasGc,
-} = await import("../services/snapshotCas.service.js");
+let validateSafeId;
+let validateSha256;
+let sanitizeVcsRelativePath;
+let getBlobDiskPath;
+let writeCasBlob;
+let readCasBlob;
+let scanWorkingTree;
+let computeManifestHash;
+let syncWorkspaceFromManifest;
+let runSnapshotCasGc;
+let diffManifests;
+let buildDiffPairResult;
+let findLowestCommonAncestor;
+let threeWayMergeText;
+let projectStorageTargets;
 
-const {
-  diffManifests,
-  buildDiffPairResult,
-  findLowestCommonAncestor,
-  threeWayMergeText,
-} = await import("../services/snapshotDiff3.service.js");
+try {
+  ({
+    validateSafeId,
+    validateSha256,
+    sanitizeVcsRelativePath,
+    getBlobDiskPath,
+    writeCasBlob,
+    readCasBlob,
+    scanWorkingTree,
+    computeManifestHash,
+    syncWorkspaceFromManifest,
+    runSnapshotCasGc,
+  } = await import("../services/snapshotCas.service.js"));
 
-const { projectStorageTargets } = await import(
-  "../services/projectStorageCleanup.service.js"
-);
+  ({
+    diffManifests,
+    buildDiffPairResult,
+    findLowestCommonAncestor,
+    threeWayMergeText,
+  } = await import("../services/snapshotDiff3.service.js"));
+
+  ({ projectStorageTargets } = await import(
+    "../services/projectStorageCleanup.service.js"
+  ));
+} catch (error) {
+  await testDb.close().catch(() => {});
+  throw error;
+}
 
 describe("Snapshot CAS Storage, Diff, 3-Way Merge & GC Unit Tests", () => {
   let tempRoot;

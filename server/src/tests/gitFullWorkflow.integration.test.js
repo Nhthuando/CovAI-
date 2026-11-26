@@ -31,10 +31,20 @@ jest.unstable_mockModule("../services/gemini.service.js", () => ({
   ),
 }));
 
-const { GitService } = await import("../services/git.service.js");
-const { default: gitRoute } = await import("../routes/git.route.js");
-const { AUTH_PROVIDERS } = await import("../../../shared/versionControlMode.js");
-const { AUTH_ERROR_CODES } = await import("../../../shared/authValidation.js");
+let GitService;
+let gitRoute;
+let AUTH_PROVIDERS;
+let AUTH_ERROR_CODES;
+
+try {
+  ({ GitService } = await import("../services/git.service.js"));
+  ({ default: gitRoute } = await import("../routes/git.route.js"));
+  ({ AUTH_PROVIDERS } = await import("../../../shared/versionControlMode.js"));
+  ({ AUTH_ERROR_CODES } = await import("../../../shared/authValidation.js"));
+} catch (error) {
+  await testDb.close().catch(() => {});
+  throw error;
+}
 
 function makeJwt(user, authProvider) {
   return jwt.sign(

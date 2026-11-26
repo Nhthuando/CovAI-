@@ -22,17 +22,31 @@ jest.unstable_mockModule("../utils/email.js", () => ({
   sendEmail: jest.fn(async () => ({ ok: true })),
 }));
 
-const { default: authRoute } = await import("../routes/auth.route.js");
-const { default: refreshRoute } = await import("../routes/refresh.route.js");
-const { default: userRoute } = await import("../routes/user.route.js");
-const { authMiddleware } = await import("../middlewares/auth.middleware.js");
-const { requireAuthProvider } = await import(
-  "../middlewares/requireAuthProvider.middleware.js"
-);
-const { AUTH_PROVIDERS, VC_MODES } = await import(
-  "../../../shared/versionControlMode.js"
-);
-const { AUTH_ERROR_CODES } = await import("../../../shared/authValidation.js");
+let authRoute;
+let refreshRoute;
+let userRoute;
+let authMiddleware;
+let requireAuthProvider;
+let AUTH_PROVIDERS;
+let VC_MODES;
+let AUTH_ERROR_CODES;
+
+try {
+  ({ default: authRoute } = await import("../routes/auth.route.js"));
+  ({ default: refreshRoute } = await import("../routes/refresh.route.js"));
+  ({ default: userRoute } = await import("../routes/user.route.js"));
+  ({ authMiddleware } = await import("../middlewares/auth.middleware.js"));
+  ({ requireAuthProvider } = await import(
+    "../middlewares/requireAuthProvider.middleware.js"
+  ));
+  ({ AUTH_PROVIDERS, VC_MODES } = await import(
+    "../../../shared/versionControlMode.js"
+  ));
+  ({ AUTH_ERROR_CODES } = await import("../../../shared/authValidation.js"));
+} catch (error) {
+  await testDb.close().catch(() => {});
+  throw error;
+}
 
 function buildTestApp() {
   const app = express();

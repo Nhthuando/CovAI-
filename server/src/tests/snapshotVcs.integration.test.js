@@ -27,11 +27,22 @@ jest.unstable_mockModule("../services/gemini.service.js", () => ({
   ),
 }));
 
-const { default: snapshotVcsRoute } = await import("../routes/snapshotVcs.route.js");
-const { readVersionedProjectFile } = await import("../services/projectFileVersion.service.js");
-const { mutateProjectWorkspace } = await import("../services/projectMutation.service.js");
-const { AUTH_PROVIDERS } = await import("../../../shared/versionControlMode.js");
-const { AUTH_ERROR_CODES } = await import("../../../shared/authValidation.js");
+let snapshotVcsRoute;
+let readVersionedProjectFile;
+let mutateProjectWorkspace;
+let AUTH_PROVIDERS;
+let AUTH_ERROR_CODES;
+
+try {
+  ({ default: snapshotVcsRoute } = await import("../routes/snapshotVcs.route.js"));
+  ({ readVersionedProjectFile } = await import("../services/projectFileVersion.service.js"));
+  ({ mutateProjectWorkspace } = await import("../services/projectMutation.service.js"));
+  ({ AUTH_PROVIDERS } = await import("../../../shared/versionControlMode.js"));
+  ({ AUTH_ERROR_CODES } = await import("../../../shared/authValidation.js"));
+} catch (error) {
+  await testDb.close().catch(() => {});
+  throw error;
+}
 
 function makeJwt(user, authProvider) {
   return jwt.sign(
