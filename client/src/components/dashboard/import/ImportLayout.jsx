@@ -5,10 +5,12 @@ import LocalUpload from "./LocalUpload";
 import GitHubImport from "./GitHubImport";
 import { ToastProvider } from "../ToastContext";
 import { getUserProfileApi } from "../../../services/project.service";
+import { useAuth } from "../../../hooks/useAuth";
 import CovaiLogo from "../../common/CovaiLogo";
 import "../portfolio/portfolio.css";
 
 export default function ImportLayout({ onClose, onSuccess }) {
+  const { isGitHubSession } = useAuth();
   const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
   const [hasGithub, setHasGithub] = useState(null);
   const [profileError, setProfileError] = useState("");
@@ -21,6 +23,9 @@ export default function ImportLayout({ onClose, onSuccess }) {
   }, []);
 
   useEffect(() => {
+    if (!isGitHubSession) {
+      return undefined;
+    }
     let active = true;
     getUserProfileApi()
       .then((data) => {
@@ -42,7 +47,7 @@ export default function ImportLayout({ onClose, onSuccess }) {
     return () => {
       active = false;
     };
-  }, [profileRetrySeq]);
+  }, [isGitHubSession, profileRetrySeq]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -86,8 +91,9 @@ export default function ImportLayout({ onClose, onSuccess }) {
                   Add repository
                 </h2>
                 <p className="text-xs text-[var(--ps-ink-muted)] mt-0.5 truncate">
-                  Import a local archive or connect a GitHub repository for AST
-                  and test synthesis
+                  {isGitHubSession
+                    ? "Import a local archive or connect a GitHub repository for AST, test synthesis, and Git sync"
+                    : "Upload a project archive or import a one-time Snapshot from a public Git URL"}
                 </p>
               </div>
             </div>
@@ -146,12 +152,13 @@ export default function ImportLayout({ onClose, onSuccess }) {
               </div>
             </div>
 
-            {/* Right Pane: GitHub Source (7 cols) */}
+            {/* Right Pane: GitHub Source / One-Time Public URL Snapshot (7 cols) */}
             <div className="lg:col-span-7 p-5 sm:p-6 bg-[var(--ps-surface)] flex flex-col relative min-h-[380px]">
               <GitHubImport
                 onClose={onClose}
                 onSuccess={handleImportSuccess}
                 hasGithub={hasGithub}
+                isGitHubSession={isGitHubSession}
                 profileError={profileError}
                 onRetryProfile={loadGithubStatus}
               />

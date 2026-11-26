@@ -7,8 +7,9 @@ import prisma from '../config/prisma.js';
 import { withProjectGuard } from './projectAccess.service.js';
 import * as projectAccessModule from './projectAccess.service.js';
 import { deliverProjectEvent, publishProjectEvent } from './projectEvent.service.js';
+import fsSync from 'node:fs';
 import { fileVersion, findEditableSnapshot, hashFileContent, MAX_PROJECT_FILE_BYTES,
-    projectFileError, resolveContainedProjectPath } from './projectFileVersion.service.js';
+    projectEditableWorkspaceRoot, projectFileError, resolveActiveProjectSnapshot, resolveContainedProjectPath } from './projectFileVersion.service.js';
 import { durableWrite, hashWorkspaceEntry, mutationJournalDirectory, mutationKey, recoverProjectMutationMarkers } from './projectMutationRecovery.service.js';
 
 const kinds = new Set(['WRITE_FILE', 'CREATE_FILE', 'CREATE_FOLDER', 'RENAME_ENTRY', 'DELETE_ENTRY', 'APPLY_TEST']);
@@ -16,7 +17,7 @@ const kinds = new Set(['WRITE_FILE', 'CREATE_FILE', 'CREATE_FOLDER', 'RENAME_ENT
 export const mutateProjectWorkspace = async ({ projectId, snapshotId, userId, capability = 'files.write',
     kind, path: filePath, newPath, content, expectedVersion, expectedWorkspaceRevision,
     requestId = randomUUID(), db = prisma, afterMutation }) => {
-    if (!snapshotId) snapshotId = (await db.projectSnapshot.findFirst({ where: { projectId }, orderBy: { createdAt: 'desc' }, select: { id: true } }))?.id;
+    if (!snapshotId) snapshotId = (await resolveActiveProjectSnapshot(db, projectId))?.id;
     if (!snapshotId) throw projectFileError('FILE_VERSION_REQUIRED', 'An explicit snapshot is required', 428);
     if (!kinds.has(kind)) throw projectFileError('UNSUPPORTED_MUTATION', 'Unsupported workspace mutation', 400);
     if (typeof requestId !== 'string' || !requestId || requestId.length > 200) throw projectFileError('INVALID_REQUEST_ID', 'Invalid mutation request identifier', 400);
@@ -31,12 +32,22 @@ export const mutateProjectWorkspace = async ({ projectId, snapshotId, userId, ca
         throw projectFileError('FILE_VERSION_REQUIRED', 'Read the current workspace revision before changing its structure', 428);
     }
     const inputHash = hashOperationInput({snapshotId,kind,path:filePath,newPath,content,expectedVersion,expectedWorkspaceRevision});
+    try {
+        const preSnap = await resolveActiveProjectSnapshot(db, projectId, snapshotId);
+        if (preSnap && !preSnap.casMaterialized && db?.snapshotVcsBranch) {
+            const wsRoot = projectEditableWorkspaceRoot(preSnap);
+            if (wsRoot && fsSync.existsSync(wsRoot) && !fsSync.existsSync(path.join(wsRoot, '.git'))) {
+                const { ensureProjectCasBaseline } = await import('./snapshotCas.service.js');
+                await ensureProjectCasBaseline({ projectId, snapshotId: preSnap.id, userId, rootDir: wsRoot, db });
+            }
+        }
+    } catch { /* Non-fatal if CAS tables are absent in isolated unit tests */ }
     let recoveryContext;
     let result;
     try {
     result = await withProjectGuard({ projectId, userId, capability, db }, async (tx, access) => {
         const snapshot = await findEditableSnapshot(tx, projectId, snapshotId);
-        const latest = await tx.projectSnapshot.findFirst({where:{projectId},orderBy:{createdAt:'desc'},select:{id:true}});
+        const latest = await resolveActiveProjectSnapshot(tx, projectId);
         if (latest?.id !== snapshot.id) throw projectFileError('SNAPSHOT_CHANGED','The active snapshot changed; select it again before editing');
         const resolved = await resolveContainedProjectPath(snapshot, filePath,{canonicalPath:kind === 'CREATE_FILE' || kind === 'CREATE_FOLDER'});
         const project = access.project;

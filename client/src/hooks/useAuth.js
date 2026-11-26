@@ -1,6 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
 import { queryClient } from "../lib/queryClient";
 import { API_BASE } from "../lib/authSession";
+import {
+  AUTH_PROVIDERS,
+  normalizeAuthProvider,
+  resolveVersionControlMode,
+} from "../../../shared/versionControlMode.js";
+import { resetGuidanceTours } from "../components/dashboard/guidance/guidanceStorage";
 
 function readUserFromStorage() {
   const token = localStorage.getItem("token");
@@ -12,10 +18,30 @@ function readUserFromStorage() {
     const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
     const payload = JSON.parse(atob(base64));
 
+    let storedUser = null;
+    try {
+      storedUser = JSON.parse(localStorage.getItem("user") || "null");
+    } catch {
+      storedUser = null;
+    }
+
+    const authProvider =
+      normalizeAuthProvider(payload.authProvider) ||
+      normalizeAuthProvider(storedUser?.authProvider) ||
+      AUTH_PROVIDERS.EMAIL;
+    const vcMode = resolveVersionControlMode(authProvider);
+
     return {
       id: payload.userId,
       email: payload.userEmail || localStorage.getItem("userEmail"),
       name: payload.userName || localStorage.getItem("userName"),
+      authProvider,
+      vcMode,
+      githubLogin: storedUser?.githubLogin || null,
+      githubScopes: Array.isArray(storedUser?.githubScopes)
+        ? storedUser.githubScopes
+        : [],
+      hasGithubRepoWriteScope: Boolean(storedUser?.hasGithubRepoWriteScope),
       token,
     };
   } catch (e) {
@@ -36,9 +62,19 @@ export const useAuth = () => {
   const login = useCallback((userData, token) => {
     queryClient.cancelQueries();
     queryClient.clear();
+    resetGuidanceTours();
+    const authProvider =
+      normalizeAuthProvider(userData?.authProvider) || AUTH_PROVIDERS.EMAIL;
+    const vcMode = resolveVersionControlMode(authProvider);
+    const enrichedUser = {
+      ...userData,
+      authProvider,
+      vcMode,
+      token,
+    };
     localStorage.setItem("token", token);
-    localStorage.setItem("user", JSON.stringify(userData));
-    setUser({ ...userData, token });
+    localStorage.setItem("user", JSON.stringify(enrichedUser));
+    setUser(enrichedUser);
     window.dispatchEvent(new Event("covai:auth-change"));
   }, []);
 
@@ -55,6 +91,7 @@ export const useAuth = () => {
     }
     queryClient.cancelQueries();
     queryClient.clear();
+    resetGuidanceTours();
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     localStorage.removeItem("userName");
@@ -113,12 +150,19 @@ export const useAuth = () => {
     };
   }, []);
 
+  const authProvider = user?.authProvider || null;
+  const vcMode = user ? resolveVersionControlMode(authProvider) : null;
+
   return {
     user,
     isLoading,
     isAuthenticated: !!user,
     userId: user?.id,
     token: user?.token,
+    authProvider,
+    vcMode,
+    isGitHubSession: authProvider === AUTH_PROVIDERS.GITHUB,
+    isEmailSession: Boolean(user) && authProvider !== AUTH_PROVIDERS.GITHUB,
     login,
     logout,
     refresh: loadUserFromStorage,

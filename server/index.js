@@ -61,6 +61,7 @@ import fileManagerRoute from "./src/routes/fileManager.route.js";
 import webhookRoute from "./src/routes/webhook.route.js";
 import reportRoute from "./src/routes/report.route.js";
 import gitRoute from "./src/routes/git.route.js";
+import snapshotVcsRoute from "./src/routes/snapshotVcs.route.js";
 import portfolioRoute from "./src/routes/portfolio.route.js";
 import aiQuotaSettingsRoute from "./src/routes/aiQuotaSettings.route.js";
 import { globalLimiter } from "./src/middlewares/rateLimit.middleware.js";
@@ -137,6 +138,8 @@ app.get('/api/health', async (_req, res) => {
   catch { res.status(503).json({ success: false }); }
 });
 app.use('/api/projects/:projectId/ai-evaluations', aiEvaluationRoutes);
+app.use('/api/projects/:projectId/snapshot-vcs', snapshotVcsRoute);
+app.use('/api/projects/:projectId/vcs/snapshots', snapshotVcsRoute);
 app.use("/api/projects", projectRoutes);
 if (process.env.AI_EVALUATION_ENABLED !== 'false') {
   let recoveringEvaluation = false;
@@ -171,6 +174,18 @@ app.use("/api/analytics", analyticsRoute);
 app.use("/api/code-hygiene", codeHygieneRoute);
 app.use("/api/file-manager", fileManagerRoute);
 app.use("/api/git", gitRoute);
+app.use(
+  "/api/projects/:projectId/git",
+  (req, _res, next) => {
+    if (req.method === "GET" || req.method === "HEAD") {
+      req.query = { ...req.query, projectId: req.params.projectId };
+    } else {
+      req.body = { ...(req.body || {}), projectId: req.params.projectId };
+    }
+    next();
+  },
+  gitRoute,
+);
 app.use("/api/portfolio", portfolioRoute);
 app.use("/api/settings/ai-quotas", aiQuotaSettingsRoute);
 app.use("/api/reports", reportRoute);

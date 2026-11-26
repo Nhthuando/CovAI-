@@ -35,7 +35,7 @@ export function ExecutiveKpiRow({ vm, loading = false, onJumpToActions = null, c
   ];
 
   return (
-    <div className={`grid grid-cols-12 gap-4 ${className}`}>
+    <div data-guide="ud-kpis" className={`grid grid-cols-12 gap-4 ${className}`}>
       {/* 1. Quality Health Score with Semi-Donut Radial Gauge */}
       <KpiCard
         id="ud-kpi-health"

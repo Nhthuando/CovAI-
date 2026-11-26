@@ -8,6 +8,7 @@ import { measureUnitTestPhase, recordUnitTestWork } from './unitTestWork.service
 import { withProjectGuard, resolveProjectAccess } from './projectAccess.service.js';
 import { projectFileError,projectEditableWorkspaceRoot } from './projectFileVersion.service.js';
 import { runtimeIgnoredDirectories } from './projectRuntimePlan.service.js';
+import { isVcsSecretFileName } from '../../../shared/versionControlMode.js';
 import { ACTIVE_PROJECT_OPERATIONS, publishOperationResults } from './projectOperation.service.js';
 import { recoverProjectMutationMarkers } from './projectMutationRecovery.service.js';
 import { publishProjectEvent,deliverProjectEvent } from './projectEvent.service.js';
@@ -16,6 +17,50 @@ import { resolveSnapshotRootDir } from '../utils/projectRootResolver.js';
 
 const contexts = new AsyncLocalStorage();
 const serverRoot = fileURLToPath(new URL('../../',import.meta.url));
+const GIT_WORKSPACE_IGNORED_DIRECTORIES = new Set(['node_modules', '.covai-temp', '.covai-system-test', '.covai-collaboration', '.covai_journal']);
+const STALE_WORKSPACE_MAX_AGE_MS = 60 * 60 * 1000;
+const STALE_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
+let lastStaleCleanupAt = 0;
+
+/**
+ * Safely deletes orphaned operation workspace folders older than `maxAgeMs` under
+ * `.covai-temp/collaboration-operations`.
+ */
+export const cleanupStaleOperationWorkspaces = async (
+    workspaceParent = path.join(serverRoot, '.covai-temp', 'collaboration-operations'),
+    maxAgeMs = STALE_WORKSPACE_MAX_AGE_MS,
+) => {
+    const resolvedParent = path.resolve(workspaceParent);
+    let entries;
+    try {
+        entries = await fs.readdir(resolvedParent, { withFileTypes: true });
+    } catch (error) {
+        if (error.code === 'ENOENT') return 0;
+        throw error;
+    }
+
+    const cutoffMs = Date.now() - Math.max(0, Number(maxAgeMs) || 0);
+    let removedCount = 0;
+    for (const entry of entries) {
+        if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+        if (!/^[A-Za-z0-9_-]+$/.test(entry.name)) continue;
+        const target = path.resolve(resolvedParent, entry.name);
+        if (!target.startsWith(resolvedParent + path.sep)) continue;
+        try {
+            const stat = await fs.lstat(target);
+            if (!stat.isDirectory() || stat.isSymbolicLink()) continue;
+            if (stat.mtimeMs <= cutoffMs) {
+                await fs.rm(target, { recursive: true, force: true });
+                removedCount += 1;
+            }
+        } catch (err) {
+            if (err.code !== 'ENOENT') {
+                console.warn(`[OperationWorkspace] Failed cleaning stale dir ${entry.name}:`, err?.message || err);
+            }
+        }
+    }
+    return removedCount;
+};
 export const currentProjectOperation = () => contexts.getStore();
 export const runImmediateCheckpoint = async fn => fn(prisma);
 export const beginPreparedPublications = () => { const context = contexts.getStore(); if (context) context.preparedPublications = []; };
@@ -105,6 +150,12 @@ export const withOperationWorkspace = async (operationId,run,{includeGitMetadata
         const originalRootDir = projectEditableWorkspaceRoot(snapshot);
         await recoverProjectMutationMarkers({tx,project:access.project,snapshot,root:originalRootDir});
         await fs.mkdir(workspaceParent,{recursive:true});
+        if (Date.now() - lastStaleCleanupAt >= STALE_CLEANUP_INTERVAL_MS) {
+            lastStaleCleanupAt = Date.now();
+            void cleanupStaleOperationWorkspaces(workspaceParent).catch(err => {
+                console.warn('[OperationWorkspace] Stale cleanup warning:', err?.message || err);
+            });
+        }
         if (resumeWorkspace || operation.capability === 'tests.run') {
             const relative = path.relative(path.resolve(workspaceParent), path.resolve(rootDir));
             if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw projectFileError('INVALID_OPERATION','Invalid resume workspace',400);
@@ -114,12 +165,14 @@ export const withOperationWorkspace = async (operationId,run,{includeGitMetadata
             catch(error) { if (error.code !== 'ENOENT') throw error; }
         }
         recordUnitTestWork('workspaceCopies');
+        const ignoredDirs = includeGitMetadata ? GIT_WORKSPACE_IGNORED_DIRECTORIES : runtimeIgnoredDirectories;
         await measureUnitTestPhase('workspacePreparation', () => fs.cp(originalRootDir,rootDir,{recursive:true,dereference:false,errorOnExist:true,
             filter:async source => {
                 const name = path.basename(source);
                 const relative = path.relative(originalRootDir,source).replaceAll('\\','/');
                 const inGit = includeGitMetadata && (relative === '.git' || relative.startsWith('.git/'));
-                if (!inGit && source !== originalRootDir && (runtimeIgnoredDirectories.has(name) || name === '.env' || name.startsWith('.env.'))) return false;
+                const disallowedSecret = isVcsSecretFileName(name);
+                if (!inGit && source !== originalRootDir && (ignoredDirs.has(name) || disallowedSecret)) return false;
                 try {
                     const stat = await fs.lstat(source);
                     if (stat.isFile()) recordUnitTestWork('workspaceCopiedBytes',stat.size);
@@ -146,6 +199,7 @@ export const withOperationWorkspace = async (operationId,run,{includeGitMetadata
         await tx.projectOperation.update({where:{id:operationId},data:{status:'RUNNING'}});
     });
     if (!context) return {skipped:true,operationId};
+    let failed = false;
     try {
         const result = await contexts.run(context,async()=>{
             if (deferResults) beginPreparedPublications();
@@ -179,11 +233,23 @@ export const withOperationWorkspace = async (operationId,run,{includeGitMetadata
         return result;
     }
     catch(error) {
+        failed = true;
         const status = error.code === 'OPERATION_STALE' ? 'STALE' : error.code === 'OPERATION_CANCELED' ? 'CANCELED' : 'FAILED';
         await prisma.projectOperation.updateMany({where:{id:operationId,status:{in:ACTIVE_PROJECT_OPERATIONS}},data:{status}}).catch(()=>{});
         throw error;
     }
-    // Workspace is kept for diagnostic artifacts, not copied back to source.
+    finally {
+        const keepFailedWorkspace = failed && process.env.COVAI_KEEP_FAILED_OP_WORKSPACE === 'true';
+        if (!keepFailedWorkspace) {
+            const resolvedParent = path.resolve(workspaceParent);
+            const resolvedTarget = path.resolve(rootDir);
+            if (resolvedTarget.startsWith(resolvedParent + path.sep)) {
+                await fs.rm(resolvedTarget, { recursive: true, force: true }).catch(err => {
+                    console.warn(`[OperationWorkspace] Failed cleaning workspace ${operationId}:`, err?.message || err);
+                });
+            }
+        }
+    }
 };
 
 export const runJobInOperationWorkspace = async (jobId,run) => {

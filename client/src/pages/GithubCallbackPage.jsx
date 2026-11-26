@@ -19,6 +19,7 @@ import {
 import { consumeAuthReturn } from "../lib/authReturn";
 import { getAccessToken, refreshAccessToken } from "../lib/authSession";
 import { queryClient } from "../lib/queryClient";
+import { resetGuidanceTours } from "../components/dashboard/guidance/guidanceStorage";
 import {
   AUTH_ERROR_CODES,
   AUTH_MESSAGES,
@@ -65,11 +66,16 @@ function getOrCreateOAuthTask(code, state, isConnectMode) {
 }
 
 function persistAuthenticatedSession(data) {
+  resetGuidanceTours();
   const accessToken = data.accessToken || data.token;
   const userPayload = {
     id: data.userId || data.id || null,
     name: data.name || "",
     email: data.email || "",
+    authProvider: data.authProvider || "github",
+    githubLogin: data.githubLogin || null,
+    githubScopes: Array.isArray(data.githubScopes) ? data.githubScopes : [],
+    hasGithubRepoWriteScope: Boolean(data.hasGithubRepoWriteScope),
     token: accessToken,
   };
   localStorage.setItem("token", accessToken);

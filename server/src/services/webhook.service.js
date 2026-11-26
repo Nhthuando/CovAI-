@@ -1,15 +1,27 @@
 import crypto from "crypto";
 import prismaClient from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
-import { z } from "zod";
-import { GitHubRepositoryAccessService } from "./github.service.js";
-import { createAnalysisJob, createSnapshotIngestJob } from "./job.service.js";
+import { encrypt, decrypt } from "../utils/crypto.js";
+import { GitHubCloneService } from "./githubClone.service.js";
+import { resolveProjectRoot } from "../utils/projectRootResolver.js";
+import { detectJest } from "../utils/jestDetector.js";
+import { deliverScopedProjectTransport } from "./projectSubscription.service.js";
+import { clearProjectTreeCache } from "./project.service.js";
+import { clearPortfolioCache } from "./portfolioDashboard.service.js";
+import { GIT_SOCKET_EVENTS } from "../../../shared/gitProtocol.js";
+import { createAnalysisJob } from "./job.service.js";
 import { notificationService } from "./notification.service.js";
 import { createHash } from "crypto";
-import fs from "fs";
-import path from "path";
 
 const prisma = prismaClient;
+
+export function normalizeWebhookRepoUrl(url) {
+  return String(url || "")
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\.git$/i, "")
+    .toLowerCase();
+}
 
 /**
  * Verify GitHub webhook signature
@@ -19,39 +31,32 @@ export const verifyGithubWebhookSignature = (payload, signature, secret) => {
   if (!secret) {
     throw new ServiceError("Webhook secret not configured", 400);
   }
+  if (typeof signature !== "string" || !signature.startsWith("sha256=")) {
+    return false;
+  }
 
   const hmac = crypto.createHmac("sha256", secret);
   hmac.update(payload, "utf8");
   const expectedSignature = `sha256=${hmac.digest("hex")}`;
 
+  const sigBuf = Buffer.from(signature, "utf8");
+  const expectedBuf = Buffer.from(expectedSignature, "utf8");
+  if (sigBuf.length !== expectedBuf.length) {
+    return false;
+  }
+
   // Constant-time comparison to prevent timing attacks
-  return crypto.timingSafeEqual(
-    Buffer.from(signature),
-    Buffer.from(expectedSignature),
-  );
+  return crypto.timingSafeEqual(sigBuf, expectedBuf);
 };
 
 /**
- * Decrypt webhook secret using encryption key from environment
+ * Decrypt webhook secret using shared AES-256-GCM helper (`utils/crypto.js`)
  */
 const decryptWebhookSecret = (encryptedSecret) => {
   if (!encryptedSecret) return null;
 
   try {
-    const key = process.env.ENCRYPTION_KEY || "default-encryption-key";
-    const algorithm = "aes-256-gcm";
-    const [iv, encData, tag] = encryptedSecret.split(":");
-
-    const decipher = crypto.createDecipheriv(
-      algorithm,
-      Buffer.from(key),
-      Buffer.from(iv, "hex"),
-    );
-    decipher.setAuthTag(Buffer.from(tag, "hex"));
-
-    let decrypted = decipher.update(encData, "hex", "utf8");
-    decrypted += decipher.final("utf8");
-    return decrypted;
+    return decrypt(encryptedSecret);
   } catch (error) {
     console.error("[WebhookService] Error decrypting webhook secret:", error);
     return null;
@@ -59,20 +64,11 @@ const decryptWebhookSecret = (encryptedSecret) => {
 };
 
 /**
- * Encrypt webhook secret
+ * Encrypt webhook secret using shared AES-256-GCM helper (`utils/crypto.js`)
  */
 const encryptWebhookSecret = (secret) => {
   try {
-    const key = process.env.ENCRYPTION_KEY || "default-encryption-key";
-    const algorithm = "aes-256-gcm";
-    const iv = crypto.randomBytes(16);
-
-    const cipher = crypto.createCipheriv(algorithm, Buffer.from(key), iv);
-    let encrypted = cipher.update(secret, "utf8", "hex");
-    encrypted += cipher.final("hex");
-
-    const tag = cipher.getAuthTag();
-    return `${iv.toString("hex")}:${encrypted}:${tag.toString("hex")}`;
+    return encrypt(secret);
   } catch (error) {
     console.error("[WebhookService] Error encrypting webhook secret:", error);
     throw error;
@@ -94,41 +90,50 @@ export const webhookService = {
         throw new ServiceError("Invalid GitHub push payload", 400);
       }
 
-      const repoUrl = repository.clone_url || repository.html_url;
+      const rawRepoUrl = repository.html_url || repository.clone_url;
+      const candidateUrls = new Set(
+        [repository.clone_url, repository.html_url]
+          .filter(Boolean)
+          .map(normalizeWebhookRepoUrl),
+      );
       const repoOwner = repository.owner?.login || pusher?.name;
       const repoName = repository.name;
       const branch = ref?.split("/").pop() || "main";
       const commitSha = head_commit.id;
-      const commitMessage = head_commit.message;
 
       console.log(
         `[WebhookService] Push event: ${repoOwner}/${repoName} on branch ${branch}, commit ${commitSha}`,
       );
 
-      // Find project associated with this repository
-      const project = await prisma.project.findFirst({
+      // Find project associated with this repository using normalized URL matching
+      const webhookProjects = await prisma.project.findMany({
         where: {
           ownerId: userId,
-          repoUrl: repoUrl,
           webhookEnabled: true,
           webhookBranch: branch,
         },
+        select: {
+          id: true,
+          repoUrl: true,
+          defaultBranch: true,
+        },
       });
+      const project = webhookProjects.find((p) =>
+        candidateUrls.has(normalizeWebhookRepoUrl(p.repoUrl)),
+      );
 
       if (!project) {
         console.log(
-          `[WebhookService] No webhook-enabled project found for repo ${repoUrl} on branch ${branch}`,
+          `[WebhookService] No webhook-enabled project found for repo ${rawRepoUrl} on branch ${branch}`,
         );
         return null;
       }
 
-      // Check if snapshot already exists for this commit (prevent duplicates)
-      const existingSnapshot = await prisma.projectSnapshot.findUnique({
+      // Check if snapshot already exists for this commit (non-unique commitSha post-Phase-0)
+      const existingSnapshot = await prisma.projectSnapshot.findFirst({
         where: {
-          projectId_commitSha: {
-            projectId: project.id,
-            commitSha: commitSha,
-          },
+          projectId: project.id,
+          commitSha: commitSha,
         },
         select: { id: true, createdAt: true },
       });
@@ -140,7 +145,7 @@ export const webhookService = {
         return existingSnapshot;
       }
 
-      // Get user's GitHub token for cloning
+      // Verify user has a stored GitHub token (actual decryption occurs inside GitHubService)
       const user = await prisma.user.findUnique({
         where: { id: userId },
         select: { githubAccessTokenEnc: true, email: true },
@@ -150,46 +155,77 @@ export const webhookService = {
         throw new ServiceError("User GitHub token not available", 400);
       }
 
-      // Clone or update repository
-      console.log(
-        `[WebhookService] Cloning/updating repository from ${repoUrl}`,
-      );
-      const clonedRepoPath =
-        await GitHubRepositoryAccessService.cloneOrUpdateRepository(
-          repoUrl,
-          project.id,
-          user.githubAccessTokenEnc,
-        );
+      if (!repoOwner || !repoName) {
+        throw new ServiceError("Invalid repository owner/name in webhook payload", 400);
+      }
 
-      if (!clonedRepoPath) {
+      // Clone repository cleanly via transient credential helper (userId)
+      console.log(
+        `[WebhookService] Cloning/updating repository from ${rawRepoUrl}`,
+      );
+      const cloneResult = await GitHubCloneService.cloneRepository(
+        userId,
+        project.id,
+        repoOwner,
+        repoName,
+        true,
+      );
+
+      if (!cloneResult?.localPath) {
         throw new ServiceError("Failed to clone repository", 500);
       }
 
-      // Create a checksum for the repository
+      const resolvedRootDir =
+        resolveProjectRoot(cloneResult.localPath) || cloneResult.localPath;
+      const detection = detectJest(resolvedRootDir);
       const checksum = createHash("sha256")
-        .update(commitSha + clonedRepoPath)
+        .update(`${commitSha}:${cloneResult.localPath}`)
         .digest("hex");
 
-      // Create ProjectSnapshot via ingest job
+      // Create ProjectSnapshot record directly for the new commit workspace
       console.log(
         `[WebhookService] Creating ProjectSnapshot for commit ${commitSha}`,
       );
-      const snapshotResult = await createSnapshotIngestJob({
-        projectId: project.id,
-        userId,
-        checksum,
-        storagePath: clonedRepoPath,
+      const snapshot = await prisma.projectSnapshot.create({
+        data: {
+          projectId: project.id,
+          source: "GITHUB",
+          commitSha: cloneResult.commitSha || commitSha,
+          checksum,
+          storagePath: cloneResult.localPath,
+          rootDir: resolvedRootDir,
+          hasJest: detection.hasJest,
+          jestConfigPath: detection.configPath,
+          jestCommand: detection.jestCommand,
+          testingFrameworksJson: JSON.stringify(detection.testingFrameworks),
+        },
+        select: { id: true, commitSha: true, rootDir: true, storagePath: true },
       });
 
-      const snapshot = snapshotResult.result || snapshotResult;
-      if (!snapshot || !snapshot.id) {
-        throw new ServiceError("Failed to create project snapshot", 500);
-      }
-
-      // Update project's lastAnalyzedCommit
+      // Activate the new snapshot and update lastAnalyzedCommit
       await prisma.project.update({
         where: { id: project.id },
-        data: { lastAnalyzedCommit: commitSha },
+        data: {
+          activeSnapshotId: snapshot.id,
+          lastAnalyzedCommit: commitSha,
+          workspaceRevision: { increment: 1 },
+        },
+      });
+
+      clearProjectTreeCache();
+      clearPortfolioCache(userId);
+      void deliverScopedProjectTransport({
+        projectId: project.id,
+        event: GIT_SOCKET_EVENTS.STATUS_UPDATED,
+        payload: {
+          projectId: project.id,
+          reason: "github_webhook_push",
+          branch,
+          commitSha,
+          snapshotId: snapshot.id,
+        },
+      }).catch((err) => {
+        console.warn("[WebhookService] Socket transport warning:", err?.message || err);
       });
 
       // Trigger Automatic Analysis Pipeline by creating an ANALYSIS job

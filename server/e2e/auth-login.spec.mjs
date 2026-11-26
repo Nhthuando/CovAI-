@@ -55,6 +55,7 @@ test.beforeAll(async () => {
       cwd: CLIENT_DIR,
       env: {
         ...process.env,
+        VITE_BACKEND_DOCKER_URL: "http://127.0.0.1:55100",
         VITE_API_URL: API_BASE,
         VITE_GITHUB_CLIENT_ID: "e2e-github-client-id",
       },
@@ -238,7 +239,7 @@ test("TC_LOG_17 (Option B): GitHub OAuth matching local email requires explicit 
   // Intercept GitHub authorize redirect to bounce back to our callback with valid CSRF state
   await page.route("https://github.com/login/oauth/authorize*", async (route) => {
     const reqUrl = new URL(route.request().url());
-    expect(reqUrl.searchParams.get("scope")).toBe("read:user user:email");
+    expect(reqUrl.searchParams.get("scope")).toBe("repo read:user user:email");
     const state = reqUrl.searchParams.get("state");
     await route.fulfill({
       status: 302,

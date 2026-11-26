@@ -70,12 +70,13 @@ export const ensureProjectDependencies = async (jobId, rootDir) => {
           `[SUPERTEST] Installing dependencies for ${label}...`,
         ).catch(() => {});
         const prefixFlag = rel ? ` --prefix ${rel}` : "";
-        const installCmd = `npm install${prefixFlag} --prefer-offline --legacy-peer-deps --no-audit --no-fund --progress=false`;
+        const installCmd = `npm install${prefixFlag} --include=dev --prefer-offline --legacy-peer-deps --no-audit --no-fund --progress=false`;
         await dockerRunner.run({
           snapshotPath: rootDir,
           command: installCmd,
           timeoutMs: 5 * 60 * 1000,
           jobId,
+          env: { NODE_ENV: "development" },
         });
       }
     }
@@ -1194,7 +1195,11 @@ export const processSupertestCoverageJob = async (jobId) => {
     const finalPath = path.join(coverageDir, "coverage-final.json");
     if (!fs.existsSync(summaryPath) || !fs.existsSync(finalPath)) {
       const errorSnippet = (runResult.stderr || runResult.stdout || "").trim();
-      const reason = errorSnippet ? `: ${errorSnippet.slice(-300)}` : "";
+      const formattedSnippet =
+        errorSnippet.length > 600
+          ? `${errorSnippet.slice(0, 300)} ... ${errorSnippet.slice(-300)}`
+          : errorSnippet;
+      const reason = formattedSnippet ? `: ${formattedSnippet}` : "";
       throw new ServiceError(
         `Supertest completed without producing the required coverage JSON files${reason}`,
         422,

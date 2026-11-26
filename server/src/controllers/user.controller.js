@@ -1,10 +1,12 @@
 import { meValid } from "../validators/user.validation.js";
 import { updateUserService, getUserById } from "../services/user.service.js";
+import { resolveRequestAuthProvider } from "../middlewares/requireAuthProvider.middleware.js";
 
 export const me = async (req, res) => {
   try {
     const { id } = req.user;
-    const user = await getUserById(id);
+    const authProvider = await resolveRequestAuthProvider(req);
+    const user = await getUserById(id, { authProvider });
     return res.status(200).json(user);
   } catch (error) {
     console.error("Update error:", error);

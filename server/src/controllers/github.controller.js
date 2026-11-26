@@ -82,7 +82,7 @@ async function finalizeGitHubImportSnapshot({ projectId, ownerId, cloneResult, r
     .update({
       where: { id: projectId },
       data: {
-        repoUrl,
+        ...(repoUrl ? { repoUrl } : {}),
         defaultBranch: cloneResult.defaultBranch || "main",
         activeSnapshotId: snapshot.id,
         workspaceRevision: { increment: 1 },
@@ -116,8 +116,8 @@ export const cloneGitHubRepositoryByUrl = async (req, res) => {
     const owner = match[1];
     const repo = match[2].replace(".git", "");
 
-    // If user has linked GitHub, check if repository is private via API
-    if (req.user?.id) {
+    // For GitHub sessions only, probe private repo status using acting user's token
+    if (req.user?.id && req.user?.authProvider === "github") {
       try {
         const userToken = await GitHubRepositoryAccessService.getGitHubToken(
           req.user.id,
@@ -169,12 +169,46 @@ export const cloneGitHubRepositoryByUrl = async (req, res) => {
       });
     }
 
+    const isEmailSession = req.user?.authProvider === "email";
+    if (isEmailSession) {
+      for (const candidateDir of new Set([
+        cloneResult.localPath,
+        resolveProjectRoot(cloneResult.localPath),
+      ].filter(Boolean))) {
+        const gitDir = path.join(candidateDir, ".git");
+        if (fs.existsSync(gitDir)) {
+          try {
+            fs.rmSync(gitDir, { recursive: true, force: true });
+          } catch (cleanupErr) {
+            console.warn(
+              "[GitHub Import URL] Failed removing .git from email snapshot workspace:",
+              cleanupErr?.message || cleanupErr,
+            );
+          }
+        }
+      }
+    }
+
     const { snapshot, testingFrameworks, reused } = await finalizeGitHubImportSnapshot({
       projectId,
       ownerId: req.user?.id,
       cloneResult,
-      repoUrl: url,
+      repoUrl: isEmailSession ? null : url,
     });
+
+    if (!reused && isEmailSession) {
+      try {
+        const { ensureProjectCasBaseline } = await import("../services/snapshotCas.service.js");
+        await ensureProjectCasBaseline({
+          projectId,
+          snapshotId: snapshot.id,
+          userId: req.user?.id,
+          rootDir: snapshot.rootDir || cloneResult.localPath,
+        });
+      } catch (casErr) {
+        console.warn("[GitHub Import URL] CAS baseline warning:", casErr?.message || casErr);
+      }
+    }
 
     if (!reused) {
       // Build CFG in background

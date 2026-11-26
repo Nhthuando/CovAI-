@@ -52,6 +52,7 @@ describe('supertestRunner.service', () => {
         const runOptions = dockerRunner.run.mock.calls[0][0];
         expect(runOptions.env.NODE_OPTIONS).toContain('--experimental-vm-modules');
         expect(runOptions.command).toContain('npx --no-install jest');
+        expect(runOptions.command).not.toMatch(/node(?:\.exe)?["']?\s+--experimental-vm-modules\s+npx/);
     });
 
     test('rejects missing or invalid project roots', async () => {

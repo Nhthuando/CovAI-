@@ -7,7 +7,7 @@ import ActivityBar from "./ActivityBar";
 import Sidebar from "./Sidebar";
 import Editor from "./Editor";
 import RetainedPanel from "../common/RetainedPanel";
-import GitPanel from "./GitPanel";
+import VcsStatusBar from "./vcs/shared/VcsStatusBar";
 import CoverageDashboard from "./CoverageDashboard";
 import UnitTestDashboard from "./UnitTestDashboard";
 import IntegrationTestDashboard from "./IntegrationTestDashboard";
@@ -27,6 +27,8 @@ import SettingsSidebar from "./settings/SettingsSidebar";
 import ProjectMembersSettings from "./settings/ProjectMembersSettings";
 import { useProjectAccess } from "../../hooks/useProjectAccess";
 import { useProjectEvents } from "../../hooks/useProjectEvents";
+import { useVcsSync } from "../../hooks/useVcsSync";
+import { VC_MODES } from "../../../../shared/versionControlMode.js";
 import UserProfile from "./settings/UserProfile";
 import Appearance from "./settings/Appearance";
 import Security from "./settings/Security";
@@ -37,7 +39,8 @@ import MissingTestFilesModal from "./MissingTestFilesModal";
 import GlobalAiTokenPill from "./GlobalAiTokenPill";
 import PanelResizer from "./PanelResizer";
 import ConfirmDialog from "../common/ConfirmDialog";
-import PlatformGuidanceModal from "./guidance/PlatformGuidanceModal";
+import SpotlightTourOverlay from "./guidance/SpotlightTourOverlay";
+import { resolveTourKey } from "./guidance/platformGuidanceData";
 import {
   PanelLeftClose,
   PanelLeftOpen,
@@ -57,7 +60,6 @@ import {
   Network,
   Layers,
   FileText,
-  BookOpen,
 } from "lucide-react";
 import CovaiLogo from "../common/CovaiLogo";
 import "./portfolio/portfolio.css";
@@ -126,7 +128,7 @@ function LayoutInner() {
   const { showToast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, logout } = useAuth();
+  const { user, vcMode, logout } = useAuth();
   const searchParams = new URLSearchParams(location.search);
   const initialProjectId = searchParams.get("projectId");
   const initialTab = searchParams.get("tab") || "explorer";
@@ -137,13 +139,10 @@ function LayoutInner() {
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showCFG, setShowCFG] = useState(false);
-  const [showGuidance, setShowGuidance] = useState(false);
-  const [guidanceInitialStepId, setGuidanceInitialStepId] = useState(null);
   const [activeActivity, setActiveActivity] = useState(initialTab);
   const [visitedPanels, setVisitedPanels] = useState(
     () => new Set([initialTab]),
   );
-  const [showGit, setShowGit] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
   const [isDraggingSidebar, setIsDraggingSidebar] = useState(false);
@@ -377,65 +376,6 @@ function LayoutInner() {
   }, [setAiPanelOpen, setPendingAiSuggestion]);
 
   useEffect(() => {
-    const onOpenGuide = (event) => {
-      setGuidanceInitialStepId(event.detail?.stepId || null);
-      setShowGuidance(true);
-    };
-    window.addEventListener("covai:open-guide", onOpenGuide);
-    return () => window.removeEventListener("covai:open-guide", onOpenGuide);
-  }, []);
-
-  const handleNavigateGuideTarget = useCallback(
-    (target) => {
-      if (!target) return;
-      if (target.kind === "portfolio") {
-        navigate("/projects");
-        return;
-      }
-      if (target.activity === "logic-analysis") {
-        setShowCFG(true);
-        return;
-      }
-      setShowCFG(false);
-      const nextActivity = target.activity || "explorer";
-      if (nextActivity === "explorer") {
-        setSidebarOpen(true);
-      }
-      setActiveActivity(nextActivity);
-      if (nextActivity === "coverage" && target.coverageType) {
-        setCoverageType(target.coverageType);
-      }
-      const params = new URLSearchParams(location.search);
-      params.set("tab", nextActivity);
-      if (nextActivity === "coverage" && target.coverageType) {
-        params.set("coverageType", target.coverageType);
-        params.set("type", target.coverageType);
-      } else {
-        params.delete("coverageType");
-        params.delete("type");
-      }
-      if (nextActivity === "trustworthiness" && target.evalView) {
-        params.set("view", target.evalView);
-      } else if (nextActivity !== "trustworthiness") {
-        params.delete("view");
-      }
-      params.delete("focusFile");
-      params.delete("focusEndpoint");
-      params.delete("focusScenario");
-      navigate(`${location.pathname}?${params.toString()}`, { replace: true });
-    },
-    [
-      location.pathname,
-      location.search,
-      navigate,
-      setShowCFG,
-      setSidebarOpen,
-      setActiveActivity,
-      setCoverageType,
-    ],
-  );
-
-  useEffect(() => {
     const onPrefillEvent = (e) => {
       const text = e.detail?.promptText;
       if (text) {
@@ -470,6 +410,7 @@ function LayoutInner() {
     return null;
   });
   const projectAccess = useProjectAccess(project?.id);
+  const vcsSummary = useVcsSync(project?.id);
   const chatSnapshotId =
     searchParams.get("snapshotId") ||
     project?.activeSnapshotId ||
@@ -661,12 +602,50 @@ function LayoutInner() {
     setCoverageRunTrigger((prev) => prev + 1);
   };
 
-  const handleGitSync = async () => {
+  const handleVcsSync = async (options = {}) => {
+    const activeProjId = project?.id;
+    if (!activeProjId) return;
     try {
-      await loadData(project?.id, 1, 0, { forceRefresh: true });
+      const { invalidateFileContentCache } = await import(
+        "../../services/project.service"
+      );
+      invalidateFileContentCache(activeProjId);
+
+      if (options?.snapshotId) {
+        const nextSnapId = options.snapshotId;
+        localStorage.setItem(`latestSnapshot_${activeProjId}`, nextSnapId);
+        setProject((prev) =>
+          prev && prev.id === activeProjId
+            ? {
+                ...prev,
+                activeSnapshotId: nextSnapId,
+                latestSnapshotId: nextSnapId,
+              }
+            : prev,
+        );
+        const params = new URLSearchParams(location.search);
+        if (params.get("snapshotId") !== nextSnapId) {
+          params.set("snapshotId", nextSnapId);
+          navigate(`${location.pathname}?${params.toString()}`, {
+            replace: true,
+          });
+        }
+      }
+
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["projectTree", user?.id, activeProjId],
+        }),
+        queryClient.invalidateQueries({ queryKey: ["projects"] }),
+        queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] }),
+      ]);
+      if (!options?.skipVcsRefetch) {
+        vcsSummary.invalidateAll();
+      }
+      await loadData(activeProjId, 1, 0, { forceRefresh: true });
       setEditorRefreshTrigger((prev) => prev + 1);
     } catch (err) {
-      console.error("Failed to sync after git operation", err);
+      console.error("Failed to sync after VCS operation", err);
     }
   };
 
@@ -1268,6 +1247,11 @@ function LayoutInner() {
         expectedWorkspaceRevision: rev,
       });
       refreshProjectFiles(true);
+      window.dispatchEvent(
+        new CustomEvent("covai:workspace-saved", {
+          detail: { projectId: project.id, path: normalizedPath },
+        }),
+      );
       showToast({
         type: "success",
         title: "File created",
@@ -1358,6 +1342,11 @@ function LayoutInner() {
         expectedWorkspaceRevision: rev,
       });
       refreshProjectFiles(true);
+      window.dispatchEvent(
+        new CustomEvent("covai:workspace-saved", {
+          detail: { projectId: project.id, path: normNew },
+        }),
+      );
       showToast({
         type: "success",
         title: "Renamed",
@@ -1407,6 +1396,11 @@ function LayoutInner() {
         expectedWorkspaceRevision: rev,
       });
       refreshProjectFiles(true);
+      window.dispatchEvent(
+        new CustomEvent("covai:workspace-saved", {
+          detail: { projectId: project.id, path: targetPath },
+        }),
+      );
       showToast({
         type: "success",
         title: "Deleted",
@@ -1597,6 +1591,7 @@ function LayoutInner() {
         <div className="flex items-center justify-center flex-shrink-0 mx-2">
           <nav
             role="tablist"
+            data-guide="top-test-levels"
             aria-label="Coverage Test Levels"
             className="inline-flex items-center p-0.5 rounded-md bg-[var(--ps-inset)] border border-[var(--ps-line)]"
           >
@@ -1686,21 +1681,6 @@ function LayoutInner() {
             </button>
           )}
 
-          <button
-            type="button"
-            id="covai-guide-toggle"
-            onClick={() => {
-              setGuidanceInitialStepId(null);
-              setShowGuidance(true);
-            }}
-            aria-label="Open workspace guide"
-            title="Workspace Guide (step-by-step walkthrough)"
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] bg-[var(--ps-surface-2)] hover:border-[var(--ps-line-strong)] border border-[var(--ps-line)] transition-colors duration-150 cursor-pointer focus-visible:outline-2 focus-visible:outline-[var(--ps-cobalt)]"
-          >
-            <BookOpen size={13} className="text-[var(--ps-cobalt)]" />
-            {!isMobile && <span>Guide</span>}
-          </button>
-
           <div className="flex items-center rounded-md bg-[var(--ps-inset)] border border-[var(--ps-line)] p-0.5 gap-0.5">
             <button
               type="button"
@@ -1764,6 +1744,7 @@ function LayoutInner() {
             <ActivityBar
               active={showCFG ? "logic-analysis" : activeActivity}
               onSelect={handleSelectActivity}
+              vcsSummary={vcsSummary}
             />
           </motion.div>
         )}
@@ -1771,6 +1752,7 @@ function LayoutInner() {
           {sidebarOpen && !isFullWidthWorkspace && (
             <motion.div
               key="sidebar"
+              data-guide="sidebar-explorer"
               initial={
                 isMobile ? { x: -280, opacity: 0 } : { width: 0, opacity: 0 }
               }
@@ -1837,6 +1819,8 @@ function LayoutInner() {
                   onCreateFolder={handleCreateFolder}
                   onRenameEntry={handleRenameEntry}
                   onDeleteEntry={handleDeleteEntry}
+                  vcsSummary={vcsSummary}
+                  onOpenVersionControl={() => handleSelectActivity("version-control")}
                 />
               )}
             </motion.div>
@@ -1854,6 +1838,7 @@ function LayoutInner() {
           />
         )}
         <motion.div
+          data-guide="workspace-main"
           className="flex flex-1 min-w-0 min-h-0 relative"
           variants={panelVariants}
         >
@@ -1910,7 +1895,9 @@ function LayoutInner() {
             >
               <VersionControlWorkspace
                 projectId={project?.id}
-                onSync={handleGitSync}
+                project={project}
+                onSync={handleVcsSync}
+                onOpenFile={handleOpenFileByPath}
               />
             </div>
           )}
@@ -1926,7 +1913,7 @@ function LayoutInner() {
                   : "hidden"
               }
             >
-              <JobQueue projectId={project?.id} onSync={handleGitSync} />
+              <JobQueue projectId={project?.id} onSync={handleVcsSync} />
             </div>
           )}
 
@@ -2125,6 +2112,7 @@ function LayoutInner() {
             visitedPanels.has("editor") ||
             visitedPanels.has("explorer")) && (
             <div
+              data-guide="editor-workspace"
               className={
                 !isFullWidthWorkspace &&
                 activeActivity !== "settings" &&
@@ -2234,12 +2222,21 @@ function LayoutInner() {
           </motion.div>
         </>
       </motion.div>
-      <div className="flex items-center justify-between flex-shrink-0 h-6 px-3 sm:px-4 bg-[var(--ps-surface)] border-t border-[var(--ps-line)] text-[11px] text-[var(--ps-ink-muted)] ps-mono whitespace-nowrap overflow-x-auto select-none">
+      <div className="flex items-center justify-between flex-shrink-0 h-6 px-3 sm:px-4 bg-[var(--ps-surface)] border-t border-[var(--ps-line)] text-[11px] text-[var(--ps-ink-muted)] ps-mono whitespace-nowrap select-none">
         <div className="flex items-center gap-3 shrink-0">
-          <div className="flex items-center gap-1.5 text-[var(--ps-ink-secondary)]">
-            <GitBranch size={11} className="text-[var(--ps-ink-muted)]" />
-            {!isMobile && <span>main</span>}
-          </div>
+          <VcsStatusBar
+            projectId={project?.id}
+            vcsSummary={vcsSummary}
+            isMobile={isMobile}
+            canSwitchBranch={
+              vcMode === VC_MODES.GIT_GITHUB
+                ? projectAccess.can("integrations.write")
+                : projectAccess.can("snapshot.restore")
+            }
+            disabledReason="Owner role required to switch branches"
+            onOpenVersionControl={() => handleSelectActivity("version-control")}
+            onSync={handleVcsSync}
+          />
           {!isMobile && (
             <>
               <div className="w-px h-3 bg-[var(--ps-line)]" />
@@ -2323,19 +2320,20 @@ function LayoutInner() {
         variant="danger"
         icon={LogOut}
       />
-      <PlatformGuidanceModal
-        isOpen={showGuidance}
-        onClose={() => setShowGuidance(false)}
-        initialStepId={guidanceInitialStepId}
-        currentContext={{
+      <SpotlightTourOverlay
+        tourKey={resolveTourKey({
           page: "workspace",
           activeActivity,
           coverageType,
-          evalView: searchParams.get("view") || "home",
           showCFG,
-        }}
-        onNavigateTarget={handleNavigateGuideTarget}
-        onAskAi={handleAskAiPrompt}
+        })}
+        userId={user?.id}
+        suppressed={
+          showImport ||
+          showLogoutConfirm ||
+          showQualityDashboard ||
+          showMissingTestFilesModal
+        }
       />
     </div>
   );

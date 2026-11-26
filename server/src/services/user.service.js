@@ -1,8 +1,33 @@
 import prisma from "../config/prisma.js";
+import {
+  AUTH_PROVIDERS,
+  hasGithubRepoWriteScope,
+  normalizeAuthProvider,
+  parseGithubScopes,
+  resolveVersionControlMode,
+} from "../../../shared/versionControlMode.js";
 
-export const getUserById = async (userId) => {
+export const getUserById = async (userId, { authProvider = null } = {}) => {
   const user = await prisma.user.findUnique({
     where: { id: userId },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      avatarUrl: true,
+      jobTitle: true,
+      bio: true,
+      githubUserId: true,
+      githubLogin: true,
+      githubOAuthScopes: true,
+      lastAuthProvider: true,
+      passwordHash: true,
+      aiUsageDate: true,
+      aiUsageCount: true,
+      aiTokenUsage: true,
+      createdAt: true,
+      updatedAt: true,
+    },
   });
 
   if (!user) {
@@ -14,6 +39,14 @@ export const getUserById = async (userId) => {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const currentDayUsage = user.aiUsageDate === today ? (user.aiUsageCount || 0) : 0;
 
+  const effectiveAuthProvider =
+    normalizeAuthProvider(authProvider) ||
+    normalizeAuthProvider(user.lastAuthProvider) ||
+    (!user.passwordHash && user.githubUserId
+      ? AUTH_PROVIDERS.GITHUB
+      : AUTH_PROVIDERS.EMAIL);
+  const githubScopes = parseGithubScopes(user.githubOAuthScopes);
+
   return {
     id: user.id,
     name: user.name,
@@ -22,6 +55,12 @@ export const getUserById = async (userId) => {
     jobTitle: user.jobTitle,
     bio: user.bio,
     githubUserId: user.githubUserId || null,
+    githubLogin: user.githubLogin || null,
+    githubScopes,
+    hasGithubRepoWriteScope: hasGithubRepoWriteScope(githubScopes),
+    hasLocalPassword: Boolean(user.passwordHash),
+    authProvider: effectiveAuthProvider,
+    vcMode: resolveVersionControlMode(effectiveAuthProvider),
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
     aiQuota: {

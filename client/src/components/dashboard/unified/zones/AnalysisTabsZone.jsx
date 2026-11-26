@@ -65,6 +65,7 @@ export function AnalysisTabsZone({
   return (
     <section
       id="ud-analysis-tabs"
+      data-guide="ud-analysis"
       className={`space-y-4 ${className}`}
       aria-label="Deep Quality Analysis and History"
     >

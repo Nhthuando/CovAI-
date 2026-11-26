@@ -10,6 +10,10 @@ import {
   formatLockoutMessage,
   normalizeEmail,
 } from "../../../shared/authValidation.js";
+import {
+  AUTH_PROVIDERS,
+  normalizeAuthProvider,
+} from "../../../shared/versionControlMode.js";
 
 const JWT_TTL = process.env.JWT_ACCESS_EXPIRES_IN || "15m";
 const REFRESH_TTL = process.env.JWT_REFRESH_EXPIRES_IN || "30d";
@@ -76,16 +80,29 @@ function retainActiveRefreshTokens(storedValue) {
 export const issueSessionTokensForUser = async (
   user,
   extraUserUpdates = {},
+  options = {},
 ) => {
+  const authProvider =
+    normalizeAuthProvider(options.authProvider) || AUTH_PROVIDERS.EMAIL;
+
   const accessToken = jwt.sign(
-    { userId: user.id, userEmail: user.email, userName: user.name },
+    {
+      userId: user.id,
+      userEmail: user.email,
+      userName: user.name,
+      authProvider,
+    },
     process.env.JWT_SECRET,
     { expiresIn: JWT_TTL },
   );
 
-  const refreshToken = jwt.sign({ userId: user.id }, getRefreshSecret(), {
-    expiresIn: REFRESH_TTL,
-  });
+  const refreshToken = jwt.sign(
+    { userId: user.id, authProvider },
+    getRefreshSecret(),
+    {
+      expiresIn: REFRESH_TTL,
+    },
+  );
 
   let existingRefreshValue = user.refreshToken;
   if (existingRefreshValue === undefined) {
@@ -103,11 +120,15 @@ export const issueSessionTokensForUser = async (
 
   await prisma.user.update({
     where: { id: user.id },
-    data: { refreshToken: nextRefreshValue, ...extraUserUpdates },
+    data: {
+      refreshToken: nextRefreshValue,
+      lastAuthProvider: authProvider,
+      ...extraUserUpdates,
+    },
     select: { id: true },
   });
 
-  return { accessToken, refreshToken };
+  return { accessToken, refreshToken, authProvider };
 };
 
 /**
@@ -218,12 +239,14 @@ export const register = async (name, email, password) => {
     select: { id: true, email: true, name: true },
   });
 
-  const { accessToken, refreshToken } = await issueSessionTokensForUser(user);
+  const { accessToken, refreshToken, authProvider } =
+    await issueSessionTokensForUser(user, {}, { authProvider: AUTH_PROVIDERS.EMAIL });
 
   return {
     message: "Registration successful!",
     accessToken,
     refreshToken,
+    authProvider,
     userId: user.id,
     userName: user.name,
     userEmail: user.email,
@@ -337,15 +360,21 @@ export const login = async (
   }
 
   // Reset lockout counters atomically alongside refresh token persistence.
-  const { accessToken, refreshToken } = await issueSessionTokensForUser(user, {
-    failedLoginAttempts: 0,
-    lockedUntil: null,
-  });
+  const { accessToken, refreshToken, authProvider } =
+    await issueSessionTokensForUser(
+      user,
+      {
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      },
+      { authProvider: AUTH_PROVIDERS.EMAIL },
+    );
 
   return {
     message: "Login successful!",
     accessToken,
     refreshToken,
+    authProvider,
     userId: user.id,
     name: user.name,
     email: user.email,

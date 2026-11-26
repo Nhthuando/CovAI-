@@ -21,7 +21,6 @@ import {
   RefreshCw,
   SlidersHorizontal,
   X,
-  BookOpen,
 } from "lucide-react";
 import { useTheme } from "../../../contexts/ThemeContext";
 import { useRunningProcess } from "../../../contexts/RunningProcessContext.jsx";
@@ -2160,6 +2159,7 @@ export default function UnitTestWorkspace({
           <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
+              data-guide="unit-setup"
               onClick={() => setSetupDrawerOpen((v) => !v)}
               className={TEST_UI.btnSecondary}
               title="Inspect runner dependencies and hermetic environment setup"
@@ -2191,6 +2191,7 @@ export default function UnitTestWorkspace({
 
             <button
               type="button"
+              data-guide="unit-run"
               onClick={() => handleRunCoverage()}
               disabled={
                 !projectAccess.can("tests.run") ||
@@ -2217,6 +2218,7 @@ export default function UnitTestWorkspace({
 
             <button
               type="button"
+              data-guide="unit-export"
               onClick={() => setIsExportModalOpen(true)}
               className={TEST_UI.btnSecondary}
             >
@@ -2226,6 +2228,7 @@ export default function UnitTestWorkspace({
 
             <button
               type="button"
+              data-guide="unit-history"
               onClick={() => setDrawerOpen((v) => !v)}
               className={
                 drawerOpen ? TEST_UI.btnSecondaryActive : TEST_UI.btnSecondary
@@ -2235,28 +2238,14 @@ export default function UnitTestWorkspace({
               <Clock size={13} />
               <span className="hidden md:inline">History</span>
             </button>
-
-            <button
-              type="button"
-              onClick={() =>
-                window.dispatchEvent(
-                  new CustomEvent("covai:open-guide", {
-                    detail: { stepId: "unit-setup-run" },
-                  }),
-                )
-              }
-              className={TEST_UI.btnSecondary}
-              title="Unit Testing Guide (setup, CFG, AI synthesis & rollback)"
-              aria-label="Unit Testing Guide"
-            >
-              <BookOpen size={13} className="text-[var(--color-primary)]" />
-              <span className="hidden lg:inline">Guide</span>
-            </button>
           </div>
         </div>
 
         {/* ── 2. UNIFIED TELEMETRY STRIP (Unit Metrics Preserved) ── */}
-        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-bg)]/60">
+        <div
+          data-guide="unit-telemetry"
+          className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-bg)]/60"
+        >
           <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-[var(--color-border)] overflow-hidden">
             {/* Primary Anchor: Line Coverage + Stmts/Branches/Funcs */}
             <div className="lg:col-span-5 px-4 py-3 flex flex-col justify-between gap-2">
@@ -2375,7 +2364,7 @@ export default function UnitTestWorkspace({
 
         {/* ── 3. TWO-TAB NAVIGATION BAR ── */}
         <div className="px-5 border-t border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between">
-          <div className="flex items-center gap-5 text-xs" role="tablist">
+          <div data-guide="unit-tabs" className="flex items-center gap-5 text-xs" role="tablist">
             {[
               {
                 id: "files",
@@ -2663,7 +2652,8 @@ export default function UnitTestWorkspace({
               </div>
             )}
 
-            <UnitFileMatrixTable
+            <div data-guide="unit-matrix">
+              <UnitFileMatrixTable
               ref={matrixRef}
               key={snapshotId || "unit"}
               snapshotId={snapshotId}
@@ -2748,6 +2738,7 @@ export default function UnitTestWorkspace({
               }
               onDiscardPendingChanges={() => setShowDiscardConfirm(true)}
             />
+            </div>
           </div>
         )}
 

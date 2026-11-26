@@ -15,6 +15,7 @@ import {
 } from "../../../services/project.service";
 import { useToast } from "../ToastContext";
 import { fetchGithubAuthorizeUrlApi } from "../../../services/auth.service";
+import { isValidGithubRepoUrl } from "../../../services/vcsUiHelpers";
 
 function GithubIcon({ size = 16, className = "" }) {
   return (
@@ -34,6 +35,7 @@ export default function GitHubImport({
   onClose,
   onSuccess,
   hasGithub,
+  isGitHubSession = true,
   profileError = "",
   onRetryProfile,
 }) {
@@ -65,8 +67,8 @@ export default function GitHubImport({
     }
   };
 
-  const isValidUrl =
-    urlValue.startsWith("https://github.com/") && urlValue.length > 22;
+  const trimmedUrl = urlValue.trim();
+  const isValidUrl = isValidGithubRepoUrl(trimmedUrl);
 
   const handleImportUrl = async () => {
     if (!isValidUrl || uploading) return;
@@ -76,14 +78,14 @@ export default function GitHubImport({
     let createdNewProject = false;
 
     try {
-      const match = urlValue.match(/github\.com\/([^/]+)\/([^/]+)/);
+      const match = trimmedUrl.match(/github\.com\/([^/]+)\/([^/]+)/i);
       if (!match) throw new Error("Invalid GitHub repository URL.");
-      const repoName = match[2].replace(".git", "");
+      const repoName = match[2].replace(/\.git$/i, "");
 
       try {
         const projRes = await createProjectApi({
           name: repoName,
-          repoUrl: urlValue,
+          repoUrl: trimmedUrl,
         });
         projectId = projRes.data.id;
         createdNewProject = true;
@@ -106,7 +108,7 @@ export default function GitHubImport({
         }
       }
 
-      await importGithubUrlApi(projectId, urlValue);
+      await importGithubUrlApi(projectId, trimmedUrl);
 
       showToast({
         type: "info",
@@ -139,10 +141,14 @@ export default function GitHubImport({
             htmlFor="github-url-input"
             className="text-xs font-semibold text-[var(--ps-ink)]"
           >
-            GitHub repository URL
+            {isGitHubSession
+              ? "GitHub repository URL"
+              : "Public Git URL (One-Time Snapshot Import)"}
           </label>
           <span className="text-[11px] text-[var(--ps-ink-muted)] ps-mono">
-            Public or connected private
+            {isGitHubSession
+              ? "Public or connected private"
+              : "Public HTTPS · Creates initial Snapshot"}
           </span>
         </div>
 
@@ -210,83 +216,104 @@ export default function GitHubImport({
         )}
       </div>
 
-      {/* ── Hairline Divider ──────────────────────────────────── */}
-      <div className="flex items-center gap-3">
-        <div className="flex-1 h-px bg-[var(--ps-line)]" />
-        <span className="text-[11px] text-[var(--ps-ink-muted)]">
-          or select from GitHub
-        </span>
-        <div className="flex-1 h-px bg-[var(--ps-line)]" />
-      </div>
+      {!isGitHubSession ? (
+        <div
+          data-testid="email-import-snapshot-note"
+          className="flex-1 flex flex-col items-center justify-center p-6 text-center rounded-[10px] bg-[var(--ps-inset)] border border-[var(--ps-line)] border-dashed gap-2.5"
+        >
+          <div className="w-10 h-10 rounded-lg bg-[var(--ps-surface)] border border-[var(--ps-line)] flex items-center justify-center text-[var(--ps-cobalt)]">
+            <Link2 size={18} />
+          </div>
+          <h4 className="text-xs font-semibold text-[var(--ps-ink)]">
+            Personal Account — Snapshot VCS Mode
+          </h4>
+          <p className="text-[11.5px] text-[var(--ps-ink-secondary)] max-w-sm leading-relaxed">
+            Importing a public repository URL creates an immutable{" "}
+            <strong className="text-[var(--ps-ink)]">Initial Ingest</strong>{" "}
+            checkpoint managed inside CovAI Snapshots &amp; Checkpoints without linking a GitHub OAuth account.
+          </p>
+        </div>
+      ) : (
+        <>
+          {/* ── Hairline Divider ──────────────────────────────────── */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-px bg-[var(--ps-line)]" />
+            <span className="text-[11px] text-[var(--ps-ink-muted)]">
+              or select from GitHub
+            </span>
+            <div className="flex-1 h-px bg-[var(--ps-line)]" />
+          </div>
 
-      {/* ── Repository Browser ────────────────────────────────── */}
-      <div className="flex-1 min-h-0 flex flex-col">
-        {profileError ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center rounded-[10px] bg-[var(--ps-inset)] border border-[var(--ps-line)] border-dashed gap-3">
-            <div className="w-10 h-10 rounded-lg bg-[var(--ps-surface)] border border-[var(--ps-line)] flex items-center justify-center text-[var(--ps-rose)]">
-              <AlertCircle size={18} />
-            </div>
-            <div>
-              <h4 className="text-xs font-semibold text-[var(--ps-ink)]">
-                Unable to check GitHub connection
-              </h4>
-              <p className="text-[11.5px] text-[var(--ps-ink-secondary)] mt-1 max-w-xs leading-relaxed">
-                {profileError}
-              </p>
-            </div>
-            {onRetryProfile && (
-              <button
-                type="button"
-                onClick={onRetryProfile}
-                className="h-8 px-3.5 rounded-lg inline-flex items-center justify-center gap-1.5 text-xs font-semibold ps-btn-contrast cursor-pointer"
-                id="retry-github-profile-btn"
-              >
-                <span>Retry</span>
-              </button>
+          {/* ── Repository Browser ────────────────────────────────── */}
+          <div className="flex-1 min-h-0 flex flex-col">
+            {profileError ? (
+              <div className="flex-1 flex flex-col items-center justify-center p-6 text-center rounded-[10px] bg-[var(--ps-inset)] border border-[var(--ps-line)] border-dashed gap-3">
+                <div className="w-10 h-10 rounded-lg bg-[var(--ps-surface)] border border-[var(--ps-line)] flex items-center justify-center text-[var(--ps-rose)]">
+                  <AlertCircle size={18} />
+                </div>
+                <div>
+                  <h4 className="text-xs font-semibold text-[var(--ps-ink)]">
+                    Unable to check GitHub connection
+                  </h4>
+                  <p className="text-[11.5px] text-[var(--ps-ink-secondary)] mt-1 max-w-xs leading-relaxed">
+                    {profileError}
+                  </p>
+                </div>
+                {onRetryProfile && (
+                  <button
+                    type="button"
+                    onClick={onRetryProfile}
+                    className="h-8 px-3.5 rounded-lg inline-flex items-center justify-center gap-1.5 text-xs font-semibold ps-btn-contrast cursor-pointer"
+                    id="retry-github-profile-btn"
+                  >
+                    <span>Retry</span>
+                  </button>
+                )}
+              </div>
+            ) : hasGithub === false || forceConnectView ? (
+              <div className="flex-1 flex flex-col items-center justify-center p-6 text-center rounded-[10px] bg-[var(--ps-inset)] border border-[var(--ps-line)] border-dashed gap-3">
+                <div className="w-10 h-10 rounded-lg bg-[var(--ps-surface)] border border-[var(--ps-line)] flex items-center justify-center text-[var(--ps-ink)]">
+                  <GithubIcon size={18} />
+                </div>
+                <div>
+                  <h4 className="text-xs font-semibold text-[var(--ps-ink)]">
+                    Connect your GitHub account
+                  </h4>
+                  <p className="text-[11.5px] text-[var(--ps-ink-secondary)] mt-1 max-w-xs leading-relaxed">
+                    Authorize read access to browse and import your public or
+                    private repositories in one click.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleConnectGithub}
+                  disabled={connectingGithub}
+                  className="h-8 px-3.5 rounded-lg inline-flex items-center justify-center gap-1.5 text-xs font-semibold ps-btn-contrast cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  id="connect-github-import-btn"
+                >
+                  {connectingGithub ? (
+                    <Loader2 size={13} className="animate-spin" />
+                  ) : (
+                    <GithubIcon size={13} />
+                  )}
+                  <span>
+                    {connectingGithub
+                      ? "Redirecting to GitHub..."
+                      : "Connect GitHub"}
+                  </span>
+                </button>
+              </div>
+            ) : (
+              <RepoList
+                onClose={onClose}
+                onSuccess={onSuccess}
+                hasGithub={hasGithub}
+                onReconnectGithub={() => setForceConnectView(true)}
+              />
             )}
           </div>
-        ) : hasGithub === false || forceConnectView ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center rounded-[10px] bg-[var(--ps-inset)] border border-[var(--ps-line)] border-dashed gap-3">
-            <div className="w-10 h-10 rounded-lg bg-[var(--ps-surface)] border border-[var(--ps-line)] flex items-center justify-center text-[var(--ps-ink)]">
-              <GithubIcon size={18} />
-            </div>
-            <div>
-              <h4 className="text-xs font-semibold text-[var(--ps-ink)]">
-                Connect your GitHub account
-              </h4>
-              <p className="text-[11.5px] text-[var(--ps-ink-secondary)] mt-1 max-w-xs leading-relaxed">
-                Authorize read access to browse and import your public or
-                private repositories in one click.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={handleConnectGithub}
-              disabled={connectingGithub}
-              className="h-8 px-3.5 rounded-lg inline-flex items-center justify-center gap-1.5 text-xs font-semibold ps-btn-contrast cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              id="connect-github-import-btn"
-            >
-              {connectingGithub ? (
-                <Loader2 size={13} className="animate-spin" />
-              ) : (
-                <GithubIcon size={13} />
-              )}
-              <span>
-                {connectingGithub
-                  ? "Redirecting to GitHub..."
-                  : "Connect GitHub"}
-              </span>
-            </button>
-          </div>
-        ) : (
-          <RepoList
-            onClose={onClose}
-            onSuccess={onSuccess}
-            hasGithub={hasGithub}
-            onReconnectGithub={() => setForceConnectView(true)}
-          />
-        )}
-      </div>
+        </>
+      )}
     </div>
   );
 }

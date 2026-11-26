@@ -1,7 +1,11 @@
 import { editorEnabled } from '../../../shared/editorProtocol.js';
 import { editorSnapshotStatus, checkpointEditorDocuments } from '../services/projectEditorCheckpoint.service.js';
 import { withEditorCheckpoint } from '../services/projectEditorRequestContext.service.js';
-import { editorDocumentsFor } from '../services/projectEditorBridge.service.js';
+import {
+    EDITOR_DOC_REVISION_SELECT,
+    editorDocumentsFor,
+} from '../services/projectEditorBridge.service.js';
+import { runWithProjectRequestContext } from '../services/vcsRequestContext.service.js';
 import prisma from "../config/prisma.js";
 import { resolveProjectAccess, resolveSnapshotAccess } from "../services/projectAccess.service.js";
 import { ServiceError } from "../utils/serviceError.js";
@@ -40,6 +44,7 @@ export const projectEndpointRule = (family, method, path, input = {}) => {
         if (!read) {
             if (parts.length === 1 && method === "DELETE") capability = "project.delete";
             else if (/\/restore$/.test(path)) capability = "snapshot.restore";
+            else if (parts[1] === "snapshots" && parts.length === 2 && method === "POST") capability = "vcs.local";
             else if (["upload-zip", "import-github", "snapshots"].includes(parts[1])) capability = "integrations.write";
             else if (["file-content", "files", "folders", "entries"].includes(parts[1])) capability = "files.write";
             else if (parts[1] === "status") capability = "files.write";
@@ -72,8 +77,50 @@ export const projectEndpointRule = (family, method, path, input = {}) => {
     } else if (family === "ai-tests" || family === "ai-suggestions") {
         if (family === "ai-suggestions" && parts[0] === "refresh") projectId = cleanId(parts[1]) || projectId;
         capability = read ? "project.read" : "ai.use";
-    } else if (family === "git") capability = read ? "project.read" : "integrations.write";
-    else if (family === "github") { projectId = cleanId(parts[1]) || projectId; capability = "integrations.write"; }
+    } else if (family === "git") {
+        if (read || (method === "POST" && path === "/command")) capability = "project.read";
+        else if (path === "/ai-commit-message") capability = "ai.use";
+        else if (
+            /^\/(?:stage|unstage|stage-hunk|unstage-hunk|revert-hunk|discard|commit|undo-commit|gitignore|conflicts\/resolve)$/.test(path) ||
+            (/^\/stashes(?:\/|$)/.test(path) && (method === "POST" || method === "DELETE"))
+        ) {
+            capability = "vcs.local";
+        } else {
+            capability = "integrations.write";
+        }
+    } else if (family === "snapshot-vcs") {
+        const snapshotRootSegments = new Set([
+            "status", "stage", "unstage", "discard", "diff-pair",
+            "compare", "checkpoints", "branches", "tags", "ai-summary", "gc", "rollback",
+        ]);
+        const mountedWithParam = Boolean(cleanId(input.projectId)) && (!parts.length || snapshotRootSegments.has(parts[0]));
+        const routeParts = mountedWithParam ? parts : parts.slice(1);
+        if (!mountedWithParam) {
+            projectId = cleanId(parts[0]) || projectId;
+        }
+        if (routeParts[0] === "checkpoints" && routeParts[1] && !["compare"].includes(routeParts[1])) {
+            snapshotId = cleanId(routeParts[1]) || snapshotId;
+        }
+        const subPath = routeParts.length > 0 ? `/${routeParts.join("/")}` : "/";
+        if (read) {
+            capability = /\/export-zip$/.test(subPath) ? "project.export" : "project.read";
+        } else if (subPath === "/ai-summary") {
+            capability = "ai.use";
+        } else if (
+            subPath === "/stage" ||
+            subPath === "/unstage" ||
+            subPath === "/discard" ||
+            (subPath === "/checkpoints" && method === "POST") ||
+            (subPath === "/branches" && method === "POST") ||
+            (/^\/checkpoints\/[^/]+$/.test(subPath) && method === "PATCH") ||
+            (/^\/checkpoints\/[^/]+\/tags$/.test(subPath) && method === "POST") ||
+            (/^\/checkpoints\/[^/]+\/restore-file$/.test(subPath) && method === "POST")
+        ) {
+            capability = "vcs.local";
+        } else {
+            capability = "snapshot.restore";
+        }
+    } else if (family === "github") { projectId = cleanId(parts[1]) || projectId; capability = "integrations.write"; }
     else if (family === "pipeline") { projectId = cleanId(parts[0]) || projectId; capability = "tests.run"; }
     else if (family === "upload") capability = "integrations.write";
     else if (family === "files") capability = read ? "project.read" : "files.write";
@@ -93,7 +140,7 @@ export const projectEndpointRule = (family, method, path, input = {}) => {
 export const enforceProjectEndpointPolicy = (family, dependencies = {}) => async (req, res, next) => {
     try {
         if (!req.user?.id) throw new ServiceError("Authentication required", 401);
-        const rule = projectEndpointRule(family, req.method, req.path, { ...req.query, ...req.body });
+        const rule = projectEndpointRule(family, req.method, req.path, { ...(req.params || {}), ...req.query, ...req.body });
         if (!rule) return next();
         const db = dependencies.db || prisma;
         const projectAccess = dependencies.resolveProjectAccess || resolveProjectAccess;
@@ -104,11 +151,37 @@ export const enforceProjectEndpointPolicy = (family, dependencies = {}) => async
             // redundant prefetch that can diverge from the actual resolver.
             req.projectAccess = await snapshotAccess({ ...rule, userId: req.user.id, db });
         } else req.projectAccess = await projectAccess({ ...rule, userId: req.user.id, db });
+        if (req.projectAccess?.project?.id) {
+            req.projectContext = {
+                projectId: req.projectAccess.project.id,
+                userId: req.user.id,
+                user: req.user,
+                project: req.projectAccess.project,
+                role: req.projectAccess.role,
+                disciplineRole: req.projectAccess.disciplineRole ?? null,
+                capabilities: req.projectAccess.capabilities,
+                activeSnapshot: req.projectAccess.snapshot || null,
+                activeBranch: null,
+            };
+        }
+        const continueWithContext = () =>
+            req.projectContext
+                ? runWithProjectRequestContext(req.projectContext, () => next())
+                : next();
         if (editorEnabled() && !["GET", "HEAD"].includes(req.method)) {
             const projectId = req.projectAccess.project.id;
-            if (family === 'git' || /upload-zip|import-github|\/restore$|\/snapshots$/.test(req.path)) {
-                const rows = await editorDocumentsFor(db, { projectId, active: true });
-                if (rows.some(row => row.revision !== row.checkpointRevision)) throw new ServiceError('Save shared changes before changing the workspace or Git state.',409,'EDITOR_DRAFT_CONFLICT');
+            const cleanReqPath = "/" + String(req.path || "").split("/").filter(Boolean).join("/");
+            const skipDraftConflictCheck =
+                (family === 'git' && ['/command', '/stage', '/unstage'].includes(cleanReqPath)) ||
+                (family === 'snapshot-vcs' && /^(?:\/[^/]+)?\/(?:stage|unstage)$/.test(cleanReqPath));
+            if (
+                !skipDraftConflictCheck &&
+                (family === 'git' || family === 'snapshot-vcs' || /upload-zip|import-github|\/restore$|\/snapshots$/.test(req.path))
+            ) {
+                if (rule.capability !== 'ai.use') {
+                    const rows = await editorDocumentsFor(db, { projectId, active: true }, EDITOR_DOC_REVISION_SELECT);
+                    if (rows.some(row => row.revision !== row.checkpointRevision)) throw new ServiceError('Save shared changes before changing the workspace or Git state.',409,'EDITOR_DRAFT_CONFLICT');
+                }
             }
             if (['tests.run', 'ai.use'].includes(rule.capability) && /run|analysis|generate|suggest|optimize|improvements|mutations|assessments|calculate|refresh|cfg\/build/i.test(req.path)) {
                 const snapshotId = req.projectAccess.snapshot?.id || (await db.projectSnapshot.findFirst({where:{projectId},orderBy:{createdAt:'desc'},select:{id:true}}))?.id;
@@ -116,11 +189,11 @@ export const enforceProjectEndpointPolicy = (family, dependencies = {}) => async
                     const state = await editorSnapshotStatus({projectId,snapshotId,userId:req.user.id,db});
                     const documents = state.documents.filter(doc=>doc.dirty);
                     const checkpoint = documents.length ? await checkpointEditorDocuments({projectId,snapshotId,userId:req.user.id,db,documents,expectedWorkspaceRevision:state.workspaceRevision}) : state;
-                    return withEditorCheckpoint(checkpoint.workspaceRevision,()=>next());
+                    return withEditorCheckpoint(checkpoint.workspaceRevision, continueWithContext);
                 }
             }
         }
-        return next();
+        return continueWithContext();
     } catch (error) {
         return res.status(error.statusCode || 500).json({ success: false, code: error.code || "PROJECT_POLICY_ERROR", message: error.statusCode ? error.message : "Project access could not be verified" });
     }

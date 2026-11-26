@@ -1,64 +1,211 @@
-import { execFile } from "child_process";
-import { AsyncLocalStorage } from 'node:async_hooks';
-import { withPreparedProjectWorkspace } from './projectWorkspacePreparation.service.js';
-import { stagePreparedPublication } from './projectOperationWorkspace.service.js';
-import util from "util";
-import path from "path";
-import fs from "fs";
+import fs from "node:fs";
+import path from "node:path";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createTwoFilesPatch } from "diff";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
-import { GitHubRepositoryAccessService } from "./github.service.js";
 import { snapshotWorkspaceRoot } from "../utils/snapshotWorkspace.js";
-import { resolveProjectAccess, membershipWhere } from "./projectAccess.service.js";
+import { invalidateProjectAccessCache, resolveProjectAccess } from "./projectAccess.service.js";
+import {
+  resolveActiveProjectSnapshot,
+  VCS_SNAPSHOT_LEAN_SELECT,
+} from "./projectFileVersion.service.js";
+import {
+  getProjectRequestContext,
+  updateProjectRequestContext,
+} from "./vcsRequestContext.service.js";
+import { withPreparedProjectWorkspace } from "./projectWorkspacePreparation.service.js";
+import {
+  deferPreparedCommit,
+  stagePreparedPublication,
+} from "./projectOperationWorkspace.service.js";
+import { deliverScopedProjectTransport } from "./projectSubscription.service.js";
+import { clearProjectTreeCache } from "./project.service.js";
+import { checkStaleGitIndexLock, withProjectVcsLock } from "./vcsLock.service.js";
+import {
+  ensureCovaiGitExcludes,
+  execGit,
+  invalidateGitExcludeCache,
+  normalizeCleanGithubUrl,
+  redactGitOutput,
+  resolveActingUserGithubToken,
+  resolveGitAuthorIdentity,
+  sanitizeGitFilePath,
+  sanitizeGitRef,
+} from "./gitCredentialHelper.service.js";
+import {
+  detectBinaryBuffer,
+  detectRepoOperationState,
+  inferLanguageFromPath,
+  normalizePosixPath,
+  parseGitLogRecords,
+  parsePorcelainV2Z,
+  parseUnifiedDiffHunks,
+} from "./gitPorcelainParser.service.js";
+import { applyHunkAction } from "./gitHunkPatch.service.js";
+import { GitHubPlatformService } from "./githubPlatform.service.js";
+import { generateGitCommitMessage } from "./gitAiCommit.service.js";
+import { resolveConflictMarkersKeepBoth } from "./snapshotDiff3.service.js";
+import {
+  GIT_LIMITS,
+  GIT_REPO_OPERATION_STATE,
+  GIT_SOCKET_EVENTS,
+  validateGitBranchName,
+  validateGitTagName,
+} from "../../../shared/gitProtocol.js";
+import {
+  isVcsIgnoredRelativePath,
+  isVcsSecretFileName,
+} from "../../../shared/versionControlMode.js";
 
-const execFileAsync = util.promisify(execFile);
+const ensuredGitReposCache = new Map();
 
-export const gitCommandArguments = command => {
+export function invalidateGitRepoCache(rootDir = null) {
+  invalidateGitExcludeCache(rootDir);
+  if (!rootDir) {
+    ensuredGitReposCache.clear();
+    return;
+  }
+  ensuredGitReposCache.delete(path.resolve(rootDir));
+}
+
+const USE_PREPARED_GIT_WORKSPACE = () =>
+  process.env.COVAI_GIT_PREPARED_WORKSPACE === "true" ||
+  process.env.COLLABORATION_INTEGRATION === "true";
+
+const EMPTY_TREE_OID = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+const EXEC_OPTION_KEYS = new Set([
+  "githubToken",
+  "author",
+  "isNetwork",
+  "allowLocalTransport",
+  "input",
+  "rawOutput",
+  "timeoutMs",
+  "maxBuffer",
+  "encoding",
+  "env",
+]);
+
+export const gitCommandArguments = (command) => {
   if (Array.isArray(command)) return command;
-  const tokens = []; let current = "", quote = null, started = false;
-  for (let i = 0; i < command.length; i++) {
+  const tokens = [];
+  let current = "";
+  let quote = null;
+  let started = false;
+  for (let i = 0; i < command.length; i += 1) {
     const ch = command[i];
-    if (ch === "\\" && quote === '"' && ['"', "\\"].includes(command[i + 1])) { current += command[++i]; started = true; }
-    else if (quote) { if (ch === quote) quote = null; else current += ch; started = true; }
-    else if (ch === '"' || ch === "'") { quote = ch; started = true; }
-    else if (/\s/.test(ch)) { if (started) tokens.push(current); current = ""; started = false; }
-    else { current += ch; started = true; }
+    if (ch === "\\" && quote === '"' && ['"', "\\"].includes(command[i + 1])) {
+      current += command[++i];
+      started = true;
+    } else if (quote) {
+      if (ch === quote) quote = null;
+      else {
+        current += ch;
+        started = true;
+      }
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      started = true;
+    } else if (/\s/.test(ch)) {
+      if (started) tokens.push(current);
+      current = "";
+      started = false;
+    } else {
+      current += ch;
+      started = true;
+    }
   }
   if (quote) throw new ServiceError("Unterminated Git argument", 400);
   if (started) tokens.push(current);
-  if (tokens.shift() !== "git") throw new ServiceError("Only Git commands are supported", 400);
+  if (tokens.shift() !== "git") {
+    throw new ServiceError("Only Git commands are supported", 400);
+  }
   return tokens;
 };
-const branchName = value => {
-  if (value !== undefined && (typeof value !== "string" || !/^[\w][\w./-]{0,199}$/.test(value) || value.includes("..") || value.includes("@{"))) throw new ServiceError("Invalid branch name", 400);
-  return value;
-};
-const fileName = value => {
-  if (typeof value !== "string" || !value || /[\0\r\n"]/.test(value) || path.isAbsolute(value) || /^[a-z]:/i.test(value) || value.split(/[\\/]/).some(part => part === ".." || part === ".git")) throw new ServiceError("Use a project-relative file path", 400);
+
+const branchName = (value) => {
+  if (value !== undefined && !validateGitBranchName(value)) {
+    throw new ServiceError("Invalid branch name", 400, "INVALID_BRANCH_NAME");
+  }
   return value;
 };
 
+const tagName = (value) => {
+  if (value !== undefined && !validateGitTagName(value)) {
+    throw new ServiceError("Invalid tag name", 400, "INVALID_TAG_NAME");
+  }
+  return value;
+};
+
+const fileName = (value) => sanitizeGitFilePath(value);
+
 const preparedGit = new AsyncLocalStorage();
+
+function emitGitTransport(projectId, event, payload) {
+  if (!projectId) return;
+  void deliverScopedProjectTransport({ projectId, event, payload }).catch(() => {});
+}
+
+function isLocalFilesystemRemote(url) {
+  if (process.env.NODE_ENV !== "test" || typeof url !== "string") return false;
+  const trimmed = url.trim();
+  if (!trimmed || /^https?:\/\//i.test(trimmed)) return false;
+  const fsPath = trimmed.startsWith("file://")
+    ? trimmed.replace(/^file:\/\//i, "")
+    : trimmed;
+  return fs.existsSync(fsPath);
+}
+
+function resolveContainedDiskFile(rootDir, relativePath) {
+  const safeRel = sanitizeGitFilePath(relativePath);
+  const realRoot = fs.realpathSync(rootDir);
+  const target = path.resolve(realRoot, safeRel);
+  const check = path.relative(realRoot, target);
+  if (!check || check.startsWith("..") || path.isAbsolute(check)) {
+    throw new ServiceError("Use a project-relative file path", 400, "INVALID_FILE_PATH");
+  }
+  const parentDir = path.dirname(target);
+  if (fs.existsSync(parentDir)) {
+    const realParent = fs.realpathSync(parentDir);
+    const parentRel = path.relative(realRoot, realParent);
+    if (parentRel.startsWith("..") || path.isAbsolute(parentRel)) {
+      throw new ServiceError("Use a project-relative file path", 400, "INVALID_FILE_PATH");
+    }
+  }
+  return { safeRel, realRoot, target };
+}
+
+function summarizeHeadChange(statusSummary) {
+  return {
+    branch: statusSummary?.branch || null,
+    headOid: statusSummary?.headOid || null,
+    clean: Boolean(statusSummary?.clean),
+    dirtyCount:
+      (statusSummary?.staged?.length || 0) +
+      (statusSummary?.unstaged?.length || 0) +
+      (statusSummary?.untracked?.length || 0) +
+      (statusSummary?.conflicts?.length || 0),
+    conflictCount: statusSummary?.conflicts?.length || 0,
+  };
+}
+
 export class GitService {
   /**
-   * Resolves the actual project root directory from the latest snapshot
+   * Resolves the repository root directory from the project's active snapshot.
    */
   static async getRepoPath(projectId, userId) {
     const active = preparedGit.getStore();
-    if (active?.projectId === projectId && active.userId === userId) return active.repo;
-    await resolveProjectAccess({ projectId, userId, capability: "project.read" });
-    const project = await prisma.project.findFirst({
-      where: {
-        id: projectId,
-        ...membershipWhere(userId),
-      },
-      include: {
-        owner: {
-          select: { id: true, name: true, email: true },
-        },
-      },
-    });
+    if (active?.projectId === projectId && active.userId === userId) {
+      return active.repo;
+    }
 
+    const access = await resolveProjectAccess({
+      projectId,
+      userId,
+      capability: "project.read",
+    });
+    const project = access.project;
     if (!project) {
       throw new ServiceError(
         "Project not found or you don't have permission",
@@ -66,10 +213,23 @@ export class GitService {
       );
     }
 
-    const snapshot = await prisma.projectSnapshot.findFirst({
-      where: { projectId },
-      orderBy: { createdAt: "desc" },
-    });
+    const reqCtx = getProjectRequestContext();
+    let snapshot =
+      reqCtx?.projectId === projectId && reqCtx.activeSnapshot?.rootDir
+        ? reqCtx.activeSnapshot
+        : null;
+
+    if (!snapshot) {
+      snapshot = await resolveActiveProjectSnapshot(
+        prisma,
+        projectId,
+        project.activeSnapshotId,
+        { select: VCS_SNAPSHOT_LEAN_SELECT },
+      );
+      if (snapshot && reqCtx?.projectId === projectId) {
+        updateProjectRequestContext({ activeSnapshot: snapshot });
+      }
+    }
 
     if (!snapshot || !snapshot.rootDir) {
       throw new ServiceError(
@@ -78,10 +238,9 @@ export class GitService {
       );
     }
 
-    const isGitHubProject = snapshot.source === "GITHUB" || !!project.repoUrl;
-
+    const isGitHubProject = snapshot.source === "GITHUB" || Boolean(project.repoUrl);
     const rootDir = snapshotWorkspaceRoot(snapshot);
-    if (!fs.existsSync(rootDir)) {
+    if (!rootDir || !fs.existsSync(rootDir)) {
       throw new ServiceError(
         `Project directory not found on disk: ${rootDir}`,
         404,
@@ -92,187 +251,443 @@ export class GitService {
   }
 
   /**
-   * Helper to execute git command in the project directory
+   * Safely executes a Git CLI command in `rootDir` without invoking a shell.
    */
-  static async runCommand(rootDir, commandStr, envExtra = {}) {
+  static async runCommand(rootDir, commandOrArgs, envOrOptions = {}) {
+    const args = gitCommandArguments(commandOrArgs);
+    const execOptions = {};
+    const extraEnv = {};
+
+    if (envOrOptions && typeof envOrOptions === "object") {
+      for (const [k, v] of Object.entries(envOrOptions)) {
+        if (EXEC_OPTION_KEYS.has(k)) {
+          execOptions[k] = v;
+        } else {
+          extraEnv[k] = v;
+        }
+      }
+    }
+
+    if (Object.keys(extraEnv).length > 0) {
+      execOptions.env = { ...(execOptions.env || {}), ...extraEnv };
+    }
+
+    return execGit(rootDir, args, execOptions);
+  }
+
+  static async _hasHeadCommit(rootDir) {
     try {
-      const args = gitCommandArguments(commandStr);
-      const { stdout, stderr } = await execFileAsync("git", ["-c", "core.hooksPath=/dev/null", ...args], {
-        cwd: rootDir,
-        env: {
-          ...process.env,
-          GIT_TERMINAL_PROMPT: "0",
-          GIT_CONFIG_COUNT: "1",
-          GIT_CONFIG_KEY_0: "safe.directory",
-          GIT_CONFIG_VALUE_0: "*",
-          ...envExtra,
-        },
-        maxBuffer: 10 * 1024 * 1024, // 10MB
-      });
-      return { stdout: stdout.trim(), stderr: stderr.trim() };
-    } catch (error) {
-      const errMsg = (error.stderr || error.stdout || error.message).replace(/https:\/\/[^@\s]+@github\.com/gi, "https://github.com");
-      throw new ServiceError(errMsg.trim(), 500);
+      const { stdout } = await this.runCommand(rootDir, ["rev-parse", "--verify", "HEAD"]);
+      return stdout.trim() || null;
+    } catch {
+      return null;
     }
   }
 
   /**
-   * Ensures a .git directory exists and is properly configured
+   * Ensures `origin` in `.git/config` uses a credential-free HTTPS URL
+   * (or preserves an isolated local bare remote in test environments).
    */
-  static async ensureGitRepo(projectId, userId) {
-    await resolveProjectAccess({ projectId, userId, capability: "integrations.write" });
-    const { rootDir, project, snapshot, isGitHubProject } =
-      await this.getRepoPath(projectId, userId);
+  static async _resolveRemoteExecution(rootDir, project, userId, { requireRepoScope = false } = {}) {
+    let existingOrigin = "";
+    try {
+      const { stdout } = await this.runCommand(rootDir, ["remote", "get-url", "origin"]);
+      existingOrigin = stdout.trim();
+    } catch {
+      existingOrigin = "";
+    }
 
-    if (!isGitHubProject) {
+    if (isLocalFilesystemRemote(existingOrigin)) {
+      return {
+        remoteUrl: existingOrigin,
+        isLocalTestRemote: true,
+        execOptions: { isNetwork: true, allowLocalTransport: true },
+      };
+    }
+
+    const rawUrl = project?.repoUrl || existingOrigin;
+    if (!rawUrl) {
       throw new ServiceError(
-        "Git operations are only available for repositories imported from GitHub. This project was uploaded from a compressed file.",
-        403,
+        "Remote repository URL is not configured. Link or publish a GitHub repository first.",
+        400,
+        "GIT_REMOTE_MISSING",
       );
     }
 
+    const { cleanUrl, webUrl } = normalizeCleanGithubUrl(rawUrl);
+
+    if (existingOrigin !== cleanUrl) {
+      if (existingOrigin) {
+        await this.runCommand(rootDir, ["remote", "set-url", "origin", cleanUrl]);
+      } else {
+        await this.runCommand(rootDir, ["remote", "add", "origin", cleanUrl]);
+      }
+    }
+
+    const { token } = await resolveActingUserGithubToken(userId, {
+      requireRepoScope,
+    });
+
+    return {
+      remoteUrl: cleanUrl,
+      webUrl,
+      isLocalTestRemote: false,
+      execOptions: { githubToken: token, isNetwork: true },
+    };
+  }
+
+  static async _recordSnapshotHeadSync(rootDir, projectId, snapshotId, statusData) {
+    const active = preparedGit.getStore();
+    if (!active) return;
+
+    const headOid = statusData?.headOid || (await this._hasHeadCommit(rootDir));
+
+    if (active.isDirect) {
+      const dbWrites = [];
+      const prevCommitSha = active.repo?.snapshot?.commitSha || null;
+      const headChanged = Boolean(headOid && snapshotId && headOid !== prevCommitSha);
+
+      if (headChanged) {
+        dbWrites.push(
+          prisma.projectSnapshot.update({
+            where: { id: snapshotId },
+            data: { commitSha: headOid },
+            select: { id: true },
+          }),
+        );
+      }
+
+      if (active.workingTreeChanging) {
+        dbWrites.push(
+          prisma.project.update({
+            where: { id: projectId },
+            data: { workspaceRevision: { increment: 1 } },
+            select: { workspaceRevision: true },
+          }),
+        );
+      }
+
+      if (dbWrites.length > 0) {
+        await Promise.all(dbWrites);
+      }
+
+      if (headChanged && active.repo?.snapshot) {
+        active.repo.snapshot.commitSha = headOid;
+        updateProjectRequestContext({ activeSnapshot: active.repo.snapshot });
+      }
+      if (active.workingTreeChanging || headChanged) {
+        clearProjectTreeCache();
+        invalidateProjectAccessCache(projectId);
+      }
+
+      emitGitTransport(projectId, GIT_SOCKET_EVENTS.STATUS_UPDATED, {
+        projectId,
+        actorId: active.userId,
+        ...summarizeHeadChange(statusData),
+      });
+      return;
+    }
+
+    await stagePreparedPublication(async (tx) => {
+      if (headOid && snapshotId) {
+        await tx.projectSnapshot.update({
+          where: { id: snapshotId },
+          data: { commitSha: headOid },
+        });
+      }
+      clearProjectTreeCache();
+    });
+
+    deferPreparedCommit(async () => {
+      await deliverScopedProjectTransport({
+        projectId,
+        event: GIT_SOCKET_EVENTS.STATUS_UPDATED,
+        payload: { projectId, actorId: active.userId, ...summarizeHeadChange(statusData) },
+      });
+    });
+  }
+
+  /**
+   * Ensures a `.git` repository exists on disk with clean config and CovAI excludes.
+   */
+  static async ensureGitRepo(projectId, userId, options = {}) {
+    const { rootDir, project, snapshot } = await this.getRepoPath(projectId, userId);
     const gitDir = path.join(rootDir, ".git");
+    const cacheKey = path.resolve(rootDir);
+    const gitExists = fs.existsSync(gitDir);
 
-    const user = project.owner;
-    const authorName = user?.name || "GitHub Developer";
-    const authorEmail = user?.email || "developer@github.com";
+    if (gitExists && !options.createGitignore && !options.createInitialCommit) {
+      const cached = ensuredGitReposCache.get(cacheKey);
+      if (
+        cached &&
+        cached.userId === userId &&
+        cached.repoUrl === (project.repoUrl || null)
+      ) {
+        ensureCovaiGitExcludes(rootDir);
+        return { rootDir, project, snapshot };
+      }
+    }
 
-    const defaultBranch = project.defaultBranch || "main";
+    const defaultBranch = branchName(options.defaultBranch || project.defaultBranch || "main");
+    const author = await resolveGitAuthorIdentity(userId);
 
-    if (!fs.existsSync(gitDir)) {
-      // Initialize fresh git repo
-      await this.runCommand(rootDir, `git init -b "${defaultBranch}"`).catch(
-        async () => {
-          await this.runCommand(rootDir, "git init");
-        },
-      );
-      await this.runCommand(rootDir, ['config', 'user.name', authorName]);
-      await this.runCommand(rootDir, ['config', 'user.email', authorEmail]);
-      await this.runCommand(rootDir, "git config commit.gpgsign false");
+    if (!gitExists) {
+      invalidateGitRepoCache(rootDir);
+      try {
+        await this.runCommand(rootDir, ["init", "-b", defaultBranch]);
+      } catch {
+        await this.runCommand(rootDir, ["init"]);
+      }
 
-      // If project has a repoUrl or was imported from GitHub, link origin and fetch
+      const initialConfigEntries = [
+        ["user.name", author.name],
+        ["user.email", author.email],
+        ["commit.gpgsign", "false"],
+        ["core.autocrlf", "false"],
+        ["core.quotepath", "false"],
+      ];
+      for (const [configKey, configVal] of initialConfigEntries) {
+        await this.runCommand(rootDir, ["config", configKey, configVal]);
+      }
+
       if (project.repoUrl) {
-        let remoteUrl = project.repoUrl;
         try {
-          const token =
-            await GitHubRepositoryAccessService.getGitHubToken(userId);
-          if (token && remoteUrl.includes("github.com")) {
-            const match = remoteUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
-            if (match) {
-              const owner = match[1];
-              const repo = match[2].replace(/\.git$/, "");
-              remoteUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
-            }
-          }
-        } catch (_) {}
-
-        try {
-          await this.runCommand(
-            rootDir,
-            `git remote add origin "${remoteUrl}"`,
+          const { cleanUrl } = normalizeCleanGithubUrl(project.repoUrl);
+          await this.runCommand(rootDir, ["remote", "add", "origin", cleanUrl]);
+        } catch (remoteErr) {
+          console.warn(
+            "[GitService] Skipping invalid repository URL during git init:",
+            remoteErr?.message || remoteErr,
           );
-          await this.runCommand(rootDir, "git fetch origin").catch(() => {});
-          await this.runCommand(
-            rootDir,
-            `git branch -M "${defaultBranch}"`,
-          ).catch(() => {});
-          await this.runCommand(
-            rootDir,
-            `git reset origin/"${defaultBranch}"`,
-          ).catch(() => {});
-          await this.runCommand(
-            rootDir,
-            `git branch --set-upstream-to=origin/"${defaultBranch}" "${defaultBranch}"`,
-          ).catch(() => {});
-        } catch (_) {}
+        }
       }
     } else {
-      // Ensure config exists
-      await this.runCommand(
-        rootDir,
-        ['config', 'user.name', authorName],
-      ).catch(() => {});
-      await this.runCommand(
-        rootDir,
-        ['config', 'user.email', authorEmail],
-      ).catch(() => {});
-      await this.runCommand(rootDir, "git config commit.gpgsign false").catch(
-        () => {},
-      );
-
-      // If project has no repoUrl in DB, check if .git has an origin remote
-      if (!project.repoUrl) {
+      const syncConfigEntries = [
+        ["user.name", author.name],
+        ["user.email", author.email],
+        ["commit.gpgsign", "false"],
+        ["core.quotepath", "false"],
+      ];
+      for (const [configKey, configVal] of syncConfigEntries) {
         try {
-          const { stdout: originUrl } = await this.runCommand(
-            rootDir,
-            "git remote get-url origin",
+          await this.runCommand(rootDir, ["config", configKey, configVal]);
+        } catch (configErr) {
+          console.warn(
+            `[GitService] Non-fatal git config sync failed (${configKey}):`,
+            configErr?.message || configErr,
           );
-          if (originUrl && originUrl.includes("github.com")) {
-            const cleanUrl = originUrl.replace(
-              /https:\/\/[^@]+@github\.com\//,
-              "https://github.com/",
-            );
-            if (!preparedGit.getStore()) await prisma.project
-              .update({
-                where: { id: projectId },
-                data: { repoUrl: cleanUrl },
-              })
-              .catch(() => {});
-            project.repoUrl = cleanUrl;
-          }
-        } catch (_) {}
+        }
       }
 
-      // Set up / update remote origin if project has a repoUrl
-      if (project.repoUrl) {
-        let remoteUrl = project.repoUrl;
-        try {
-          const token =
-            await GitHubRepositoryAccessService.getGitHubToken(userId);
-          if (token && remoteUrl.includes("github.com")) {
-            const match = remoteUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
-            if (match) {
-              const owner = match[1];
-              const repo = match[2].replace(/\.git$/, "");
-              remoteUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
+      try {
+        const { stdout: existingOrigin } = await this.runCommand(rootDir, [
+          "remote",
+          "get-url",
+          "origin",
+        ]);
+        if (existingOrigin && existingOrigin.includes("github.com")) {
+          const { cleanUrl, webUrl } = normalizeCleanGithubUrl(existingOrigin);
+          if (existingOrigin.trim() !== cleanUrl) {
+            await this.runCommand(rootDir, ["remote", "set-url", "origin", cleanUrl]);
+          }
+          if (!project.repoUrl) {
+            project.repoUrl = webUrl;
+            const persistRemote = (tx) =>
+              tx.project.update({
+                where: { id: projectId },
+                data: { repoUrl: webUrl },
+              });
+            if (preparedGit.getStore()?.isDirect) {
+              await persistRemote(prisma);
+            } else {
+              await stagePreparedPublication(persistRemote);
             }
           }
-        } catch (_) {
-          // User may not have GitHub linked
         }
-
-        try {
-          const { stdout: existingRemote } = await this.runCommand(
-            rootDir,
-            "git remote",
-          );
-          if (
-            existingRemote
-              .split("\n")
-              .map((r) => r.trim())
-              .includes("origin")
-          ) {
-            await this.runCommand(
-              rootDir,
-              `git remote set-url origin "${remoteUrl}"`,
-            );
-          } else {
-            await this.runCommand(
-              rootDir,
-              `git remote add origin "${remoteUrl}"`,
-            );
+      } catch {
+        if (project.repoUrl) {
+          try {
+            const { cleanUrl } = normalizeCleanGithubUrl(project.repoUrl);
+            await this.runCommand(rootDir, ["remote", "add", "origin", cleanUrl]);
+          } catch {
+            // Ignore remote setup failure on local-only initialization
           }
-        } catch (_) {}
+        }
       }
     }
 
-    return { rootDir, project };
+    ensureCovaiGitExcludes(rootDir);
+
+    if (options.createGitignore) {
+      const gitignorePath = path.join(rootDir, ".gitignore");
+      if (!fs.existsSync(gitignorePath)) {
+        fs.writeFileSync(
+          gitignorePath,
+          [
+            "node_modules/",
+            ".env",
+            ".env.*",
+            "!.env.example",
+            "!.env.sample",
+            "!.env.template",
+            "coverage/",
+            "dist/",
+            "build/",
+            ".DS_Store",
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+      }
+    }
+
+    if (options.createInitialCommit) {
+      const head = await this._hasHeadCommit(rootDir);
+      if (!head) {
+        await this.runCommand(rootDir, ["add", "-A"]);
+        await this.runCommand(
+          rootDir,
+          ["commit", "-m", options.initialCommitMessage || "chore: initial commit"],
+          { author },
+        ).catch(() => {});
+      }
+    }
+
+    if (ensuredGitReposCache.size > 1000) ensuredGitReposCache.clear();
+    ensuredGitReposCache.set(cacheKey, {
+      userId,
+      repoUrl: project.repoUrl || null,
+    });
+
+    return { rootDir, project, snapshot };
   }
 
   /**
-   * GET Git status (staged, unstaged, untracked, branch)
+   * Explicitly initializes a Git repository (works for ZIP projects opened by GitHub users).
    */
-  static async getStatus(projectId, userId) {
+  static async initRepo(projectId, userId, options = {}) {
+    const { rootDir: targetRoot } = await this.getRepoPath(projectId, userId);
+    invalidateGitRepoCache(targetRoot);
+    const { project, rootDir, snapshot } = await this.ensureGitRepo(
+      projectId,
+      userId,
+      {
+        defaultBranch: options.defaultBranch || "main",
+        createInitialCommit: Boolean(options.createInitialCommit),
+        createGitignore: options.createGitignore !== false,
+      },
+    );
+
+    const status = await this.getStatus(projectId, userId);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return {
+      ...status,
+      defaultBranch: project.defaultBranch || options.defaultBranch || "main",
+    };
+  }
+
+  /**
+   * Publishes a local or ZIP project directly to a new GitHub repository.
+   */
+  static async publishToGitHub(projectId, userId, options = {}) {
+    const {
+      name,
+      description = "",
+      isPrivate = true,
+      defaultBranch = "main",
+      initialCommitMessage = "feat: initial commit from CovAI",
+    } = options;
+
+    emitGitTransport(projectId, GIT_SOCKET_EVENTS.OPERATION_PROGRESS, {
+      projectId,
+      operation: "publish",
+      phase: "creating_repo",
+      message: `Creating GitHub repository ${name}...`,
+    });
+
+    const createdRepo = await GitHubPlatformService.createRepository(userId, {
+      name,
+      description,
+      isPrivate,
+    });
+
+    const targetBranch = branchName(defaultBranch || createdRepo.defaultBranch || "main");
+    const repoWebUrl = createdRepo.htmlUrl;
+    const { cleanUrl } = normalizeCleanGithubUrl(repoWebUrl);
+
+    const { rootDir, project, snapshot } = await this.ensureGitRepo(projectId, userId, {
+      defaultBranch: targetBranch,
+      createGitignore: true,
+    });
+    invalidateGitRepoCache(rootDir);
+    project.repoUrl = repoWebUrl;
+    project.defaultBranch = targetBranch;
+
+    await this.runCommand(rootDir, ["remote", "set-url", "origin", cleanUrl]).catch(
+      async () => {
+        await this.runCommand(rootDir, ["remote", "add", "origin", cleanUrl]);
+      },
+    );
+
+    const head = await this._hasHeadCommit(rootDir);
+    if (!head) {
+      await this.runCommand(rootDir, ["add", "-A"]);
+      const author = await resolveGitAuthorIdentity(userId);
+      await this.runCommand(rootDir, ["commit", "-m", initialCommitMessage], {
+        author,
+      });
+    }
+
+    await this.runCommand(rootDir, ["branch", "-M", targetBranch]);
+
+    emitGitTransport(projectId, GIT_SOCKET_EVENTS.OPERATION_PROGRESS, {
+      projectId,
+      operation: "publish",
+      phase: "pushing",
+      message: `Pushing ${targetBranch} to GitHub...`,
+    });
+
+    const { token } = await resolveActingUserGithubToken(userId, {
+      requireRepoScope: true,
+    });
+    await this.runCommand(rootDir, ["push", "-u", "origin", targetBranch], {
+      githubToken: token,
+      isNetwork: true,
+    });
+
+    const persistPublish = (tx) =>
+      tx.project.update({
+        where: { id: projectId },
+        data: { repoUrl: repoWebUrl, defaultBranch: targetBranch },
+      });
+    if (preparedGit.getStore()?.isDirect) {
+      await persistPublish(prisma);
+    } else {
+      await stagePreparedPublication(persistPublish);
+    }
+
+    const status = await this.getStatus(projectId, userId);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+
+    emitGitTransport(projectId, GIT_SOCKET_EVENTS.OPERATION_COMPLETED, {
+      projectId,
+      operation: "publish",
+      repoUrl: repoWebUrl,
+      branch: targetBranch,
+    });
+
+    return {
+      repository: createdRepo,
+      repoUrl: repoWebUrl,
+      branch: targetBranch,
+      status,
+    };
+  }
+
+  /**
+   * Returns complete VS Code-grade repository status.
+   */
+  static async getStatus(projectId, userId, { includeTracked = false } = {}) {
     let repoInfo;
     try {
       repoInfo = await this.getRepoPath(projectId, userId);
@@ -281,14 +696,21 @@ export class GitService {
         return {
           isGitHubProject: false,
           hasGit: false,
+          canInitialize: false,
           isReady: false,
           branch: null,
+          headOid: null,
+          detached: false,
           tracking: null,
           ahead: 0,
           behind: 0,
+          operationState: GIT_REPO_OPERATION_STATE.IDLE,
           staged: [],
           unstaged: [],
           untracked: [],
+          conflicts: [],
+          unchangedCount: 0,
+          stashCount: 0,
           clean: true,
           repoUrl: null,
           message: err.message || "Project snapshot not ready or not found.",
@@ -298,33 +720,14 @@ export class GitService {
     }
 
     const { rootDir, project, snapshot, isGitHubProject } = repoInfo;
-
-    if (!isGitHubProject) {
-      return {
-        isGitHubProject: false,
-        hasGit: false,
-        branch: null,
-        tracking: null,
-        ahead: 0,
-        behind: 0,
-        staged: [],
-        unstaged: [],
-        untracked: [],
-        clean: true,
-        repoUrl: null,
-        message:
-          "Git operations are only available for repositories imported from GitHub.",
-      };
-    }
-
     const gitDir = path.join(rootDir, ".git");
 
-    if (!fs.existsSync(gitDir) && (isGitHubProject || project.repoUrl)) {
-      // 1. Try to copy .git from another snapshot of the same project (preserves exact history & branches)
+    if (!fs.existsSync(gitDir) && isGitHubProject && !preparedGit.getStore()) {
       try {
         const snapshots = await prisma.projectSnapshot.findMany({
           where: { projectId },
           orderBy: { createdAt: "desc" },
+          select: { id: true, rootDir: true, storagePath: true, source: true },
         });
         for (const prev of snapshots) {
           const prevWorkspace = snapshotWorkspaceRoot(prev);
@@ -337,371 +740,636 @@ export class GitService {
           }
         }
       } catch (err) {
-        console.warn("[git.service] Could not restore .git from previous snapshot:", err.message);
-      }
-
-      // 2. If still no .git, auto-ensure git repo so the project stays connected to GitHub
-      if (!fs.existsSync(gitDir)) {
-        try {
-          await this.ensureGitRepo(projectId, userId);
-        } catch (err) {
-          console.warn("[git.service] Auto-ensureGitRepo in getStatus failed:", err.message);
-        }
+        console.warn("[git.service] Could not restore .git from sibling snapshot:", err?.message);
       }
     }
 
     if (!fs.existsSync(gitDir)) {
       return {
-        isGitHubProject: !!(isGitHubProject || project.repoUrl),
+        isGitHubProject,
+        isGitHubLinked: Boolean(project.repoUrl),
         hasGit: false,
+        canInitialize: true,
+        isReady: true,
         branch: null,
+        headOid: null,
+        detached: false,
         tracking: null,
         ahead: 0,
         behind: 0,
+        operationState: GIT_REPO_OPERATION_STATE.IDLE,
         staged: [],
         unstaged: [],
         untracked: [],
+        conflicts: [],
+        unchangedCount: 0,
+        stashCount: 0,
         clean: true,
         repoUrl: project.repoUrl || null,
+        defaultBranch: project.defaultBranch || "main",
+        activeSnapshotId: snapshot.id,
+        workspaceRevision: project.workspaceRevision,
       };
     }
 
-    // If project.repoUrl is missing, check if remote origin is configured in git or infer
+    ensureCovaiGitExcludes(rootDir);
+
+    const hasStashRef =
+      fs.existsSync(path.join(gitDir, "refs", "stash")) ||
+      fs.existsSync(path.join(gitDir, "logs", "refs", "stash"));
+
+    const [statusRes, lsRes, stashRes, originRes] = await Promise.all([
+      this.runCommand(
+        rootDir,
+        ["status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"],
+        { rawOutput: true },
+      ),
+      this.runCommand(rootDir, ["ls-files", "-z"], { rawOutput: true }).catch(
+        () => ({ stdout: "" }),
+      ),
+      hasStashRef
+        ? this.runCommand(rootDir, ["stash", "list", "--oneline"]).catch(() => ({
+            stdout: "",
+          }))
+        : Promise.resolve({ stdout: "" }),
+      !project.repoUrl
+        ? this.runCommand(rootDir, ["remote", "get-url", "origin"]).catch(() => ({
+            stdout: "",
+          }))
+        : Promise.resolve({ stdout: "" }),
+    ]);
+
     let activeRepoUrl = project.repoUrl || null;
-    if (!activeRepoUrl) {
-      try {
-        const { stdout: originUrl } = await this.runCommand(
-          rootDir,
-          "git remote get-url origin",
-        );
-        if (originUrl && originUrl.includes("github.com")) {
-          activeRepoUrl = originUrl.replace(
-            /https:\/\/[^@]+@github\.com\//,
-            "https://github.com/",
-          );
-        }
-      } catch (_) {}
-
-      if (!activeRepoUrl && project.owner?.name) {
-        activeRepoUrl = `https://github.com/${project.owner.name}/${project.name}`;
-
+    if (!activeRepoUrl && originRes?.stdout) {
+      const originUrl = originRes.stdout;
+      if (originUrl.includes("github.com")) {
+        activeRepoUrl = normalizeCleanGithubUrl(originUrl).webUrl;
+      } else {
+        activeRepoUrl = redactGitOutput(originUrl);
       }
     }
 
-    // Run git status porcelain with branch info
-    const { stdout: statusOutput } = await this.runCommand(
-      rootDir,
-      "git status --porcelain=v1 -b -uall",
+    const parsed = parsePorcelainV2Z(statusRes.stdout);
+    const untracked = parsed.untracked.filter(
+      (item) => !isVcsIgnoredRelativePath(item.path),
     );
+    const clean =
+      parsed.staged.length === 0 &&
+      parsed.unstaged.length === 0 &&
+      untracked.length === 0 &&
+      parsed.conflicts.length === 0;
 
-    let branch = "main";
-    let tracking = null;
-    let ahead = 0;
-    let behind = 0;
+    const stashOut = stashRes?.stdout || "";
+    const stashCount = stashOut
+      ? stashOut.split(/\r?\n/).filter((line) => line.trim().length > 0).length
+      : 0;
 
-    const staged = [];
-    const unstaged = [];
-    const untracked = [];
-
-    const lines = statusOutput.split("\n").filter((l) => l.length > 0);
-
-    for (const line of lines) {
-      // Branch header line: ## main...origin/main [ahead 1, behind 2]
-      if (line.startsWith("##")) {
-        const branchPart = line.slice(3).trim();
-        if (
-          branchPart.includes("No commits yet on") ||
-          branchPart.includes("Initial commit on")
-        ) {
-          branch = branchPart.split(" ").pop();
-        } else if (branchPart.includes("...")) {
-          const [local, remoteWithStats] = branchPart.split("...");
-          branch = local;
-          if (remoteWithStats) {
-            const parts = remoteWithStats.split(" ");
-            tracking = parts[0];
-            if (remoteWithStats.includes("ahead")) {
-              const m = remoteWithStats.match(/ahead (\d+)/);
-              if (m) ahead = parseInt(m[1], 10);
-            }
-            if (remoteWithStats.includes("behind")) {
-              const m = remoteWithStats.match(/behind (\d+)/);
-              if (m) behind = parseInt(m[1], 10);
-            }
-          }
-        } else {
-          branch = branchPart.split(" ")[0];
-        }
-        continue;
-      }
-
-      const indexStatus = line[0];
-      const workTreeStatus = line[1];
-      const filePath = line.slice(3).trim().replace(/^"|"$/g, "");
-
-      // Untracked files
-      if (indexStatus === "?" && workTreeStatus === "?") {
-        untracked.push({
-          path: filePath,
-          status: "U",
-          statusText: "Untracked",
-        });
-        continue;
-      }
-
-      // Staged changes
-      if (indexStatus !== " " && indexStatus !== "?") {
-        let statusText = "Modified";
-        if (indexStatus === "A") statusText = "Added";
-        else if (indexStatus === "D") statusText = "Deleted";
-        else if (indexStatus === "R") statusText = "Renamed";
-
-        staged.push({
-          path: filePath,
-          status: indexStatus,
-          statusText,
-        });
-      }
-
-      // Unstaged changes in working tree
-      if (workTreeStatus !== " " && workTreeStatus !== "?") {
-        let statusText = "Modified";
-        if (workTreeStatus === "D") statusText = "Deleted";
-        else if (workTreeStatus === "M") statusText = "Modified";
-
-        unstaged.push({
-          path: filePath,
-          status: workTreeStatus,
-          statusText,
-        });
-      }
+    let trackedFiles = [];
+    let unchangedFiles = [];
+    let unchangedCount = 0;
+    const changedPaths = new Set([
+      ...parsed.staged.map((f) => f.path),
+      ...parsed.unstaged.map((f) => f.path),
+      ...parsed.conflicts.map((f) => f.path),
+    ]);
+    const allTracked = String(lsRes?.stdout || "")
+      .split("\0")
+      .map(normalizePosixPath)
+      .filter(Boolean);
+    const unchangedList = allTracked.filter((p) => !changedPaths.has(p));
+    unchangedCount = unchangedList.length;
+    if (includeTracked) {
+      trackedFiles = allTracked;
+      unchangedFiles = unchangedList.map((p) => ({
+        path: p,
+        status: " ",
+        statusText: "Unchanged",
+      }));
     }
 
     return {
+      isGitHubProject: Boolean(isGitHubProject || activeRepoUrl),
+      isGitHubLinked: Boolean(activeRepoUrl && activeRepoUrl.includes("github.com")),
       hasGit: true,
-      branch,
-      tracking,
-      ahead,
-      behind,
-      staged,
-      unstaged,
+      canInitialize: false,
+      isReady: true,
+      branch: parsed.branch || project.defaultBranch || "main",
+      headOid: parsed.headOid,
+      detached: parsed.detached,
+      isUnborn: parsed.isUnborn,
+      tracking: parsed.tracking,
+      ahead: parsed.ahead,
+      behind: parsed.behind,
+      operationState: detectRepoOperationState(rootDir),
+      staged: parsed.staged,
+      unstaged: parsed.unstaged,
       untracked,
-      clean:
-        staged.length === 0 && unstaged.length === 0 && untracked.length === 0,
+      conflicts: parsed.conflicts,
+      unchangedCount,
+      ...(includeTracked ? { trackedFiles, unchangedFiles } : {}),
+      stashCount,
+      clean,
       repoUrl: activeRepoUrl,
+      defaultBranch: project.defaultBranch || "main",
+      activeSnapshotId: snapshot.id,
+      workspaceRevision: project.workspaceRevision,
     };
   }
 
   /**
-   * Stage files (git add)
+   * Stages selected files, a folder, or the entire working tree.
    */
-  static async stageFiles(projectId, userId, files) {
-    if (files && files !== "all") (Array.isArray(files) ? files : [files]).forEach(fileName);
-    const { rootDir } = await this.ensureGitRepo(projectId, userId);
-
-    if (
-      files === "all" ||
-      !files ||
-      (Array.isArray(files) && files.length === 0)
-    ) {
-      await this.runCommand(rootDir, "git add -A");
-    } else if (Array.isArray(files)) {
-      const quoted = files.map((f) => `"${f}"`).join(" ");
-      await this.runCommand(rootDir, `git add -- ${quoted}`);
-    } else if (typeof files === "string") {
-      await this.runCommand(rootDir, `git add -- "${files}"`);
-    }
-
-    return this.getStatus(projectId, userId);
-  }
-
-  /**
-   * Unstage files (git restore --staged or git reset)
-   */
-  static async unstageFiles(projectId, userId, files) {
-    if (files && files !== "all") (Array.isArray(files) ? files : [files]).forEach(fileName);
-    const { rootDir } = await this.ensureGitRepo(projectId, userId);
-
-    if (
-      files === "all" ||
-      !files ||
-      (Array.isArray(files) && files.length === 0)
-    ) {
-      await this.runCommand(rootDir, "git reset HEAD -- .").catch(async () => {
-        await this.runCommand(rootDir, "git restore --staged .").catch(
-          () => {},
-        );
-      });
-    } else if (Array.isArray(files)) {
-      const quoted = files.map((f) => `"${f}"`).join(" ");
-      await this.runCommand(rootDir, `git restore --staged -- ${quoted}`).catch(
-        async () => {
-          await this.runCommand(rootDir, `git reset HEAD -- ${quoted}`);
-        },
-      );
-    } else if (typeof files === "string") {
-      await this.runCommand(
-        rootDir,
-        `git restore --staged -- "${files}"`,
-      ).catch(async () => {
-        await this.runCommand(rootDir, `git reset HEAD -- "${files}"`);
+  static async stageFiles(projectId, userId, files, folder) {
+    if (folder) fileName(folder);
+    let targetList = null;
+    if (files && files !== "all") {
+      targetList = (Array.isArray(files) ? files : [files]).map((entry) => {
+        const clean = fileName(entry);
+        if (isVcsSecretFileName(path.posix.basename(clean))) {
+          throw new ServiceError(
+            `Secret file '${clean}' cannot be staged or committed`,
+            400,
+            "SECRET_FILE_BLOCKED",
+          );
+        }
+        return clean;
       });
     }
 
-    return this.getStatus(projectId, userId);
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+
+    if (folder) {
+      await this.runCommand(rootDir, ["add", "-A", "--", sanitizeGitFilePath(folder)]);
+    } else if (
+      files === "all" ||
+      !files ||
+      (Array.isArray(targetList) && targetList.length === 0)
+    ) {
+      await this.runCommand(rootDir, ["add", "-A"]);
+    } else {
+      await this.runCommand(rootDir, ["add", "-A", "--", ...targetList]);
+    }
+
+    const status = await this.getStatus(projectId, userId);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return status;
   }
 
   /**
-   * Discard changes in files
+   * Unstages selected files, folder, or all staged entries (including unborn HEAD).
+   */
+  static async unstageFiles(projectId, userId, files, folder) {
+    if (folder) fileName(folder);
+    if (files && files !== "all") {
+      (Array.isArray(files) ? files : [files]).forEach(fileName);
+    }
+
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const isAll =
+      !folder &&
+      (files === "all" || !files || (Array.isArray(files) && files.length === 0));
+    const safeFolder = folder ? sanitizeGitFilePath(folder) : null;
+    const targetList =
+      !folder && !isAll
+        ? (Array.isArray(files) ? files : [files]).map(fileName)
+        : null;
+
+    const tryRestore = safeFolder
+      ? ["restore", "--staged", "--", safeFolder]
+      : isAll
+        ? ["restore", "--staged", "."]
+        : ["restore", "--staged", "--", ...targetList];
+
+    try {
+      await this.runCommand(rootDir, tryRestore);
+    } catch {
+      const hasHead = Boolean(await this._hasHeadCommit(rootDir));
+      if (!hasHead) {
+        const unbornArgs = safeFolder
+          ? ["rm", "--cached", "-r", "-f", "--", safeFolder]
+          : isAll
+            ? ["rm", "--cached", "-r", "-f", "."]
+            : ["rm", "--cached", "-f", "--", ...targetList];
+        await this.runCommand(rootDir, unbornArgs).catch(() => {});
+      } else {
+        const resetArgs = safeFolder
+          ? ["reset", "HEAD", "--", safeFolder]
+          : isAll
+            ? ["reset", "HEAD", "--", "."]
+            : ["reset", "HEAD", "--", ...targetList];
+        await this.runCommand(rootDir, resetArgs).catch(() => {});
+      }
+    }
+
+    const status = await this.getStatus(projectId, userId);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return status;
+  }
+
+  static async stageHunk(projectId, userId, filePath, hunkIndex) {
+    fileName(filePath);
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    await applyHunkAction(rootDir, { filePath, hunkIndex, action: "stage" });
+    const status = await this.getStatus(projectId, userId);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return status;
+  }
+
+  static async unstageHunk(projectId, userId, filePath, hunkIndex) {
+    fileName(filePath);
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    await applyHunkAction(rootDir, { filePath, hunkIndex, action: "unstage" });
+    const status = await this.getStatus(projectId, userId);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return status;
+  }
+
+  static async revertHunk(projectId, userId, filePath, hunkIndex) {
+    fileName(filePath);
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    await applyHunkAction(rootDir, { filePath, hunkIndex, action: "revert" });
+    const status = await this.getStatus(projectId, userId);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return status;
+  }
+
+  /**
+   * Discards working-tree edits or removes untracked files safely.
+   * Supports both `(filePath, isUntracked)` and batch `{ files, includeUntracked }`.
    */
   static async discardChanges(
     projectId,
     userId,
-    filePath,
+    filePathOrOptions,
     isUntracked = false,
   ) {
-    fileName(filePath);
-    const { rootDir } = await this.ensureGitRepo(projectId, userId);
+    let entries = [];
+    let includeUntracked = Boolean(isUntracked);
+    let discardAll = false;
 
-    if (isUntracked) {
-      const targetPath = path.resolve(rootDir, filePath);
-      const relative = path.relative(fs.realpathSync(rootDir), targetPath);
-      if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) throw new ServiceError("Invalid file path", 400);
-      const realParent = fs.realpathSync(path.dirname(targetPath));
-      const parentRelative = path.relative(fs.realpathSync(rootDir), realParent);
-      if (parentRelative.startsWith("..") || path.isAbsolute(parentRelative)) throw new ServiceError("Invalid file path", 400);
-      if (fs.existsSync(targetPath)) {
-        const stat = fs.statSync(targetPath);
-        if (stat.isDirectory()) {
-          fs.rmSync(targetPath, { recursive: true, force: true });
-        } else {
-          fs.unlinkSync(targetPath);
+    if (typeof filePathOrOptions === "string" && filePathOrOptions !== "all") {
+      entries = [{ path: fileName(filePathOrOptions), isUntracked: Boolean(isUntracked) }];
+    } else if (filePathOrOptions === "all") {
+      discardAll = true;
+      if (isUntracked && typeof isUntracked === "object") {
+        includeUntracked = Boolean(isUntracked.includeUntracked);
+      }
+    } else if (filePathOrOptions && typeof filePathOrOptions === "object") {
+      includeUntracked = Boolean(filePathOrOptions.includeUntracked);
+      if (filePathOrOptions.files === "all") {
+        discardAll = true;
+      } else if (Array.isArray(filePathOrOptions.files)) {
+        entries = filePathOrOptions.files.map((item) =>
+          typeof item === "string"
+            ? { path: fileName(item), isUntracked: includeUntracked }
+            : { path: fileName(item.path), isUntracked: Boolean(item.isUntracked) },
+        );
+      } else if (filePathOrOptions.filePath) {
+        entries = [
+          {
+            path: fileName(filePathOrOptions.filePath),
+            isUntracked: Boolean(filePathOrOptions.isUntracked),
+          },
+        ];
+      }
+    }
+
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+
+    if (discardAll) {
+      const currentStatus = await this.getStatus(projectId, userId);
+      if (currentStatus.unstaged.length > 0) {
+        const trackedTargets = currentStatus.unstaged.map((f) => f.path);
+        await this.runCommand(rootDir, [
+          "restore",
+          "--worktree",
+          "--",
+          ...trackedTargets,
+        ]).catch(async () => {
+          await this.runCommand(rootDir, ["checkout", "--", ...trackedTargets]);
+        });
+      }
+      if (includeUntracked) {
+        for (const u of currentStatus.untracked) {
+          const { target } = resolveContainedDiskFile(rootDir, u.path);
+          if (fs.existsSync(target)) {
+            fs.rmSync(target, { recursive: true, force: true });
+          }
         }
       }
     } else {
-      await this.runCommand(rootDir, `git restore -- "${filePath}"`).catch(
-        async () => {
-          await this.runCommand(rootDir, `git checkout -- "${filePath}"`);
-        },
-      );
+      const trackedList = [];
+      for (const entry of entries) {
+        if (entry.isUntracked) {
+          const { target } = resolveContainedDiskFile(rootDir, entry.path);
+          if (fs.existsSync(target)) {
+            fs.rmSync(target, { recursive: true, force: true });
+          }
+        } else {
+          trackedList.push(entry.path);
+        }
+      }
+      if (trackedList.length > 0) {
+        await this.runCommand(rootDir, [
+          "restore",
+          "--worktree",
+          "--",
+          ...trackedList,
+        ]).catch(async () => {
+          await this.runCommand(rootDir, ["checkout", "--", ...trackedList]);
+        });
+      }
     }
 
-    return this.getStatus(projectId, userId);
+    const status = await this.getStatus(projectId, userId);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return status;
   }
 
   /**
-   * Commit staged changes (auto-stages all if nothing staged)
+   * Appends a safe ignore pattern to the repository's `.gitignore` without duplicates.
    */
-  static async commit(projectId, userId, message) {
-    if (!message || message.trim().length === 0) {
+  static async addGitignorePattern(projectId, userId, pattern) {
+    if (typeof pattern !== "string" || !pattern.trim()) {
+      throw new ServiceError("Ignore pattern is required", 400, "INVALID_GITIGNORE");
+    }
+    const cleanPattern = pattern.trim().replaceAll("\\", "/").replace(/[\r\n\0]/g, "");
+    if (!cleanPattern) {
+      throw new ServiceError("Invalid ignore pattern", 400, "INVALID_GITIGNORE");
+    }
+
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const gitignorePath = path.join(rootDir, ".gitignore");
+    const existing = fs.existsSync(gitignorePath)
+      ? fs.readFileSync(gitignorePath, "utf8")
+      : "";
+    const lines = existing.split(/\r?\n/).map((l) => l.trim());
+    if (!lines.includes(cleanPattern)) {
+      const prefix = existing && !existing.endsWith("\n") ? "\n" : "";
+      fs.appendFileSync(gitignorePath, `${prefix}${cleanPattern}\n`, "utf8");
+    }
+
+    const status = await this.getStatus(projectId, userId);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return status;
+  }
+
+  /**
+   * Commits changes with acting user's author identity (supporting amend, stageAll, pushAfter, syncAfter).
+   */
+  static async commit(projectId, userId, messageOrOptions) {
+    const opts =
+      typeof messageOrOptions === "string"
+        ? { message: messageOrOptions }
+        : messageOrOptions || {};
+
+    const baseMsg = typeof opts.message === "string" ? opts.message.trim() : "";
+    const bodyMsg =
+      typeof opts.description === "string" ? opts.description.trim() : "";
+    if (!baseMsg) {
       throw new ServiceError("Commit message cannot be empty", 400);
     }
+    const fullMessage = bodyMsg ? `${baseMsg}\n\n${bodyMsg}` : baseMsg;
 
-    const { rootDir, project } = await this.ensureGitRepo(projectId, userId);
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const amend = Boolean(opts.amend);
 
-    // If nothing is staged, auto-stage all changes so commit succeeds
-    try {
-      const { stdout: diffCached } = await this.runCommand(
-        rootDir,
-        "git diff --cached --name-only",
-      );
-      if (!diffCached || diffCached.trim().length === 0) {
-        await this.runCommand(rootDir, "git add -A");
-      }
-    } catch (_) {
+    let hasStaged = false;
+    if (opts.stageAll === true) {
+      await this.runCommand(rootDir, ["add", "-A"]);
+      hasStaged = true;
+    } else {
       try {
-        await this.runCommand(rootDir, "git add -A");
-      } catch (__) {}
+        const { stdout: diffCached } = await this.runCommand(rootDir, [
+          "diff",
+          "--cached",
+          "--name-only",
+        ]);
+        hasStaged = Boolean(diffCached && diffCached.trim().length > 0);
+      } catch {
+        hasStaged = false;
+      }
+
+      if (opts.stageAll !== false && !hasStaged && !amend) {
+        await this.runCommand(rootDir, ["add", "-A"]);
+        hasStaged = true;
+      } else if (!hasStaged && !amend) {
+        throw new ServiceError(
+          "No staged changes to commit. Stage files or enable stageAll.",
+          400,
+          "NOTHING_STAGED",
+        );
+      }
     }
 
-    const user = project.owner;
-    const authorName = user?.name || "GitHub Developer";
-    const authorEmail = user?.email || "developer@github.com";
+    const author = await resolveGitAuthorIdentity(userId, {
+      authorName: opts.authorName,
+      authorEmail: opts.authorEmail,
+    });
+
+    const args = ["commit"];
+    if (amend) args.push("--amend");
+    args.push("--author", `${author.name} <${author.email}>`, "-m", fullMessage);
 
     let stdout = "";
     try {
-      const res = await this.runCommand(
-        rootDir,
-        ['commit', '--author', `${authorName} <${authorEmail}>`, '-m', message],
-        {
-          GIT_AUTHOR_NAME: authorName,
-          GIT_AUTHOR_EMAIL: authorEmail,
-          GIT_COMMITTER_NAME: authorName,
-          GIT_COMMITTER_EMAIL: authorEmail,
-        },
-      );
+      const res = await this.runCommand(rootDir, args, { author });
       stdout = res.stdout;
     } catch (err) {
-      if (err.message && (err.message.includes("nothing to commit") || err.message.includes("working tree clean"))) {
+      if (
+        err.message &&
+        (err.message.includes("nothing to commit") ||
+          err.message.includes("working tree clean"))
+      ) {
         stdout = "Nothing to commit, working tree clean";
       } else {
         throw err;
       }
     }
 
+    const statusAfterCommit = await this.getStatus(projectId, userId);
+    await this._recordSnapshotHeadSync(
+      rootDir,
+      projectId,
+      snapshot.id,
+      statusAfterCommit,
+    );
+
+    let pushResult = null;
+    if (opts.syncAfter) {
+      return this.sync(projectId, userId);
+    }
+    if (opts.pushAfter) {
+      pushResult = await this.push(projectId, userId);
+      return {
+        success: true,
+        message: stdout,
+        commitSha: pushResult.status?.headOid || statusAfterCommit.headOid,
+        pushResult,
+        status: pushResult.status,
+      };
+    }
+
     return {
       success: true,
       message: stdout,
-      status: await this.getStatus(projectId, userId),
+      commitSha: statusAfterCommit.headOid,
+      status: statusAfterCommit,
     };
   }
 
   /**
-   * Push branch to remote (authenticated with user's GitHub session)
+   * Soft-resets the last commit so changes return to the Staging area.
    */
-  static async push(projectId, userId, branch) {
-    branchName(branch);
-    const { rootDir, project } = await this.ensureGitRepo(projectId, userId);
-
-    // Ensure origin has the latest decrypted GitHub access token
-    if (project.repoUrl) {
-      try {
-        const token =
-          await GitHubRepositoryAccessService.getGitHubToken(userId);
-        if (token && project.repoUrl.includes("github.com")) {
-          const match = project.repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
-          if (match) {
-            const owner = match[1];
-            const repo = match[2].replace(/\.git$/, "");
-            const authRemoteUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
-            await this.runCommand(
-              rootDir,
-              `git remote set-url origin "${authRemoteUrl}"`,
-            ).catch(async () => {
-              await this.runCommand(
-                rootDir,
-                `git remote add origin "${authRemoteUrl}"`,
-              );
-            });
-          }
-        }
-      } catch (err) {
-        throw new ServiceError(
-          "GitHub access token missing or expired. Please re-login with your GitHub account.",
-          401,
-        );
-      }
+  static async undoCommit(projectId, userId, { allowPushed = false } = {}) {
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const currentStatus = await this.getStatus(projectId, userId);
+    if (!currentStatus.headOid) {
+      throw new ServiceError("Repository has no commits to undo", 400, "NO_COMMITS");
     }
 
-    let targetBranch = branch;
-    if (!targetBranch) {
-      const { stdout } = await this.runCommand(
-        rootDir,
-        "git rev-parse --abbrev-ref HEAD",
+    if (currentStatus.tracking && currentStatus.ahead === 0 && !allowPushed) {
+      throw new ServiceError(
+        "The latest commit is already pushed to remote. Confirm undo with allowPushed=true if you want to rewrite local history.",
+        409,
+        "COMMIT_ALREADY_PUSHED",
       );
-      targetBranch = stdout || "main";
     }
+
+    const hasParent = await this.runCommand(rootDir, [
+      "rev-parse",
+      "--verify",
+      "HEAD~1",
+    ])
+      .then(() => true)
+      .catch(() => false);
+
+    if (hasParent) {
+      await this.runCommand(rootDir, ["reset", "--soft", "HEAD~1"]);
+    } else {
+      await this.runCommand(rootDir, ["update-ref", "-d", "HEAD"]);
+    }
+
+    const status = await this.getStatus(projectId, userId);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return status;
+  }
+
+  /**
+   * Uses Gemini AI + user quota to draft a Conventional Commit message.
+   */
+  static async generateAiCommitMessage(projectId, userId, { model } = {}) {
+    await resolveProjectAccess({ projectId, userId, capability: "ai.use" });
+    const { rootDir } = await this.getRepoPath(projectId, userId);
+    if (!fs.existsSync(path.join(rootDir, ".git"))) {
+      throw new ServiceError(
+        "Initialize Git before generating an AI commit message",
+        400,
+        "GIT_NOT_INITIALIZED",
+      );
+    }
+    return generateGitCommitMessage({ projectId, userId, rootDir, model });
+  }
+
+  /**
+   * Fetches updates from remote without modifying the working tree.
+   */
+  static async fetch(projectId, userId, { prune = true, tags = true } = {}) {
+    const { rootDir, project, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const { execOptions } = await this._resolveRemoteExecution(
+      rootDir,
+      project,
+      userId,
+      { requireRepoScope: false },
+    );
+
+    emitGitTransport(projectId, GIT_SOCKET_EVENTS.OPERATION_PROGRESS, {
+      projectId,
+      operation: "fetch",
+      phase: "fetching",
+      message: "Fetching from origin...",
+    });
+
+    const args = ["fetch", "origin"];
+    if (prune) args.push("--prune");
+    if (tags) args.push("--tags");
+
+    const { stdout, stderr } = await this.runCommand(rootDir, args, execOptions);
+    const status = await this.getStatus(projectId, userId);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+
+    emitGitTransport(projectId, GIT_SOCKET_EVENTS.OPERATION_COMPLETED, {
+      projectId,
+      operation: "fetch",
+      ahead: status.ahead,
+      behind: status.behind,
+    });
+
+    return {
+      success: true,
+      output: stdout || stderr || "Fetch completed",
+      status,
+    };
+  }
+
+  /**
+   * Pushes local commits to remote using strictly transient acting-user credentials.
+   */
+  static async push(projectId, userId, branchOrOptions, extraOptions = {}) {
+    const opts =
+      typeof branchOrOptions === "string"
+        ? { branch: branchOrOptions, ...extraOptions }
+        : { ...(branchOrOptions || {}), ...extraOptions };
+
+    if (opts.branch) branchName(opts.branch);
+
+    const { rootDir, project, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const { execOptions } = await this._resolveRemoteExecution(
+      rootDir,
+      project,
+      userId,
+      { requireRepoScope: true },
+    );
+
+    let targetBranch = opts.branch;
+    if (!targetBranch) {
+      const { stdout } = await this.runCommand(rootDir, [
+        "rev-parse",
+        "--abbrev-ref",
+        "HEAD",
+      ]);
+      targetBranch = stdout.trim() || project.defaultBranch || "main";
+    }
+    branchName(targetBranch);
+
+    emitGitTransport(projectId, GIT_SOCKET_EVENTS.OPERATION_PROGRESS, {
+      projectId,
+      operation: "push",
+      phase: "pushing",
+      message: `Pushing ${targetBranch} to origin...`,
+    });
+
+    const args = ["push"];
+    if (opts.setUpstream !== false) args.push("-u");
+    if (opts.forceWithLease) args.push("--force-with-lease");
+    args.push("origin", targetBranch);
+    if (opts.tags) args.push("--tags");
 
     try {
-      const { stdout, stderr } = await this.runCommand(
-        rootDir,
-        `git push -u origin "${targetBranch}"`,
-      );
+      const { stdout, stderr } = await this.runCommand(rootDir, args, execOptions);
+      const status = await this.getStatus(projectId, userId);
+      await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+
+      emitGitTransport(projectId, GIT_SOCKET_EVENTS.OPERATION_COMPLETED, {
+        projectId,
+        operation: "push",
+        branch: targetBranch,
+      });
 
       return {
         success: true,
         output: stdout || stderr || "Push completed successfully",
-        status: await this.getStatus(projectId, userId),
+        status,
       };
     } catch (error) {
       const msg = error.message || "";
@@ -712,8 +1380,16 @@ export class GitService {
         msg.includes("Permission to")
       ) {
         throw new ServiceError(
-          "GitHub authentication failed. Please verify that your GitHub account has write access to this repository.",
+          "GitHub authentication failed. Please verify your GitHub account has write access to this repository.",
           403,
+          "GIT_AUTH_FAILED",
+        );
+      }
+      if (msg.includes("non-fast-forward") || msg.includes("fetch first")) {
+        throw new ServiceError(
+          "Push rejected because remote contains newer commits. Pull or Sync before pushing.",
+          409,
+          "GIT_PUSH_REJECTED",
         );
       }
       throw error;
@@ -721,55 +1397,62 @@ export class GitService {
   }
 
   /**
-   * Pull changes from remote (authenticated with user's GitHub session)
+   * Pulls changes from remote and enters Conflict state cleanly if conflicts occur.
    */
-  static async pull(projectId, userId, branch) {
-    branchName(branch);
-    const { rootDir, project } = await this.ensureGitRepo(projectId, userId);
+  static async pull(projectId, userId, branchOrOptions, extraOptions = {}) {
+    const opts =
+      typeof branchOrOptions === "string"
+        ? { branch: branchOrOptions, ...extraOptions }
+        : { ...(branchOrOptions || {}), ...extraOptions };
 
-    if (project.repoUrl) {
-      try {
-        const token =
-          await GitHubRepositoryAccessService.getGitHubToken(userId);
-        if (token && project.repoUrl.includes("github.com")) {
-          const match = project.repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
-          if (match) {
-            const owner = match[1];
-            const repo = match[2].replace(/\.git$/, "");
-            const authRemoteUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
-            await this.runCommand(
-              rootDir,
-              `git remote set-url origin "${authRemoteUrl}"`,
-            ).catch(async () => {
-              await this.runCommand(
-                rootDir,
-                `git remote add origin "${authRemoteUrl}"`,
-              );
-            });
-          }
-        }
-      } catch (_) {}
-    }
+    if (opts.branch) branchName(opts.branch);
 
-    let targetBranch = branch;
+    const { rootDir, project, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const { execOptions } = await this._resolveRemoteExecution(
+      rootDir,
+      project,
+      userId,
+      { requireRepoScope: false },
+    );
+
+    let targetBranch = opts.branch;
     if (!targetBranch) {
-      const { stdout } = await this.runCommand(
-        rootDir,
-        "git rev-parse --abbrev-ref HEAD",
-      );
-      targetBranch = stdout || "main";
+      const { stdout } = await this.runCommand(rootDir, [
+        "rev-parse",
+        "--abbrev-ref",
+        "HEAD",
+      ]);
+      targetBranch = stdout.trim() || project.defaultBranch || "main";
     }
+    branchName(targetBranch);
+
+    emitGitTransport(projectId, GIT_SOCKET_EVENTS.OPERATION_PROGRESS, {
+      projectId,
+      operation: "pull",
+      phase: "pulling",
+      message: `Pulling origin/${targetBranch}...`,
+    });
+
+    const args = ["pull"];
+    if (opts.rebase) args.push("--rebase");
+    args.push("origin", targetBranch);
 
     try {
-      const { stdout, stderr } = await this.runCommand(
-        rootDir,
-        `git pull origin "${targetBranch}"`,
-      );
+      const { stdout, stderr } = await this.runCommand(rootDir, args, execOptions);
+      const status = await this.getStatus(projectId, userId);
+      await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+
+      emitGitTransport(projectId, GIT_SOCKET_EVENTS.OPERATION_COMPLETED, {
+        projectId,
+        operation: "pull",
+        branch: targetBranch,
+      });
 
       return {
         success: true,
+        conflicted: false,
         output: stdout || stderr || "Pull completed successfully",
-        status: await this.getStatus(projectId, userId),
+        status,
       };
     } catch (error) {
       const msg = error.message || "";
@@ -779,185 +1462,1537 @@ export class GitService {
         msg.includes("could not read Username")
       ) {
         throw new ServiceError(
-          "GitHub authentication failed. Please verify that your GitHub account has access to this repository.",
+          "GitHub authentication failed. Please verify your GitHub access to this repository.",
           403,
+          "GIT_AUTH_FAILED",
         );
+      }
+
+      const conflictStatus = await this.getStatus(projectId, userId).catch(() => null);
+      if (
+        conflictStatus &&
+        (conflictStatus.conflicts.length > 0 ||
+          conflictStatus.operationState !== GIT_REPO_OPERATION_STATE.IDLE ||
+          /CONFLICT|Automatic merge failed|fix conflicts/i.test(msg))
+      ) {
+        await this._recordSnapshotHeadSync(
+          rootDir,
+          projectId,
+          snapshot.id,
+          conflictStatus,
+        );
+        return {
+          success: false,
+          conflicted: true,
+          operationState: conflictStatus.operationState,
+          conflicts: conflictStatus.conflicts,
+          output: msg,
+          status: conflictStatus,
+        };
       }
       throw error;
     }
   }
 
   /**
-   * Get list of branches
+   * VS Code Sync Changes: fetch --prune -> pull (if behind) -> push -u (if ahead or unpushed).
    */
-  static async getBranches(projectId, userId) {
-    const { rootDir } = await this.getRepoPath(projectId, userId);
+  static async sync(projectId, userId, { rebase = false } = {}) {
+    const fetched = await this.fetch(projectId, userId, { prune: true, tags: true });
+    let status = fetched.status;
+    let pullResult = null;
+    let pushResult = null;
 
-    let current = "main";
-    try {
-      const { stdout } = await this.runCommand(
-        rootDir,
-        "git rev-parse --abbrev-ref HEAD",
-      );
-      current = stdout || "main";
-    } catch (_) {}
-
-    const { stdout: branchOutput } = await this.runCommand(
-      rootDir,
-      "git branch -a",
-    );
-    const local = [];
-    const remote = [];
-
-    const lines = branchOutput
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean);
-    for (const line of lines) {
-      const cleanName = line.replace(/^\*\s*/, "").trim();
-      if (cleanName.startsWith("remotes/origin/")) {
-        const remoteName = cleanName.replace(/^remotes\/origin\//, "");
-        if (!remoteName.includes("HEAD ->") && !remote.includes(remoteName)) {
-          remote.push(remoteName);
-        }
-      } else if (
-        !cleanName.includes("HEAD detached") &&
-        !local.includes(cleanName)
-      ) {
-        local.push(cleanName);
+    if (status.behind > 0 || status.tracking) {
+      pullResult = await this.pull(projectId, userId, { branch: status.branch, rebase });
+      if (pullResult.conflicted) {
+        return {
+          success: false,
+          conflicted: true,
+          conflicts: pullResult.conflicts,
+          pullResult,
+          pushResult: null,
+          status: pullResult.status,
+        };
       }
+      status = pullResult.status;
     }
 
-    if (local.length === 0) {
-      local.push(current);
+    if (status.ahead > 0 || !status.tracking) {
+      pushResult = await this.push(projectId, userId, {
+        branch: status.branch,
+        setUpstream: true,
+      });
+      status = pushResult.status;
     }
 
-    return { current, local, remote };
+    return {
+      success: true,
+      conflicted: false,
+      pullResult,
+      pushResult,
+      status,
+    };
   }
 
   /**
-   * Checkout or create branch
+   * Lists local and remote branches with upstream tracking, ahead/behind counts,
+   * and last commit summary, while keeping flat `local[]` / `remote[]` string lists.
    */
-  static async checkout(projectId, userId, branch, createNew = false) {
-    branchName(branch);
-    if (!branch || branch.trim().length === 0) {
-      throw new ServiceError("Branch name is required", 400);
-    }
+  static async getBranches(projectId, userId) {
+    const { rootDir, project } = await this.getRepoPath(projectId, userId);
 
-    const { rootDir } = await this.ensureGitRepo(projectId, userId);
-    const cleanBranch = branch.trim();
+    const fmt =
+      "%(refname)%09%(refname:short)%09%(objectname:short)%09%(upstream:short)%09%(upstream:track)%09%(committerdate:iso-strict)%09%(subject)";
 
-    if (createNew) {
-      await this.runCommand(rootDir, `git checkout -b "${cleanBranch}"`);
-    } else {
-      try {
-        await this.runCommand(rootDir, `git checkout "${cleanBranch}"`);
-      } catch (err) {
-        // If local branch doesn't exist, try tracking remote branch
-        const remoteRef = cleanBranch.startsWith("origin/")
-          ? cleanBranch
-          : `origin/${cleanBranch}`;
-        const localName = cleanBranch.replace(/^origin\//, "");
-        await this.runCommand(
-          rootDir,
-          `git checkout -b "${localName}" --track "${remoteRef}"`,
-        ).catch(async () => {
-          await this.runCommand(rootDir, `git checkout "${localName}"`);
+    const [headRes, refsRes] = await Promise.all([
+      this.runCommand(rootDir, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => ({
+        stdout: "",
+      })),
+      this.runCommand(rootDir, [
+        "for-each-ref",
+        `--format=${fmt}`,
+        "refs/heads",
+        "refs/remotes",
+      ]).catch(() => ({ stdout: "" })),
+    ]);
+
+    const current = headRes?.stdout?.trim() || project?.defaultBranch || "main";
+    const local = [];
+    const remote = [];
+    const localBranches = [];
+    const remoteBranches = [];
+
+    for (const row of String(refsRes?.stdout || "").split(/\r?\n/).filter(Boolean)) {
+      const [fullRef, shortName, oid, upstream, track, dateIso, ...subjectParts] =
+        row.split("\t");
+      if (fullRef.startsWith("refs/heads/")) {
+        if (!local.includes(shortName)) local.push(shortName);
+        const aheadMatch = track?.match(/ahead (\d+)/);
+        const behindMatch = track?.match(/behind (\d+)/);
+        localBranches.push({
+          name: shortName,
+          oid,
+          upstream: upstream || null,
+          ahead: aheadMatch ? Number.parseInt(aheadMatch[1], 10) : 0,
+          behind: behindMatch ? Number.parseInt(behindMatch[1], 10) : 0,
+          lastCommitDate: dateIso || null,
+          lastCommitSubject: subjectParts.join("\t"),
+          isCurrent: shortName === current,
+        });
+      } else if (
+        fullRef.startsWith("refs/remotes/origin/") &&
+        !fullRef.endsWith("/HEAD")
+      ) {
+        const remoteShort = shortName.replace(/^origin\//, "");
+        if (!remote.includes(remoteShort)) remote.push(remoteShort);
+        remoteBranches.push({
+          name: remoteShort,
+          fullName: shortName,
+          oid,
+          lastCommitDate: dateIso || null,
+          lastCommitSubject: subjectParts.join("\t"),
         });
       }
     }
 
-    return this.getBranches(projectId, userId);
+    if (local.length === 0 && current && current !== "HEAD") {
+      local.push(current);
+    }
+
+    return {
+      current,
+      detached: current === "HEAD",
+      defaultBranch: project?.defaultBranch || "main",
+      local,
+      remote,
+      localBranches,
+      remoteBranches,
+    };
   }
 
   /**
-   * Set or update remote repository URL (e.g. link to GitHub)
+   * Creates a new local branch without switching HEAD away from the active branch.
    */
-  static async setRemoteUrl(projectId, userId, repoUrl) {
-    await resolveProjectAccess({ projectId, userId, capability: "integrations.write" });
-    if (!repoUrl || typeof repoUrl !== "string") {
-      throw new ServiceError("repoUrl is required", 400);
+  static async createBranch(projectId, userId, { branch, fromRef } = {}) {
+    const cleanBranch = branchName(branch)?.trim();
+    if (!cleanBranch) {
+      throw new ServiceError("Branch name is required", 400);
     }
-    const cleanUrl = repoUrl.trim();
-    if (!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+(?:\.git)?\/?$/.test(cleanUrl)) {
+    if (fromRef) sanitizeGitRef(fromRef, "base ref");
+
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const args = ["branch", cleanBranch];
+    if (fromRef) args.push(fromRef.trim());
+    await this.runCommand(rootDir, args);
+
+    const [branches, status] = await Promise.all([
+      this.getBranches(projectId, userId),
+      this.getStatus(projectId, userId),
+    ]);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return { ...branches, createdBranch: cleanBranch, status };
+  }
+
+  /**
+   * Checks out an existing branch or creates a new branch (with optional auto-stash).
+   */
+  static async checkout(
+    projectId,
+    userId,
+    branchOrOptions,
+    createNewLegacy = false,
+  ) {
+    const opts =
+      typeof branchOrOptions === "string"
+        ? { branch: branchOrOptions, createNew: Boolean(createNewLegacy) }
+        : branchOrOptions || {};
+
+    const cleanBranch = branchName(opts.branch)?.trim();
+    if (!cleanBranch) {
+      throw new ServiceError("Branch name is required", 400);
+    }
+    if (opts.fromRef) sanitizeGitRef(opts.fromRef, "base ref");
+
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+
+    let stashed = false;
+    if (opts.stashDirty) {
+      const pre = await this.getStatus(projectId, userId);
+      if (!pre.clean) {
+        await this.runCommand(rootDir, [
+          "stash",
+          "push",
+          "--include-untracked",
+          "-m",
+          `covai-auto-stash before checkout ${cleanBranch}`,
+        ]);
+        stashed = true;
+      }
+    }
+
+    if (opts.createNew) {
+      const args = ["checkout", "-b", cleanBranch];
+      if (opts.fromRef) args.push(opts.fromRef.trim());
+      await this.runCommand(rootDir, args);
+    } else {
+      try {
+        await this.runCommand(rootDir, ["checkout", cleanBranch]);
+      } catch {
+        const remoteRef = cleanBranch.startsWith("origin/")
+          ? cleanBranch
+          : `origin/${cleanBranch}`;
+        const localName = cleanBranch.replace(/^origin\//, "");
+        await this.runCommand(rootDir, [
+          "checkout",
+          "-b",
+          localName,
+          "--track",
+          remoteRef,
+        ]).catch(async () => {
+          await this.runCommand(rootDir, ["checkout", localName]);
+        });
+      }
+    }
+
+    const [branches, status] = await Promise.all([
+      this.getBranches(projectId, userId),
+      this.getStatus(projectId, userId),
+    ]);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return { ...branches, stashed, status };
+  }
+
+  static async renameBranch(projectId, userId, oldName, newName) {
+    const cleanOld = branchName(oldName)?.trim();
+    const cleanNew = branchName(newName)?.trim();
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    await this.runCommand(rootDir, ["branch", "-m", cleanOld, cleanNew]);
+    const [branches, status] = await Promise.all([
+      this.getBranches(projectId, userId),
+      this.getStatus(projectId, userId),
+    ]);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return { ...branches, status };
+  }
+
+  static async deleteBranch(
+    projectId,
+    userId,
+    name,
+    { force = false, deleteRemote = false } = {},
+  ) {
+    const target = branchName(name)?.trim();
+    const { rootDir, project, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const branches = await this.getBranches(projectId, userId);
+
+    if (target === branches.current) {
       throw new ServiceError(
-        "Only GitHub URLs (https://github.com/...) are supported",
+        "Cannot delete the currently checked out branch",
         400,
+        "CANNOT_DELETE_CURRENT_BRANCH",
+      );
+    }
+    const protectedNames = new Set([
+      project.defaultBranch || "main",
+      "main",
+      "master",
+    ]);
+    if (protectedNames.has(target) && !force) {
+      throw new ServiceError(
+        `Cannot delete protected default branch '${target}' without force=true`,
+        409,
+        "PROTECTED_BRANCH",
       );
     }
 
-    const active = preparedGit.getStore();
-    if (active) active.repo.project.repoUrl = cleanUrl;
-    await stagePreparedPublication(tx => tx.project.update({
-      where: { id: projectId },
-      data: { repoUrl: cleanUrl },
-    }));
+    await this.runCommand(rootDir, ["branch", force ? "-D" : "-d", target]);
 
-    await this.ensureGitRepo(projectId, userId);
-    return this.getStatus(projectId, userId);
+    if (deleteRemote) {
+      const { execOptions } = await this._resolveRemoteExecution(
+        rootDir,
+        project,
+        userId,
+        { requireRepoScope: true },
+      );
+      await this.runCommand(rootDir, ["push", "origin", "--delete", target], execOptions);
+    }
+
+    const [updated, status] = await Promise.all([
+      this.getBranches(projectId, userId),
+      this.getStatus(projectId, userId),
+    ]);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return { ...updated, status };
   }
 
   /**
-   * Get commit history (log)
+   * Merges `sourceBranch` into current branch, returning conflicts cleanly instead of 500.
    */
-  static async getLog(projectId, userId, limit = 25) {
-    const { rootDir } = await this.getRepoPath(projectId, userId);
-    limit = Number(limit);
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new ServiceError("Log limit must be 1–100", 400);
+  static async merge(projectId, userId, sourceBranch, { mode = "merge" } = {}) {
+    const cleanSource = branchName(sourceBranch)?.trim();
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const author = await resolveGitAuthorIdentity(userId);
+
+    const args = ["merge"];
+    if (mode === "no-ff") args.push("--no-ff", "--no-edit");
+    else if (mode === "squash") args.push("--squash");
+    else args.push("--no-edit");
+    args.push(cleanSource);
 
     try {
-      const { stdout } = await this.runCommand(
-        rootDir,
-        `git log -n ${limit} --pretty=format:"%H|%h|%an|%ae|%ad|%s" --date=relative`,
-      );
-
-      if (!stdout) return [];
-
-      return stdout.split("\n").map((line) => {
-        const [hash, shortHash, author, email, date, ...msgParts] =
-          line.split("|");
+      const { stdout, stderr } = await this.runCommand(rootDir, args, { author });
+      const status = await this.getStatus(projectId, userId);
+      await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+      return {
+        merged: true,
+        conflicted: false,
+        squashStaged: mode === "squash",
+        output: stdout || stderr || "Merge completed",
+        conflicts: [],
+        status,
+      };
+    } catch (error) {
+      const conflictStatus = await this.getStatus(projectId, userId).catch(() => null);
+      if (
+        conflictStatus &&
+        (conflictStatus.conflicts.length > 0 ||
+          conflictStatus.operationState === GIT_REPO_OPERATION_STATE.MERGING)
+      ) {
+        await this._recordSnapshotHeadSync(
+          rootDir,
+          projectId,
+          snapshot.id,
+          conflictStatus,
+        );
         return {
-          hash,
-          shortHash,
-          author,
-          email,
-          date,
-          message: msgParts.join("|"),
+          merged: false,
+          conflicted: true,
+          operationState: conflictStatus.operationState,
+          conflicts: conflictStatus.conflicts,
+          output: error.message,
+          status: conflictStatus,
         };
+      }
+      throw error;
+    }
+  }
+
+  static async mergeAbort(projectId, userId) {
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    await this.runCommand(rootDir, ["merge", "--abort"]);
+    const status = await this.getStatus(projectId, userId);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return status;
+  }
+
+  static async mergeContinue(projectId, userId) {
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const author = await resolveGitAuthorIdentity(userId);
+    const pre = await this.getStatus(projectId, userId);
+    if (pre.conflicts.length > 0) {
+      throw new ServiceError(
+        "Resolve all remaining merge conflicts before completing merge",
+        409,
+        "GIT_CONFLICT",
+        { conflicts: pre.conflicts },
+      );
+    }
+    await this.runCommand(rootDir, ["commit", "--no-edit"], { author });
+    const status = await this.getStatus(projectId, userId);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return status;
+  }
+
+  static async rebase(projectId, userId, targetBranch) {
+    const cleanTarget = branchName(targetBranch)?.trim();
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const author = await resolveGitAuthorIdentity(userId);
+    try {
+      const { stdout, stderr } = await this.runCommand(
+        rootDir,
+        ["rebase", cleanTarget],
+        { author },
+      );
+      const status = await this.getStatus(projectId, userId);
+      await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+      return {
+        rebased: true,
+        conflicted: false,
+        output: stdout || stderr || "Rebase completed",
+        conflicts: [],
+        status,
+      };
+    } catch (error) {
+      const conflictStatus = await this.getStatus(projectId, userId).catch(() => null);
+      if (
+        conflictStatus &&
+        (conflictStatus.conflicts.length > 0 ||
+          conflictStatus.operationState === GIT_REPO_OPERATION_STATE.REBASING)
+      ) {
+        await this._recordSnapshotHeadSync(
+          rootDir,
+          projectId,
+          snapshot.id,
+          conflictStatus,
+        );
+        return {
+          rebased: false,
+          conflicted: true,
+          operationState: conflictStatus.operationState,
+          conflicts: conflictStatus.conflicts,
+          output: error.message,
+          status: conflictStatus,
+        };
+      }
+      throw error;
+    }
+  }
+
+  static async rebaseAbort(projectId, userId) {
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    await this.runCommand(rootDir, ["rebase", "--abort"]);
+    const status = await this.getStatus(projectId, userId);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return status;
+  }
+
+  static async rebaseContinue(projectId, userId) {
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const author = await resolveGitAuthorIdentity(userId);
+    try {
+      const { stdout, stderr } = await this.runCommand(
+        rootDir,
+        ["rebase", "--continue"],
+        { author, env: { GIT_EDITOR: "true" } },
+      );
+      const status = await this.getStatus(projectId, userId);
+      await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+      return {
+        completed: true,
+        conflicted: false,
+        operationState: status.operationState,
+        conflicts: [],
+        output: stdout || stderr || "Rebase completed",
+        status,
+      };
+    } catch (error) {
+      const conflictStatus = await this.getStatus(projectId, userId).catch(() => null);
+      if (
+        conflictStatus &&
+        (conflictStatus.conflicts.length > 0 ||
+          conflictStatus.operationState === GIT_REPO_OPERATION_STATE.REBASING)
+      ) {
+        await this._recordSnapshotHeadSync(
+          rootDir,
+          projectId,
+          snapshot.id,
+          conflictStatus,
+        );
+        return {
+          completed: false,
+          conflicted: true,
+          operationState: conflictStatus.operationState,
+          conflicts: conflictStatus.conflicts,
+          output: error.message,
+          status: conflictStatus,
+        };
+      }
+      throw error;
+    }
+  }
+
+  static async cherryPickAbort(projectId, userId) {
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    await this.runCommand(rootDir, ["cherry-pick", "--abort"]);
+    const status = await this.getStatus(projectId, userId);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return status;
+  }
+
+  static async cherryPickContinue(projectId, userId) {
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const author = await resolveGitAuthorIdentity(userId);
+    const pre = await this.getStatus(projectId, userId);
+    if (pre.conflicts.length > 0) {
+      throw new ServiceError(
+        "Resolve all remaining cherry-pick conflicts before continuing",
+        409,
+        "GIT_CONFLICT",
+        { conflicts: pre.conflicts },
+      );
+    }
+    try {
+      const { stdout, stderr } = await this.runCommand(
+        rootDir,
+        ["cherry-pick", "--continue"],
+        { author, env: { GIT_EDITOR: "true" } },
+      );
+      const status = await this.getStatus(projectId, userId);
+      await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+      return {
+        completed: true,
+        conflicted: false,
+        operationState: status.operationState,
+        conflicts: [],
+        output: stdout || stderr || "Cherry-pick completed",
+        status,
+      };
+    } catch (error) {
+      const conflictStatus = await this.getStatus(projectId, userId).catch(() => null);
+      if (
+        conflictStatus &&
+        (conflictStatus.conflicts.length > 0 ||
+          conflictStatus.operationState === GIT_REPO_OPERATION_STATE.CHERRY_PICKING)
+      ) {
+        await this._recordSnapshotHeadSync(
+          rootDir,
+          projectId,
+          snapshot.id,
+          conflictStatus,
+        );
+        return {
+          completed: false,
+          conflicted: true,
+          operationState: conflictStatus.operationState,
+          conflicts: conflictStatus.conflicts,
+          output: error.message,
+          status: conflictStatus,
+        };
+      }
+      throw error;
+    }
+  }
+
+  static async revertAbort(projectId, userId) {
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    await this.runCommand(rootDir, ["revert", "--abort"]);
+    const status = await this.getStatus(projectId, userId);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return status;
+  }
+
+  static async revertContinue(projectId, userId) {
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const author = await resolveGitAuthorIdentity(userId);
+    const pre = await this.getStatus(projectId, userId);
+    if (pre.conflicts.length > 0) {
+      throw new ServiceError(
+        "Resolve all remaining revert conflicts before continuing",
+        409,
+        "GIT_CONFLICT",
+        { conflicts: pre.conflicts },
+      );
+    }
+    try {
+      const { stdout, stderr } = await this.runCommand(
+        rootDir,
+        ["revert", "--continue"],
+        { author, env: { GIT_EDITOR: "true" } },
+      );
+      const status = await this.getStatus(projectId, userId);
+      await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+      return {
+        completed: true,
+        conflicted: false,
+        operationState: status.operationState,
+        conflicts: [],
+        output: stdout || stderr || "Revert completed",
+        status,
+      };
+    } catch (error) {
+      const conflictStatus = await this.getStatus(projectId, userId).catch(() => null);
+      if (
+        conflictStatus &&
+        (conflictStatus.conflicts.length > 0 ||
+          conflictStatus.operationState === GIT_REPO_OPERATION_STATE.REVERTING)
+      ) {
+        await this._recordSnapshotHeadSync(
+          rootDir,
+          projectId,
+          snapshot.id,
+          conflictStatus,
+        );
+        return {
+          completed: false,
+          conflicted: true,
+          operationState: conflictStatus.operationState,
+          conflicts: conflictStatus.conflicts,
+          output: error.message,
+          status: conflictStatus,
+        };
+      }
+      throw error;
+    }
+  }
+
+  static async abortOperation(projectId, userId) {
+    const { rootDir } = await this.getRepoPath(projectId, userId);
+    const opState = detectRepoOperationState(rootDir);
+    switch (opState) {
+      case GIT_REPO_OPERATION_STATE.REBASING:
+        return this.rebaseAbort(projectId, userId);
+      case GIT_REPO_OPERATION_STATE.MERGING:
+        return this.mergeAbort(projectId, userId);
+      case GIT_REPO_OPERATION_STATE.CHERRY_PICKING:
+        return this.cherryPickAbort(projectId, userId);
+      case GIT_REPO_OPERATION_STATE.REVERTING:
+        return this.revertAbort(projectId, userId);
+      default:
+        throw new ServiceError("No active merge, rebase, cherry-pick, or revert in progress", 409, "NO_ACTIVE_OPERATION");
+    }
+  }
+
+  static async continueOperation(projectId, userId) {
+    const { rootDir } = await this.getRepoPath(projectId, userId);
+    const opState = detectRepoOperationState(rootDir);
+    switch (opState) {
+      case GIT_REPO_OPERATION_STATE.REBASING:
+        return this.rebaseContinue(projectId, userId);
+      case GIT_REPO_OPERATION_STATE.MERGING: {
+        const status = await this.mergeContinue(projectId, userId);
+        return {
+          completed: true,
+          conflicted: false,
+          operationState: status.operationState,
+          conflicts: [],
+          status,
+        };
+      }
+      case GIT_REPO_OPERATION_STATE.CHERRY_PICKING:
+        return this.cherryPickContinue(projectId, userId);
+      case GIT_REPO_OPERATION_STATE.REVERTING:
+        return this.revertContinue(projectId, userId);
+      default:
+        throw new ServiceError("No active merge, rebase, cherry-pick, or revert in progress", 409, "NO_ACTIVE_OPERATION");
+    }
+  }
+
+  /**
+   * Returns 3-way conflict details (`base`, `ours`, `theirs`, `working`) for conflicted files.
+   */
+  static async getConflicts(projectId, userId) {
+    const status = await this.getStatus(projectId, userId);
+    if (!status.hasGit || status.conflicts.length === 0) {
+      return { operationState: status.operationState, conflicts: [] };
+    }
+
+    const { rootDir } = await this.getRepoPath(projectId, userId);
+    const readStage = async (stageNum, filePath) => {
+      try {
+        const { stdout } = await this.runCommand(
+          rootDir,
+          ["show", `:${stageNum}:${filePath}`],
+          { rawOutput: true },
+        );
+        return stdout;
+      } catch {
+        return null;
+      }
+    };
+
+    const detailed = [];
+    for (const conflict of status.conflicts) {
+      const { target } = resolveContainedDiskFile(rootDir, conflict.path);
+      const working = fs.existsSync(target)
+        ? fs.readFileSync(target, "utf8")
+        : "";
+      const [base, ours, theirs] = await Promise.all([
+        readStage(1, conflict.path),
+        readStage(2, conflict.path),
+        readStage(3, conflict.path),
+      ]);
+
+      detailed.push({
+        ...conflict,
+        language: inferLanguageFromPath(conflict.path),
+        base,
+        ours,
+        theirs,
+        working,
       });
-    } catch (e) {
-      // Likely no commits yet
+    }
+
+    return {
+      operationState: status.operationState,
+      conflicts: detailed,
+    };
+  }
+
+  /**
+   * Resolves a merge/rebase conflict (`ours`, `theirs`, `both`, `manual`) and stages the result.
+   */
+  static async resolveConflict(
+    projectId,
+    userId,
+    { filePath, resolution, manualContent },
+  ) {
+    const safePath = fileName(filePath);
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const { target } = resolveContainedDiskFile(rootDir, safePath);
+
+    const readStage = async (stageNum) => {
+      try {
+        const { stdout } = await this.runCommand(
+          rootDir,
+          ["show", `:${stageNum}:${safePath}`],
+          { rawOutput: true },
+        );
+        return stdout;
+      } catch {
+        return null;
+      }
+    };
+
+    if (resolution === "manual") {
+      if (typeof manualContent !== "string") {
+        throw new ServiceError(
+          "manualContent must be provided for manual conflict resolution",
+          400,
+          "INVALID_CONFLICT_CONTENT",
+        );
+      }
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, manualContent, "utf8");
+      await this.runCommand(rootDir, ["add", "--", safePath]);
+    } else if (resolution === "ours" || resolution === "theirs") {
+      const content = await readStage(resolution === "ours" ? 2 : 3);
+      if (content === null) {
+        if (fs.existsSync(target)) fs.rmSync(target, { force: true });
+        await this.runCommand(rootDir, ["rm", "-f", "--", safePath]).catch(() => {});
+      } else {
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, content, "utf8");
+        await this.runCommand(rootDir, ["add", "--", safePath]);
+      }
+    } else if (resolution === "both") {
+      const working = fs.existsSync(target)
+        ? fs.readFileSync(target, "utf8")
+        : "";
+      const [ours, theirs] = await Promise.all([readStage(2), readStage(3)]);
+      const combined = resolveConflictMarkersKeepBoth(working, {
+        ours,
+        theirs,
+      });
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, combined, "utf8");
+      await this.runCommand(rootDir, ["add", "--", safePath]);
+    } else {
+      throw new ServiceError("Unsupported conflict resolution mode", 400);
+    }
+
+    const status = await this.getStatus(projectId, userId);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return status;
+  }
+
+  /**
+   * Sets clean HTTPS GitHub remote URL on `origin`.
+   */
+  static async setRemoteUrl(projectId, userId, repoUrl) {
+    const { cleanUrl, webUrl } = normalizeCleanGithubUrl(repoUrl);
+
+    const active = preparedGit.getStore();
+    if (active) active.repo.project.repoUrl = webUrl;
+
+    const persistRemote = (tx) =>
+      tx.project.update({
+        where: { id: projectId },
+        data: { repoUrl: webUrl },
+      });
+    if (active?.isDirect) {
+      await persistRemote(prisma);
+      invalidateProjectAccessCache(projectId);
+    } else {
+      await stagePreparedPublication(persistRemote);
+    }
+
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    invalidateGitRepoCache(rootDir);
+    await this.runCommand(rootDir, ["remote", "set-url", "origin", cleanUrl]).catch(
+      async () => {
+        await this.runCommand(rootDir, ["remote", "add", "origin", cleanUrl]);
+      },
+    );
+
+    const status = await this.getStatus(projectId, userId);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return status;
+  }
+
+  /**
+   * Returns rich commit log with parent SHAs and refs for SVG Commit Graph rendering.
+   */
+  static async getLog(projectId, userId, limitOrOptions = 25) {
+    const opts =
+      typeof limitOrOptions === "number"
+        ? { limit: limitOrOptions }
+        : limitOrOptions || {};
+
+    const limit = Number(opts.limit ?? 25);
+    const skip = Number(opts.skip ?? 0);
+    if (!Number.isInteger(limit) || limit < 1 || limit > GIT_LIMITS.MAX_LOG_LIMIT) {
+      throw new ServiceError(`Log limit must be 1-${GIT_LIMITS.MAX_LOG_LIMIT}`, 400);
+    }
+    if (!Number.isInteger(skip) || skip < 0) {
+      throw new ServiceError("Log skip must be non-negative", 400);
+    }
+
+    const { rootDir } = await this.getRepoPath(projectId, userId);
+    if (!fs.existsSync(path.join(rootDir, ".git"))) {
+      return [];
+    }
+
+    const args = [
+      "log",
+      `--max-count=${limit}`,
+      `--skip=${skip}`,
+      "--date=relative",
+      "--format=%x1e%H%x1f%h%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%ar%x1f%D%x1f%s%x1f%b",
+    ];
+    if (opts.branch) args.push(branchName(opts.branch));
+    if (opts.search) args.push(`--grep=${String(opts.search).trim()}`, "-i");
+    if (opts.author) args.push(`--author=${String(opts.author).trim()}`);
+    if (opts.filePath) {
+      const safeFile = fileName(opts.filePath);
+      args.push("--follow", "--", safeFile);
+    }
+
+    try {
+      const { stdout } = await this.runCommand(rootDir, args, { rawOutput: true });
+      return parseGitLogRecords(stdout);
+    } catch {
       return [];
     }
   }
 
   /**
-   * Get file diff
+   * Returns metadata and changed files for a specific commit.
+   */
+  static async getCommitDetail(projectId, userId, hash) {
+    const cleanHash = sanitizeGitRef(hash, "commit hash");
+    const { rootDir } = await this.getRepoPath(projectId, userId);
+
+    const [{ stdout: metaRaw }, { stdout: statusRaw }, { stdout: numstatRaw }] =
+      await Promise.all([
+        this.runCommand(
+          rootDir,
+          [
+            "show",
+            "-s",
+            "--date=relative",
+            "--format=%x1e%H%x1f%h%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%ar%x1f%D%x1f%s%x1f%b",
+            cleanHash,
+          ],
+          { rawOutput: true },
+        ),
+        this.runCommand(
+          rootDir,
+          ["diff-tree", "--no-commit-id", "--name-status", "--root", "-r", "-M", cleanHash],
+          { rawOutput: true },
+        ),
+        this.runCommand(
+          rootDir,
+          ["diff-tree", "--no-commit-id", "--numstat", "--root", "-r", "-M", cleanHash],
+          { rawOutput: true },
+        ),
+      ]);
+    const meta = parseGitLogRecords(metaRaw)[0];
+    if (!meta) {
+      throw new ServiceError("Commit not found", 404, "COMMIT_NOT_FOUND");
+    }
+
+    const numstats = new Map();
+    for (const line of String(numstatRaw || "").split(/\r?\n/).filter(Boolean)) {
+      const [ins, del, ...rest] = line.split("\t");
+      const filePart = normalizePosixPath(rest.pop() || "");
+      numstats.set(filePart, {
+        isBinary: ins === "-" || del === "-",
+        insertions: ins === "-" ? 0 : Number.parseInt(ins, 10) || 0,
+        deletions: del === "-" ? 0 : Number.parseInt(del, 10) || 0,
+      });
+    }
+
+    const files = [];
+    for (const line of String(statusRaw || "").split(/\r?\n/).filter(Boolean)) {
+      const parts = line.split("\t");
+      const code = parts[0]?.[0] || "M";
+      if (code === "R" || code === "C") {
+        const origPath = normalizePosixPath(parts[1]);
+        const nextPath = normalizePosixPath(parts[2]);
+        const stat = numstats.get(nextPath) || {
+          isBinary: false,
+          insertions: 0,
+          deletions: 0,
+        };
+        files.push({ path: nextPath, origPath, status: code, ...stat });
+      } else {
+        const filePath = normalizePosixPath(parts[1]);
+        const stat = numstats.get(filePath) || {
+          isBinary: false,
+          insertions: 0,
+          deletions: 0,
+        };
+        files.push({ path: filePath, status: code, ...stat });
+      }
+    }
+
+    return { ...meta, files };
+  }
+
+  static async revertCommit(projectId, userId, hash) {
+    const cleanHash = sanitizeGitRef(hash, "commit hash");
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const author = await resolveGitAuthorIdentity(userId);
+    try {
+      const { stdout, stderr } = await this.runCommand(
+        rootDir,
+        ["revert", "--no-edit", cleanHash],
+        { author },
+      );
+      const status = await this.getStatus(projectId, userId);
+      await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+      return { success: true, conflicted: false, output: stdout || stderr, status };
+    } catch (error) {
+      const conflictStatus = await this.getStatus(projectId, userId).catch(() => null);
+      if (
+        conflictStatus &&
+        (conflictStatus.conflicts.length > 0 ||
+          conflictStatus.operationState === GIT_REPO_OPERATION_STATE.REVERTING)
+      ) {
+        await this._recordSnapshotHeadSync(
+          rootDir,
+          projectId,
+          snapshot.id,
+          conflictStatus,
+        );
+        return {
+          success: false,
+          conflicted: true,
+          conflicts: conflictStatus.conflicts,
+          status: conflictStatus,
+        };
+      }
+      throw error;
+    }
+  }
+
+  static async cherryPickCommit(projectId, userId, hash) {
+    const cleanHash = sanitizeGitRef(hash, "commit hash");
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const author = await resolveGitAuthorIdentity(userId);
+    try {
+      const { stdout, stderr } = await this.runCommand(
+        rootDir,
+        ["cherry-pick", cleanHash],
+        { author },
+      );
+      const status = await this.getStatus(projectId, userId);
+      await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+      return { success: true, conflicted: false, output: stdout || stderr, status };
+    } catch (error) {
+      const conflictStatus = await this.getStatus(projectId, userId).catch(() => null);
+      if (
+        conflictStatus &&
+        (conflictStatus.conflicts.length > 0 ||
+          conflictStatus.operationState === GIT_REPO_OPERATION_STATE.CHERRY_PICKING)
+      ) {
+        await this._recordSnapshotHeadSync(
+          rootDir,
+          projectId,
+          snapshot.id,
+          conflictStatus,
+        );
+        return {
+          success: false,
+          conflicted: true,
+          conflicts: conflictStatus.conflicts,
+          status: conflictStatus,
+        };
+      }
+      throw error;
+    }
+  }
+
+  static async reset(projectId, userId, { targetRef = "HEAD", mode = "mixed" } = {}) {
+    const cleanRef = sanitizeGitRef(targetRef, "target reference");
+    if (!["soft", "mixed", "hard"].includes(mode)) {
+      throw new ServiceError("Invalid reset mode", 400);
+    }
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    await this.runCommand(rootDir, ["reset", `--${mode}`, cleanRef]);
+    const status = await this.getStatus(projectId, userId);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return status;
+  }
+
+  /**
+   * Reads a file buffer at any Git ref/index spec (returns `{ exists, isBinary, isTooLarge, text }`).
+   */
+  static async getFileAtRef(projectId, userId, { filePath, ref = "HEAD" }) {
+    const safePath = fileName(filePath);
+    const safeRef = sanitizeGitRef(ref, "git reference");
+    const { rootDir } = await this.getRepoPath(projectId, userId);
+    const spec = safeRef.endsWith(":") ? `${safeRef}${safePath}` : `${safeRef}:${safePath}`;
+
+    try {
+      const { stdout } = await this.runCommand(rootDir, ["show", spec], {
+        encoding: "buffer",
+        rawOutput: true,
+      });
+      const buf = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout || "");
+      const isTooLarge = buf.length > GIT_LIMITS.MAX_DIFF_BYTES;
+      const isBinary = detectBinaryBuffer(buf);
+      return {
+        exists: true,
+        isBinary,
+        isTooLarge,
+        byteSize: buf.length,
+        content: isBinary || isTooLarge ? "" : buf.toString("utf8"),
+      };
+    } catch {
+      return {
+        exists: false,
+        isBinary: false,
+        isTooLarge: false,
+        byteSize: 0,
+        content: "",
+      };
+    }
+  }
+
+  /**
+   * Returns before/after pair + unified diff hunks for Monaco DiffEditor
+   * (supports working tree, untracked files, staged index, and historical commits).
+   */
+  static async getDiffPair(
+    projectId,
+    userId,
+    { filePath, mode = "working", commitHash, parentHash, origPath } = {},
+  ) {
+    const safePath = fileName(filePath);
+    const safeOrigPath = origPath ? fileName(origPath) : safePath;
+    const { rootDir } = await this.getRepoPath(projectId, userId);
+    const language = inferLanguageFromPath(safePath);
+
+    const readBlob = async (refSpec) => {
+      try {
+        const { stdout } = await this.runCommand(rootDir, ["show", refSpec], {
+          encoding: "buffer",
+          rawOutput: true,
+        });
+        const buf = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout || "");
+        return { exists: true, buf };
+      } catch {
+        return { exists: false, buf: Buffer.alloc(0) };
+      }
+    };
+
+    const readWorkingDisk = (relPath) => {
+      const { target } = resolveContainedDiskFile(rootDir, relPath);
+      if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
+        return { exists: false, buf: Buffer.alloc(0) };
+      }
+      return { exists: true, buf: fs.readFileSync(target) };
+    };
+
+    let originalBlob = { exists: false, buf: Buffer.alloc(0) };
+    let modifiedBlob = { exists: false, buf: Buffer.alloc(0) };
+    let originalLabel = "Original";
+    let modifiedLabel = "Modified";
+    let unifiedDiff = "";
+
+    if (mode === "working") {
+      modifiedBlob = readWorkingDisk(safePath);
+      modifiedLabel = "Working Tree";
+
+      const [inIndex, diffRes, isTracked] = await Promise.all([
+        readBlob(`:0:${safePath}`),
+        this.runCommand(
+          rootDir,
+          ["diff", "--no-color", "-U3", "--", safePath],
+          { rawOutput: true },
+        ).catch(() => ({ stdout: "" })),
+        this.runCommand(rootDir, ["ls-files", "--error-unmatch", "--", safePath])
+          .then(() => true)
+          .catch(() => false),
+      ]);
+
+      if (inIndex.exists) {
+        originalBlob = inIndex;
+        originalLabel = "Staged Index";
+        unifiedDiff = diffRes.stdout || "";
+      } else if (isTracked) {
+        originalBlob = await readBlob(`HEAD:${safePath}`);
+        originalLabel = "HEAD";
+        unifiedDiff = diffRes.stdout || "";
+      } else {
+        originalLabel = "New File (Untracked)";
+      }
+    } else if (mode === "staged") {
+      const [headBlob, indexBlob, cachedDiffRes] = await Promise.all([
+        readBlob(`HEAD:${safeOrigPath}`),
+        readBlob(`:0:${safePath}`),
+        this.runCommand(
+          rootDir,
+          ["diff", "--cached", "--no-color", "-U3", "--", safePath],
+          { rawOutput: true },
+        ).catch(() => null),
+      ]);
+      originalBlob = headBlob;
+      modifiedBlob = indexBlob;
+      originalLabel = originalBlob.exists ? "HEAD" : "Empty";
+      modifiedLabel = modifiedBlob.exists ? "Staged Index" : "Deleted";
+
+      if (cachedDiffRes !== null) {
+        unifiedDiff = cachedDiffRes.stdout || "";
+      } else {
+        const { stdout } = await this.runCommand(
+          rootDir,
+          ["diff", "--no-color", "-U3", EMPTY_TREE_OID, "--cached", "--", safePath],
+          { rawOutput: true },
+        ).catch(() => ({ stdout: "" }));
+        unifiedDiff = stdout || "";
+      }
+    } else if (mode === "commit") {
+      const targetCommit = sanitizeGitRef(commitHash, "commit hash");
+      const resolvedParent = parentHash
+        ? sanitizeGitRef(parentHash, "parent hash")
+        : await this.runCommand(rootDir, ["rev-parse", "--verify", `${targetCommit}^`])
+            .then((r) => r.stdout.trim())
+            .catch(() => EMPTY_TREE_OID);
+
+      const [origRes, modRes, diffRes] = await Promise.all([
+        resolvedParent === EMPTY_TREE_OID
+          ? Promise.resolve({ exists: false, buf: Buffer.alloc(0) })
+          : readBlob(`${resolvedParent}:${safeOrigPath}`),
+        readBlob(`${targetCommit}:${safePath}`),
+        this.runCommand(
+          rootDir,
+          ["diff", "--no-color", "-U3", resolvedParent, targetCommit, "--", safePath],
+          { rawOutput: true },
+        ).catch(() => ({ stdout: "" })),
+      ]);
+
+      originalBlob = origRes;
+      modifiedBlob = modRes;
+      originalLabel =
+        resolvedParent === EMPTY_TREE_OID
+          ? "Initial Commit"
+          : resolvedParent.slice(0, 7);
+      modifiedLabel = targetCommit.slice(0, 7);
+      unifiedDiff = diffRes.stdout || "";
+    } else {
+      throw new ServiceError("Unsupported diff mode", 400);
+    }
+
+    const isBinary =
+      detectBinaryBuffer(originalBlob.buf) || detectBinaryBuffer(modifiedBlob.buf);
+    const isTooLarge =
+      originalBlob.buf.length > GIT_LIMITS.MAX_DIFF_BYTES ||
+      modifiedBlob.buf.length > GIT_LIMITS.MAX_DIFF_BYTES;
+
+    const originalContent =
+      isBinary || isTooLarge ? "" : originalBlob.buf.toString("utf8");
+    const modifiedContent =
+      isBinary || isTooLarge ? "" : modifiedBlob.buf.toString("utf8");
+
+    if (!unifiedDiff && !isBinary && !isTooLarge && originalContent !== modifiedContent) {
+      unifiedDiff = createTwoFilesPatch(
+        `a/${safeOrigPath}`,
+        `b/${safePath}`,
+        originalContent,
+        modifiedContent,
+        "",
+        "",
+        { context: 3 },
+      );
+    }
+
+    const parsedHunks = isBinary || isTooLarge
+      ? { hunks: [], insertions: 0, deletions: 0 }
+      : parseUnifiedDiffHunks(unifiedDiff);
+
+    return {
+      filePath: safePath,
+      origPath: safeOrigPath !== safePath ? safeOrigPath : null,
+      mode,
+      language,
+      isBinary,
+      isTooLarge,
+      originalLabel,
+      modifiedLabel,
+      originalContent,
+      modifiedContent,
+      stats: {
+        insertions: parsedHunks.insertions,
+        deletions: parsedHunks.deletions,
+      },
+      hunks: parsedHunks.hunks,
+      unifiedDiff: isBinary || isTooLarge ? "" : unifiedDiff,
+    };
+  }
+
+  /**
+   * Returns unified diff text (with untracked file fallback for compatibility).
    */
   static async getDiff(projectId, userId, filePath, staged = false) {
     if (filePath) fileName(filePath);
     const { rootDir } = await this.getRepoPath(projectId, userId);
 
-    const targetFlag = staged ? "--cached" : "";
-    const fileArg = filePath ? `-- "${filePath}"` : "";
+    if (filePath && !staged) {
+      const tracked = await this.runCommand(rootDir, [
+        "ls-files",
+        "--error-unmatch",
+        "--",
+        fileName(filePath),
+      ])
+        .then(() => true)
+        .catch(() => false);
+      if (!tracked) {
+        const pair = await this.getDiffPair(projectId, userId, {
+          filePath,
+          mode: "working",
+        });
+        return pair.unifiedDiff;
+      }
+    }
 
-    const { stdout } = await this.runCommand(
-      rootDir,
-      `git diff ${targetFlag} ${fileArg}`,
-    );
+    const args = ["diff", "--no-color"];
+    if (staged) args.push("--cached");
+    if (filePath) args.push("--", fileName(filePath));
 
+    const { stdout } = await this.runCommand(rootDir, args);
     return stdout || "";
   }
 
+  // ---- Stash lifecycle ----
+
+  static async listStashes(projectId, userId) {
+    const { rootDir } = await this.getRepoPath(projectId, userId);
+    if (!fs.existsSync(path.join(rootDir, ".git"))) return [];
+
+    try {
+      const { stdout } = await this.runCommand(
+        rootDir,
+        ["stash", "list", "--date=relative", "--format=%gd%x1f%H%x1f%ar%x1f%gs"],
+        { rawOutput: true },
+      );
+      return String(stdout || "")
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .map((line, idx) => {
+          const [selector = `stash@{${idx}}`, hash = "", relativeDate = "", message = ""] =
+            line.split("\x1f");
+          return {
+            index: idx,
+            selector: selector.trim(),
+            hash: hash.trim(),
+            relativeDate: relativeDate.trim(),
+            message: message.trim(),
+          };
+        });
+    } catch {
+      return [];
+    }
+  }
+
+  static async stashPush(
+    projectId,
+    userId,
+    { message, includeUntracked = true, stagedOnly = false } = {},
+  ) {
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const args = ["stash", "push"];
+    if (stagedOnly) args.push("--staged");
+    else if (includeUntracked) args.push("--include-untracked");
+    if (message && message.trim()) {
+      args.push("-m", message.trim());
+    }
+    const { stdout } = await this.runCommand(rootDir, args);
+    const [status, stashes] = await Promise.all([
+      this.getStatus(projectId, userId),
+      this.listStashes(projectId, userId),
+    ]);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return { output: stdout, stashes, status };
+  }
+
+  static async getStashDiff(projectId, userId, index) {
+    const idx = Number.parseInt(index, 10);
+    if (!Number.isInteger(idx) || idx < 0) {
+      throw new ServiceError("Invalid stash index", 400);
+    }
+    const { rootDir } = await this.getRepoPath(projectId, userId);
+    const { stdout } = await this.runCommand(rootDir, [
+      "stash",
+      "show",
+      "-p",
+      "--include-untracked",
+      `stash@{${idx}}`,
+    ]);
+    return { index: idx, diff: stdout || "" };
+  }
+
+  static async stashApply(projectId, userId, index) {
+    const idx = Number.parseInt(index, 10);
+    if (!Number.isInteger(idx) || idx < 0) {
+      throw new ServiceError("Invalid stash index", 400);
+    }
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    await this.runCommand(rootDir, ["stash", "apply", `stash@{${idx}}`]);
+    const [status, stashes] = await Promise.all([
+      this.getStatus(projectId, userId),
+      this.listStashes(projectId, userId),
+    ]);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return { stashes, status };
+  }
+
+  static async stashPop(projectId, userId, index) {
+    const idx = Number.parseInt(index, 10);
+    if (!Number.isInteger(idx) || idx < 0) {
+      throw new ServiceError("Invalid stash index", 400);
+    }
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    await this.runCommand(rootDir, ["stash", "pop", `stash@{${idx}}`]);
+    const [status, stashes] = await Promise.all([
+      this.getStatus(projectId, userId),
+      this.listStashes(projectId, userId),
+    ]);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return { stashes, status };
+  }
+
+  static async stashDrop(projectId, userId, index) {
+    const idx = Number.parseInt(index, 10);
+    if (!Number.isInteger(idx) || idx < 0) {
+      throw new ServiceError("Invalid stash index", 400);
+    }
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    await this.runCommand(rootDir, ["stash", "drop", `stash@{${idx}}`]);
+    const [status, stashes] = await Promise.all([
+      this.getStatus(projectId, userId),
+      this.listStashes(projectId, userId),
+    ]);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return { stashes, status };
+  }
+
+  // ---- Tags lifecycle ----
+
+  static async listTags(projectId, userId) {
+    const { rootDir } = await this.getRepoPath(projectId, userId);
+    if (!fs.existsSync(path.join(rootDir, ".git"))) return [];
+
+    try {
+      const { stdout } = await this.runCommand(rootDir, [
+        "for-each-ref",
+        "--sort=-creatordate",
+        "--format=%(refname:short)%09%(objectname:short)%09%(creatordate:iso-strict)%09%(subject)",
+        "refs/tags",
+      ]);
+      return String(stdout || "")
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .map((line) => {
+          const [name = "", oid = "", createdAt = "", ...msg] = line.split("\t");
+          return {
+            name: name.trim(),
+            oid: oid.trim(),
+            createdAt: createdAt.trim() || null,
+            message: msg.join("\t").trim(),
+          };
+        });
+    } catch {
+      return [];
+    }
+  }
+
+  static async createTag(
+    projectId,
+    userId,
+    { name, targetRef = "HEAD", message, pushAfter = false },
+  ) {
+    const cleanTag = tagName(name)?.trim();
+    const cleanRef = sanitizeGitRef(targetRef || "HEAD", "target ref");
+    const { rootDir, project, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const author = await resolveGitAuthorIdentity(userId);
+
+    const args = ["tag"];
+    if (message && message.trim()) {
+      args.push("-a", cleanTag, "-m", message.trim(), cleanRef);
+    } else {
+      args.push(cleanTag, cleanRef);
+    }
+    await this.runCommand(rootDir, args, { author });
+
+    if (pushAfter) {
+      const { execOptions } = await this._resolveRemoteExecution(
+        rootDir,
+        project,
+        userId,
+        { requireRepoScope: true },
+      );
+      await this.runCommand(rootDir, ["push", "origin", cleanTag], execOptions);
+    }
+
+    const [tags, status] = await Promise.all([
+      this.listTags(projectId, userId),
+      this.getStatus(projectId, userId),
+    ]);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return { tag: tags.find((t) => t.name === cleanTag) || { name: cleanTag }, tags, status };
+  }
+
+  static async pushTag(projectId, userId, name) {
+    const cleanTag = tagName(name)?.trim();
+    const { rootDir, project } = await this.ensureGitRepo(projectId, userId);
+    const { execOptions } = await this._resolveRemoteExecution(
+      rootDir,
+      project,
+      userId,
+      { requireRepoScope: true },
+    );
+    await this.runCommand(rootDir, ["push", "origin", cleanTag], execOptions);
+    return { pushed: true, name: cleanTag };
+  }
+
+  static async deleteTag(projectId, userId, name, { deleteRemote = false } = {}) {
+    const cleanTag = tagName(name)?.trim();
+    const { rootDir, project, snapshot } = await this.ensureGitRepo(projectId, userId);
+    await this.runCommand(rootDir, ["tag", "-d", cleanTag]);
+
+    if (deleteRemote) {
+      const { execOptions } = await this._resolveRemoteExecution(
+        rootDir,
+        project,
+        userId,
+        { requireRepoScope: true },
+      );
+      await this.runCommand(
+        rootDir,
+        ["push", "origin", `:refs/tags/${cleanTag}`],
+        execOptions,
+      );
+    }
+
+    const [tags, status] = await Promise.all([
+      this.listTags(projectId, userId),
+      this.getStatus(projectId, userId),
+    ]);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return { tags, status };
+  }
+
+  // ---- GitHub Pull Requests & CI Checks ----
+
+  static async listPullRequests(projectId, userId, { state = "open" } = {}) {
+    const { project } = await this.getRepoPath(projectId, userId);
+    if (!project.repoUrl) {
+      throw new ServiceError("Repository is not linked to GitHub", 400, "GIT_REMOTE_MISSING");
+    }
+    return GitHubPlatformService.listPullRequests(userId, project.repoUrl, { state });
+  }
+
+  static async createPullRequest(projectId, userId, payload) {
+    await resolveProjectAccess({ projectId, userId, capability: "integrations.write" });
+    const { project } = await this.getRepoPath(projectId, userId);
+    if (!project.repoUrl) {
+      throw new ServiceError("Repository is not linked to GitHub", 400, "GIT_REMOTE_MISSING");
+    }
+    return GitHubPlatformService.createPullRequest(userId, project.repoUrl, payload);
+  }
+
+  static async getCommitChecks(projectId, userId, ref = "HEAD") {
+    const { project, rootDir } = await this.getRepoPath(projectId, userId);
+    if (!project.repoUrl) {
+      throw new ServiceError("Repository is not linked to GitHub", 400, "GIT_REMOTE_MISSING");
+    }
+    let resolvedRef = ref;
+    if (!resolvedRef || resolvedRef === "HEAD") {
+      resolvedRef = (await this._hasHeadCommit(rootDir)) || project.defaultBranch || "main";
+    }
+    return GitHubPlatformService.getCommitChecks(userId, project.repoUrl, resolvedRef);
+  }
+
   /**
-   * Generic git command runner (fallback)
+   * Read-only diagnostic git command runner (strictly allowlisted).
    */
   static async runGitCommand(projectId, command, args = [], userId) {
     const safeCommands = new Set(["status", "log", "diff", "branch"]);
-    if (!safeCommands.has(command) || !Array.isArray(args) || args.length > 20 || args.some(arg => typeof arg !== "string" || !/^[\w./:=@ -]{1,200}$/.test(arg) || /^(?:-c|--config|--exec|--output|--ext-diff|--textconv|--no-index)/.test(arg))) throw new ServiceError("Use the dedicated Git action for this command", 400);
-    if (command === 'branch') {
-      const readFlags = new Set(['--show-current', '--list', '-a', '--all', '-r', '--remotes', '-v', '-vv', '--verbose', '--no-color']);
-      if (!args.every(arg => readFlags.has(arg))) throw new ServiceError('Use the dedicated checkout action to create or change a branch', 400);
+    if (
+      !safeCommands.has(command) ||
+      !Array.isArray(args) ||
+      args.length > 20 ||
+      args.some(
+        (arg) =>
+          typeof arg !== "string" ||
+          !/^[\w./:=@ -]{1,200}$/.test(arg) ||
+          /^(?:-c|--config|--exec|--output|--ext-diff|--textconv|--no-index)/.test(arg),
+      )
+    ) {
+      throw new ServiceError("Use the dedicated Git action for this command", 400);
+    }
+    if (command === "branch") {
+      const readFlags = new Set([
+        "--show-current",
+        "--list",
+        "-a",
+        "--all",
+        "-r",
+        "--remotes",
+        "-v",
+        "-vv",
+        "--verbose",
+        "--no-color",
+      ]);
+      if (!args.every((arg) => readFlags.has(arg))) {
+        throw new ServiceError(
+          "Use the dedicated checkout action to create or change a branch",
+          400,
+        );
+      }
     }
     const { rootDir } = await this.getRepoPath(projectId, userId);
     const { stdout, stderr } = await this.runCommand(rootDir, [command, ...args]);
@@ -965,26 +3000,191 @@ export class GitService {
   }
 }
 
-// Git commands prepare against a complete private repository copy. Source and
-// .git files publish together under the same version/permission guard as Editor
-// saves. No network command runs while a database transaction holds the lock.
-for (const method of ['stageFiles', 'unstageFiles', 'discardChanges', 'commit', 'pull', 'checkout', 'push', 'ensureGitRepo', 'setRemoteUrl']) {
-  const original = GitService[method];
-  GitService[method] = async function (projectId, userId, ...args) {
-    if (method === 'discardChanges') fileName(args[0]);
-    if (['checkout', 'pull', 'push'].includes(method)) branchName(args[0]);
-    if (preparedGit.getStore()) return original.call(this, projectId, userId, ...args);
-    const repo = await this.getRepoPath(projectId, userId);
-    await resolveProjectAccess({ projectId, userId, capability: 'integrations.write' });
-    const dotGit = path.join(repo.rootDir, '.git');
-    if (fs.existsSync(dotGit) && (!fs.lstatSync(dotGit).isDirectory() || fs.lstatSync(dotGit).isSymbolicLink())) {
-      throw new ServiceError('Linked Git worktrees are not supported for project source publication', 409, 'UNSUPPORTED_GIT_WORKTREE');
-    }
-    return withPreparedProjectWorkspace({ projectId, snapshotId: repo.snapshot.id, userId,
-      capability: 'integrations.write', expectedWorkspaceRevision: repo.project.workspaceRevision,
-      type: `GIT_${method.toUpperCase()}`, input: { method }, includeGitMetadata: true,
-    }, context => preparedGit.run({ projectId, userId, repo: { ...repo, rootDir: context.rootDir,
-      snapshot: { ...repo.snapshot, rootDir: path.join(context.rootDir, context.analysisRelative), storagePath: context.rootDir },
-    } }, () => original.call(this, projectId, userId, ...args)));
-  };
+// Mutating operations split strictly by capability (`vcs.local` for OWNER+EDITOR
+// safe local operations vs `integrations.write` for OWNER remote/workspace operations)
+// and serialized per project through `withProjectVcsLock` + `withPreparedProjectWorkspace`.
+const LOCAL_VCS_MUTATIONS = [
+  "stageFiles",
+  "unstageFiles",
+  "stageHunk",
+  "unstageHunk",
+  "revertHunk",
+  "discardChanges",
+  "commit",
+  "undoCommit",
+  "addGitignorePattern",
+  "resolveConflict",
+  "stashPush",
+  "stashApply",
+  "stashPop",
+  "stashDrop",
+];
+
+const INTEGRATION_VCS_MUTATIONS = [
+  "ensureGitRepo",
+  "initRepo",
+  "setRemoteUrl",
+  "publishToGitHub",
+  "fetch",
+  "pull",
+  "push",
+  "sync",
+  "createBranch",
+  "checkout",
+  "renameBranch",
+  "deleteBranch",
+  "merge",
+  "mergeAbort",
+  "mergeContinue",
+  "rebase",
+  "rebaseAbort",
+  "rebaseContinue",
+  "cherryPickAbort",
+  "cherryPickContinue",
+  "revertAbort",
+  "revertContinue",
+  "revertCommit",
+  "cherryPickCommit",
+  "reset",
+  "createTag",
+  "pushTag",
+  "deleteTag",
+];
+
+const WORKING_TREE_CHANGING_METHODS = new Set([
+  "initRepo",
+  "publishToGitHub",
+  "discardChanges",
+  "revertHunk",
+  "addGitignorePattern",
+  "pull",
+  "sync",
+  "checkout",
+  "merge",
+  "mergeAbort",
+  "mergeContinue",
+  "rebase",
+  "rebaseAbort",
+  "rebaseContinue",
+  "cherryPickAbort",
+  "cherryPickContinue",
+  "revertAbort",
+  "revertContinue",
+  "revertCommit",
+  "cherryPickCommit",
+  "reset",
+  "resolveConflict",
+  "stashPush",
+  "stashApply",
+  "stashPop",
+]);
+
+for (const [capability, methods] of [
+  ["vcs.local", LOCAL_VCS_MUTATIONS],
+  ["integrations.write", INTEGRATION_VCS_MUTATIONS],
+]) {
+  for (const method of methods) {
+    const original = GitService[method];
+    GitService[method] = async function (projectId, userId, ...args) {
+      if (method === "discardChanges") {
+        if (typeof args[0] === "string" && args[0] !== "all") fileName(args[0]);
+      } else if (["stageHunk", "unstageHunk", "revertHunk"].includes(method)) {
+        fileName(args[0]);
+      } else if (method === "resolveConflict") {
+        if (args[0]?.filePath) fileName(args[0].filePath);
+      } else if (["createBranch", "checkout", "pull", "push"].includes(method)) {
+        const b = typeof args[0] === "string" ? args[0] : args[0]?.branch;
+        if (b !== undefined) branchName(b);
+      } else if (method === "renameBranch") {
+        branchName(args[0]);
+        branchName(args[1]);
+      } else if (method === "deleteBranch") {
+        branchName(args[0]);
+      } else if (method === "merge") {
+        branchName(args[0]);
+      } else if (method === "rebase") {
+        branchName(args[0]);
+      } else if (["createTag", "pushTag", "deleteTag"].includes(method)) {
+        const t = typeof args[0] === "string" ? args[0] : args[0]?.name;
+        if (t !== undefined) tagName(t);
+      }
+
+      if (preparedGit.getStore()) {
+        return original.call(this, projectId, userId, ...args);
+      }
+
+      const effectiveCapability =
+        method === "commit" && (args[0]?.pushAfter || args[0]?.syncAfter)
+          ? "integrations.write"
+          : capability;
+
+      const [repo] = await Promise.all([
+        this.getRepoPath(projectId, userId),
+        resolveProjectAccess({
+          projectId,
+          userId,
+          capability: effectiveCapability,
+        }),
+      ]);
+
+      const dotGit = path.join(repo.rootDir, ".git");
+      if (
+        fs.existsSync(dotGit) &&
+        (!fs.lstatSync(dotGit).isDirectory() || fs.lstatSync(dotGit).isSymbolicLink())
+      ) {
+        throw new ServiceError(
+          "Linked Git worktrees are not supported for project source publication",
+          409,
+          "UNSUPPORTED_GIT_WORKTREE",
+        );
+      }
+
+      return withProjectVcsLock(projectId, async () => {
+        checkStaleGitIndexLock(repo.rootDir, { removeStale: true });
+
+        if (!USE_PREPARED_GIT_WORKSPACE()) {
+          return preparedGit.run(
+            {
+              projectId,
+              userId,
+              repo,
+              isDirect: true,
+              workingTreeChanging: WORKING_TREE_CHANGING_METHODS.has(method),
+            },
+            () => original.call(this, projectId, userId, ...args),
+          );
+        }
+
+        return withPreparedProjectWorkspace(
+          {
+            projectId,
+            snapshotId: repo.snapshot.id,
+            userId,
+            capability: effectiveCapability,
+            expectedWorkspaceRevision: repo.project.workspaceRevision,
+            type: `GIT_${method.toUpperCase()}`,
+            input: { method },
+            includeGitMetadata: true,
+          },
+          (context) =>
+            preparedGit.run(
+              {
+                projectId,
+                userId,
+                repo: {
+                  ...repo,
+                  rootDir: context.rootDir,
+                  snapshot: {
+                    ...repo.snapshot,
+                    rootDir: path.join(context.rootDir, context.analysisRelative),
+                    storagePath: context.rootDir,
+                  },
+                },
+              },
+              () => original.call(this, projectId, userId, ...args),
+            ),
+        );
+      });
+    };
+  }
 }
