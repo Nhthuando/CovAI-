@@ -9,7 +9,7 @@
 !AGENTS.md
 !api.http
 !docker-compose.yml
-!docker-compose.production.yml
+!docker-compose.prod.yml
 !package.json
 !package-lock.json
 !README.md
