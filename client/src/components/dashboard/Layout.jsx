@@ -7,7 +7,7 @@ import ActivityBar from "./ActivityBar";
 import Sidebar from "./Sidebar";
 import Editor from "./Editor";
 import RetainedPanel from "../common/RetainedPanel";
-import GitPanel from "./GitPanel";
+import VcsStatusBar from "./vcs/shared/VcsStatusBar";
 import CoverageDashboard from "./CoverageDashboard";
 import UnitTestDashboard from "./UnitTestDashboard";
 import IntegrationTestDashboard from "./IntegrationTestDashboard";
@@ -27,6 +27,8 @@ import SettingsSidebar from "./settings/SettingsSidebar";
 import ProjectMembersSettings from "./settings/ProjectMembersSettings";
 import { useProjectAccess } from "../../hooks/useProjectAccess";
 import { useProjectEvents } from "../../hooks/useProjectEvents";
+import { useVcsSync } from "../../hooks/useVcsSync";
+import { VC_MODES } from "../../../../shared/versionControlMode.js";
 import UserProfile from "./settings/UserProfile";
 import Appearance from "./settings/Appearance";
 import Security from "./settings/Security";
@@ -122,7 +124,7 @@ function LayoutInner() {
   const { showToast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, logout } = useAuth();
+  const { user, vcMode, logout } = useAuth();
   const searchParams = new URLSearchParams(location.search);
   const initialProjectId = searchParams.get("projectId");
   const initialTab = searchParams.get("tab") || "explorer";
@@ -182,7 +184,6 @@ function LayoutInner() {
   const [visitedPanels, setVisitedPanels] = useState(
     () => new Set([initialTab]),
   );
-  const [showGit, setShowGit] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -492,6 +493,7 @@ function LayoutInner() {
     return null;
   });
   const projectAccess = useProjectAccess(project?.id);
+  const vcsSummary = useVcsSync(project?.id);
   const chatSnapshotId =
     searchParams.get("snapshotId") ||
     project?.activeSnapshotId ||
@@ -646,12 +648,46 @@ function LayoutInner() {
     setCoverageRunTrigger((prev) => prev + 1);
   };
 
-  const handleGitSync = async () => {
+  const handleVcsSync = async (options = {}) => {
+    const activeProjId = project?.id;
+    if (!activeProjId) return;
     try {
-      await loadData(project?.id, 1, 0);
+      const { invalidateFileContentCache } = await import(
+        "../../services/project.service"
+      );
+      invalidateFileContentCache(activeProjId);
+
+      if (options?.snapshotId) {
+        const nextSnapId = options.snapshotId;
+        localStorage.setItem(`latestSnapshot_${activeProjId}`, nextSnapId);
+        setProject((prev) =>
+          prev && prev.id === activeProjId
+            ? {
+                ...prev,
+                activeSnapshotId: nextSnapId,
+                latestSnapshotId: nextSnapId,
+              }
+            : prev,
+        );
+        const params = new URLSearchParams(location.search);
+        if (params.get("snapshotId") !== nextSnapId) {
+          params.set("snapshotId", nextSnapId);
+          navigate(`${location.pathname}?${params.toString()}`, {
+            replace: true,
+          });
+        }
+      }
+
+      await queryClient.invalidateQueries({
+        queryKey: ["projectTree", user?.id, activeProjId],
+      });
+      await queryClient.invalidateQueries({ queryKey: ["projects"] });
+      await queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
+      vcsSummary.invalidateAll();
+      await loadData(activeProjId, 1, 0);
       setEditorRefreshTrigger((prev) => prev + 1);
     } catch (err) {
-      console.error("Failed to sync after git operation", err);
+      console.error("Failed to sync after VCS operation", err);
     }
   };
 
@@ -1267,6 +1303,11 @@ function LayoutInner() {
         expectedWorkspaceRevision: rev,
       });
       refreshProjectFiles(true);
+      window.dispatchEvent(
+        new CustomEvent("covai:workspace-saved", {
+          detail: { projectId: project.id, path: normalizedPath },
+        }),
+      );
       showToast({
         type: "success",
         title: "File created",
@@ -1357,6 +1398,11 @@ function LayoutInner() {
         expectedWorkspaceRevision: rev,
       });
       refreshProjectFiles(true);
+      window.dispatchEvent(
+        new CustomEvent("covai:workspace-saved", {
+          detail: { projectId: project.id, path: normNew },
+        }),
+      );
       showToast({
         type: "success",
         title: "Renamed",
@@ -1406,6 +1452,11 @@ function LayoutInner() {
         expectedWorkspaceRevision: rev,
       });
       refreshProjectFiles(true);
+      window.dispatchEvent(
+        new CustomEvent("covai:workspace-saved", {
+          detail: { projectId: project.id, path: targetPath },
+        }),
+      );
       showToast({
         type: "success",
         title: "Deleted",
@@ -1775,6 +1826,7 @@ function LayoutInner() {
             <ActivityBar
               active={showCFG ? "logic-analysis" : activeActivity}
               onSelect={handleSelectActivity}
+              vcsSummary={vcsSummary}
             />
           </motion.div>
         )}
@@ -1844,6 +1896,8 @@ function LayoutInner() {
                   onCreateFolder={handleCreateFolder}
                   onRenameEntry={handleRenameEntry}
                   onDeleteEntry={handleDeleteEntry}
+                  vcsSummary={vcsSummary}
+                  onOpenVersionControl={() => handleSelectActivity("version-control")}
                 />
               )}
             </motion.div>
@@ -1917,7 +1971,9 @@ function LayoutInner() {
             >
               <VersionControlWorkspace
                 projectId={project?.id}
-                onSync={handleGitSync}
+                project={project}
+                onSync={handleVcsSync}
+                onOpenFile={handleOpenFileByPath}
               />
             </div>
           )}
@@ -1933,7 +1989,7 @@ function LayoutInner() {
                   : "hidden"
               }
             >
-              <JobQueue projectId={project?.id} onSync={handleGitSync} />
+              <JobQueue projectId={project?.id} onSync={handleVcsSync} />
             </div>
           )}
 
@@ -2241,12 +2297,21 @@ function LayoutInner() {
           </motion.div>
         </>
       </motion.div>
-      <div className="flex items-center justify-between flex-shrink-0 h-6 px-3 sm:px-4 bg-[var(--ps-surface)] border-t border-[var(--ps-line)] text-[11px] text-[var(--ps-ink-muted)] ps-mono whitespace-nowrap overflow-x-auto select-none">
+      <div className="flex items-center justify-between flex-shrink-0 h-6 px-3 sm:px-4 bg-[var(--ps-surface)] border-t border-[var(--ps-line)] text-[11px] text-[var(--ps-ink-muted)] ps-mono whitespace-nowrap select-none">
         <div className="flex items-center gap-3 shrink-0">
-          <div className="flex items-center gap-1.5 text-[var(--ps-ink-secondary)]">
-            <GitBranch size={11} className="text-[var(--ps-ink-muted)]" />
-            {!isMobile && <span>main</span>}
-          </div>
+          <VcsStatusBar
+            projectId={project?.id}
+            vcsSummary={vcsSummary}
+            isMobile={isMobile}
+            canSwitchBranch={
+              vcMode === VC_MODES.GIT_GITHUB
+                ? projectAccess.can("integrations.write")
+                : projectAccess.can("snapshot.restore")
+            }
+            disabledReason="Owner role required to switch branches"
+            onOpenVersionControl={() => handleSelectActivity("version-control")}
+            onSync={handleVcsSync}
+          />
           {!isMobile && (
             <>
               <div className="w-px h-3 bg-[var(--ps-line)]" />

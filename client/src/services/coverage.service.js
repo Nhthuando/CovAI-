@@ -409,7 +409,15 @@ export async function applyUnitTestSuggestion(
       }),
     },
   );
-  return handleResponse(res);
+  const data = await handleResponse(res);
+  if (typeof window !== "undefined" && !dryRun) {
+    window.dispatchEvent(
+      new CustomEvent("covai:workspace-saved", {
+        detail: { projectId, snapshotId },
+      }),
+    );
+  }
+  return data;
 }
 
 export async function applyAllUnitTestSuggestions(
@@ -618,7 +626,15 @@ export async function applyIntegrationTests(
       }),
     },
   );
-  return handleResponse(res);
+  const data = await handleResponse(res);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("covai:workspace-saved", {
+        detail: { snapshotId },
+      }),
+    );
+  }
+  return data;
 }
 
 export async function getUnifiedQualityDashboard(snapshotId, options = {}) {

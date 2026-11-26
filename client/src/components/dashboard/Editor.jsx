@@ -30,7 +30,6 @@ import {
 } from "lucide-react";
 import MonacoEditor from "./editor/CollaborativeCodeEditor";
 import { useTheme } from "../../contexts/ThemeContext";
-import { GitPanel } from "./GitPanel";
 import {
   getFileContentApi,
   getFileContentFromCache,
@@ -483,7 +482,7 @@ export default function Editor({
   const saveHandlerRef = useRef(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
-  const [showGitPanel, setShowGitPanel] = useState(false);
+  const [externalDiskChange, setExternalDiskChange] = useState(null);
   const draftStorageKey = useCallback(path => `covai_draft_${draftUserId}_${projectId}_${snapshotId}_${path}`, [draftUserId, projectId, snapshotId]);
   useEffect(() => {
     if (!draftUserId || !projectId) return;
@@ -495,29 +494,51 @@ export default function Editor({
     }
   }, [draftUserId, projectId, snapshotId, fileContents]);
 
-  // When an external sync occurs (e.g. Git pull / checkout), refresh the current active file
+  // When an external sync occurs (e.g. Git pull / checkout / Snapshot restore), refresh open tabs safely
   useEffect(() => {
-    if (refreshTrigger && activeTabId && projectId) {
-      fetchedRef.current.delete(activeTabId);
-      getFileContentApi(projectId, activeTabId, { snapshotId, forceFresh: true })
-        .then((res) => {
-          if (res?.data) {
-            setFileContents((prev) => ({
-              ...prev,
-              [activeTabId]: {
-                ...prev[activeTabId],
-                content: res.data.content,
-                version: res.data.version,
-                snapshotId: res.data.snapshotId,
-                workspaceRevision: res.data.workspaceRevision,
-                loading: false,
-                error: null,
-              },
-            }));
+    if (!refreshTrigger || !projectId) return;
+    fetchedRef.current.clear();
+    if (!activeTabId) return;
+
+    getFileContentApi(projectId, activeTabId, { snapshotId, forceFresh: true })
+      .then((res) => {
+        if (!res?.data) return;
+        setFileContents((prev) => {
+          const next = {};
+          for (const [tabPath, entry] of Object.entries(prev)) {
+            if (tabPath === activeTabId || (entry?.draft !== undefined && entry.draft !== entry.content)) {
+              next[tabPath] = entry;
+            }
           }
-        })
-        .catch(() => {});
-    }
+          const existing = next[activeTabId];
+          const isDirty =
+            existing?.draft !== undefined && existing.draft !== existing.content;
+          if (isDirty && existing?.content !== res.data.content) {
+            setExternalDiskChange({
+              path: activeTabId,
+              content: res.data.content,
+              version: res.data.version,
+              snapshotId: res.data.snapshotId,
+              workspaceRevision: res.data.workspaceRevision,
+            });
+            return next;
+          }
+          setExternalDiskChange(null);
+          next[activeTabId] = {
+            ...existing,
+            content: res.data.content,
+            version: res.data.version,
+            snapshotId: res.data.snapshotId,
+            workspaceRevision: res.data.workspaceRevision,
+            loading: false,
+            error: null,
+          };
+          return next;
+        });
+      })
+      .catch((err) => {
+        console.warn("[Editor] External disk refresh warning:", err?.message || err);
+      });
   }, [refreshTrigger, activeTabId, projectId, snapshotId]);
 
   // Coverage state
@@ -841,6 +862,12 @@ export default function Editor({
           workspaceRevision: saved.data?.workspaceRevision,
         },
       }));
+      setExternalDiskChange(null);
+      window.dispatchEvent(
+        new CustomEvent("covai:workspace-saved", {
+          detail: { projectId, path: activeTabId },
+        }),
+      );
     } catch (err) {
       if (err.status === 409) setConflict({ projectId, original: file.content, path: activeTabId, draft: file.draft, snapshotId: file.snapshotId, details: err.details });
       setSaveError(err.message || "Could not save file");
@@ -1349,21 +1376,44 @@ export default function Editor({
         className="flex-1 overflow-hidden relative"
         style={{ background: "var(--color-bg)" }}
       >
-        {showGitPanel && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            className="absolute top-4 right-4 z-50 w-96 shadow-2xl"
-          >
-            <GitPanel
-              projectId={projectId}
-              onSync={() => {
-                fetchedRef.current.clear();
-                setFileContents({});
-              }}
-            />
-          </motion.div>
+        {externalDiskChange && externalDiskChange.path === activeTabId && (
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-xs bg-amber-500/10 border-b border-amber-500/25 text-[var(--color-text)]">
+            <div className="flex items-center gap-2">
+              <AlertCircle size={14} className="text-amber-400 shrink-0" />
+              <span>
+                This file changed on disk during a Version Control operation, and you have unsaved edits in the editor.
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setFileContents((prev) => ({
+                    ...prev,
+                    [activeTabId]: {
+                      ...prev[activeTabId],
+                      content: externalDiskChange.content,
+                      draft: undefined,
+                      version: externalDiskChange.version,
+                      snapshotId: externalDiskChange.snapshotId,
+                      workspaceRevision: externalDiskChange.workspaceRevision,
+                    },
+                  }));
+                  setExternalDiskChange(null);
+                }}
+                className="px-2.5 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-300 font-medium cursor-pointer"
+              >
+                Reload from Disk
+              </button>
+              <button
+                type="button"
+                onClick={() => setExternalDiskChange(null)}
+                className="px-2.5 py-1 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] cursor-pointer"
+              >
+                Keep My Edits
+              </button>
+            </div>
+          </div>
         )}
 
         <AnimatePresence mode="wait">
