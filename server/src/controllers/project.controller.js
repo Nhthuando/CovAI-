@@ -22,6 +22,7 @@ import {
 } from "../services/systemTestFrameworkDetection.service.js";
 import prisma from "../config/prisma.js";
 import { resolveProjectAccess, membershipWhere } from '../services/projectAccess.service.js';
+import * as projectAccessModule from '../services/projectAccess.service.js';
 import { detectIntegrationFrameworks as scanIntegration, installIntegrationDependencies as runInstallIntegration } from "../services/integrationDetection.service.js";
 import {
   ServiceError,
@@ -1429,6 +1430,7 @@ class ProjectController {
           },
         })
         .catch((err) => console.error("Error updating project repoUrl:", err));
+      projectAccessModule.invalidateProjectAccessCache?.(projectId);
 
       return res.status(201).json({
         message: "Repository imported successfully",

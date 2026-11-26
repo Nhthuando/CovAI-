@@ -1,5 +1,6 @@
 import prisma from '../config/prisma.js';
 import { resolveProjectAccess, withProjectGuard } from './projectAccess.service.js';
+import * as projectAccessModule from './projectAccess.service.js';
 import { publishProjectEvent, deliverProjectEvent } from './projectEvent.service.js';
 import { revokeProjectSubscriptions } from './projectSubscription.service.js';
 import { ServiceError } from '../utils/serviceError.js';
@@ -35,6 +36,7 @@ async function changeMember({ projectId, userId, memberId, role, disciplineRole,
         return { accessRevision: project.accessRevision };
     });
     await revokeProjectSubscriptions({ projectId, userId: affectedUserId, accessRevision: result.accessRevision });
+    projectAccessModule.invalidateProjectAccessCache?.(projectId);
     await deliverProjectEvent(event);
     return result;
 }

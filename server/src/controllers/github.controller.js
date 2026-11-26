@@ -8,6 +8,7 @@ import { buildCfgForSnapshot } from "../services/buildCfg.service.js";
 import { detectLanguageFromDirectory } from "../utils/languageDetector.js";
 import { resolveProjectRoot } from "../utils/projectRootResolver.js";
 import { clearProjectTreeCache } from "../services/project.service.js";
+import * as projectAccessModule from "../services/projectAccess.service.js";
 import { clearPortfolioCache } from "../services/portfolioDashboard.service.js";
 
 async function finalizeGitHubImportSnapshot({ projectId, ownerId, cloneResult, repoUrl }) {
@@ -36,6 +37,7 @@ async function finalizeGitHubImportSnapshot({ projectId, ownerId, cloneResult, r
       },
     }).catch((err) => console.error("Error activating existing GitHub snapshot:", err));
 
+    projectAccessModule.invalidateProjectAccessCache?.(projectId);
     clearProjectTreeCache();
     if (ownerId) clearPortfolioCache(ownerId);
 
@@ -88,6 +90,7 @@ async function finalizeGitHubImportSnapshot({ projectId, ownerId, cloneResult, r
     })
     .catch((err) => console.error("Error updating project repoUrl:", err));
 
+  projectAccessModule.invalidateProjectAccessCache?.(projectId);
   clearProjectTreeCache();
   if (ownerId) clearPortfolioCache(ownerId);
 
