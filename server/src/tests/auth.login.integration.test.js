@@ -287,4 +287,39 @@ describe("Login & Session Integration Tests (TC_LOG_01 – TC_LOG_14, TC_LOG_18 
     });
     expect(afterLogout.refreshToken).toBeNull();
   });
+
+  it("keeps existing refresh session valid when user signs in from a second tab/browser, and clears all on logout", async () => {
+    await seedUser("multisession@covai.dev", "ValidPass123!");
+
+    const login1 = await request(app)
+      .post("/api/auth/login")
+      .send({ email: "multisession@covai.dev", password: "ValidPass123!" });
+    expect(login1.status).toBe(200);
+    const cookie1 = (login1.headers["set-cookie"] || []).find((c) => c.startsWith("refreshToken="));
+
+    await new Promise((r) => setTimeout(r, 1100));
+
+    const login2 = await request(app)
+      .post("/api/auth/login")
+      .send({ email: "multisession@covai.dev", password: "ValidPass123!" });
+    expect(login2.status).toBe(200);
+    const cookie2 = (login2.headers["set-cookie"] || []).find((c) => c.startsWith("refreshToken="));
+    expect(cookie2).not.toBe(cookie1);
+
+    const refresh1 = await request(app).post("/api/refresh").set("Cookie", cookie1);
+    expect(refresh1.status).toBe(200);
+    expect(refresh1.body.accessToken).toBeTruthy();
+
+    const refresh2 = await request(app).post("/api/refresh").set("Cookie", cookie2);
+    expect(refresh2.status).toBe(200);
+    expect(refresh2.body.accessToken).toBeTruthy();
+
+    const logoutRes = await request(app)
+      .post("/api/auth/logout")
+      .set("Authorization", `Bearer ${refresh2.body.accessToken}`);
+    expect(logoutRes.status).toBe(200);
+
+    const afterLogoutRefresh = await request(app).post("/api/refresh").set("Cookie", cookie1);
+    expect(afterLogoutRefresh.status).toBe(403);
+  });
 });

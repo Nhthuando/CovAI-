@@ -21,6 +21,7 @@ import {
   RefreshCw,
   SlidersHorizontal,
   X,
+  BookOpen,
 } from "lucide-react";
 import { useTheme } from "../../../contexts/ThemeContext";
 import { useRunningProcess } from "../../../contexts/RunningProcessContext.jsx";
@@ -2233,6 +2234,23 @@ export default function UnitTestWorkspace({
             >
               <Clock size={13} />
               <span className="hidden md:inline">History</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                window.dispatchEvent(
+                  new CustomEvent("covai:open-guide", {
+                    detail: { stepId: "unit-setup-run" },
+                  }),
+                )
+              }
+              className={TEST_UI.btnSecondary}
+              title="Unit Testing Guide (setup, CFG, AI synthesis & rollback)"
+              aria-label="Unit Testing Guide"
+            >
+              <BookOpen size={13} className="text-[var(--color-primary)]" />
+              <span className="hidden lg:inline">Guide</span>
             </button>
           </div>
         </div>

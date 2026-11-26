@@ -2,14 +2,31 @@
 // The API issues 15-minute access tokens plus an HttpOnly refresh cookie.
 // Long System Test runs and active/idle dashboards outlive the access token, so
 // every HTTP client and socket must renew it instead of logging the user out.
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const LOCAL_DEV_API_RE = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\/api\/?$/i;
+
+export function resolveApiBaseUrl() {
+  const configured =
+    (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ||
+    "http://localhost:5000/api";
+  const isDev = Boolean(typeof import.meta !== "undefined" && import.meta.env?.DEV);
+  if (isDev && typeof window !== "undefined" && LOCAL_DEV_API_RE.test(configured)) {
+    // Route local dev requests through Vite's same-origin /api proxy so HttpOnly
+    // cookies work consistently across localhost, 127.0.0.1, [::1], and Docker.
+    return "/api";
+  }
+  return configured.replace(/\/+$/, "");
+}
+
+export const API_BASE = resolveApiBaseUrl();
 const AUTH_KEYS = ["token", "user", "userName", "userEmail"];
 const RENEW_BEFORE_MS = 3 * 60 * 1000;
 const ACTIVITY_THROTTLE_MS = 30 * 1000;
-const AUTH_ENDPOINT = /\/(auth\/(login|register|github|forgotPassword|resetPassword)|refresh)(\/|\?|$)/;
+const REFRESH_COOLDOWN_MS = 15 * 1000;
+const AUTH_ENDPOINT = /\/(auth\/(login|register|forgotPassword|resetPassword|github\/(url|callback|confirm-link|cancel-link))|refresh)(\/|\?|$)/;
 
 let inflightRefresh = null;
 let keepAliveStarted = false;
+let lastRefreshAttemptAt = 0;
 
 export function getAccessToken() {
   const token = localStorage.getItem("token");
@@ -40,15 +57,30 @@ export function setStoredAccessToken(accessToken) {
   window.dispatchEvent(new CustomEvent("covai:token-refreshed", { detail: { token: accessToken } }));
 }
 
-export function accessTokenExpiresAt(token = getAccessToken()) {
+function decodeAccessTokenPayload(token = getAccessToken()) {
   if (!token) return null;
   try {
-    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
-    return typeof payload.exp === "number" ? payload.exp * 1000 : null;
+    return JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
   } catch (error) {
     console.error("[auth] Access token payload could not be decoded:", error);
     return null;
   }
+}
+
+export function accessTokenExpiresAt(token = getAccessToken()) {
+  const payload = decodeAccessTokenPayload(token);
+  return typeof payload?.exp === "number" ? payload.exp * 1000 : null;
+}
+
+export function computeRenewBeforeMs(token = getAccessToken()) {
+  const payload = decodeAccessTokenPayload(token);
+  if (typeof payload?.exp === "number" && typeof payload?.iat === "number") {
+    const lifetimeMs = Math.max(0, (payload.exp - payload.iat) * 1000);
+    if (lifetimeMs > 0) {
+      return Math.min(RENEW_BEFORE_MS, Math.max(15 * 1000, Math.floor(lifetimeMs * 0.25)));
+    }
+  }
+  return RENEW_BEFORE_MS;
 }
 
 export function clearAuthState() {
@@ -120,23 +152,39 @@ export async function handleUnauthorizedResponse() {
   return token;
 }
 
+function normalizeHeaders(rawHeaders) {
+  if (!rawHeaders) return {};
+  if (typeof Headers !== "undefined" && rawHeaders instanceof Headers) {
+    return Object.fromEntries(rawHeaders.entries());
+  }
+  if (Array.isArray(rawHeaders)) {
+    return Object.fromEntries(rawHeaders);
+  }
+  return { ...rawHeaders };
+}
+
 // Fetch wrapper that transparently refreshes expired access tokens on 401 and
 // replays the request once with the renewed Bearer token.
 export async function authAwareFetch(fetchImpl, input, init = {}) {
   const baseFetch = typeof fetchImpl === "function" ? fetchImpl : fetch;
-  const headers = { ...(init.headers || {}) };
+  const headers = normalizeHeaders(init.headers);
   if (!headers.Authorization && !headers.authorization) {
     const token = getAccessToken();
     if (token) headers.Authorization = `Bearer ${token}`;
   }
 
-  let response = await baseFetch(input, { ...init, headers });
+  const credentials = init.credentials ?? "include";
+  let response = await baseFetch(input, { ...init, headers, credentials });
   if (response.status === 401 && !init._covaiAuthRetry && !isAuthEndpoint(String(input))) {
     const { token, invalidSession } = await refreshAccessTokenWithStatus();
     if (token) {
+      const retryHeaders = { ...headers };
+      delete retryHeaders.authorization;
+      retryHeaders.Authorization = `Bearer ${token}`;
       response = await baseFetch(input, {
         ...init,
-        headers: { ...headers, Authorization: `Bearer ${token}` },
+        headers: retryHeaders,
+        credentials,
         _covaiAuthRetry: true,
       });
     } else if (invalidSession) {
@@ -189,7 +237,11 @@ export function startSessionKeepAlive() {
     const token = getAccessToken();
     if (!token) return;
     const expiresAt = accessTokenExpiresAt(token);
-    if (expiresAt && expiresAt - Date.now() < RENEW_BEFORE_MS) {
+    const renewBefore = computeRenewBeforeMs(token);
+    if (expiresAt && expiresAt - Date.now() < renewBefore) {
+      const now = Date.now();
+      if (now - lastRefreshAttemptAt < REFRESH_COOLDOWN_MS) return;
+      lastRefreshAttemptAt = now;
       void refreshAccessTokenWithStatus();
     }
   };

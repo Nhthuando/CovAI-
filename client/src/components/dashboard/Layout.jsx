@@ -38,6 +38,7 @@ import GlobalAiTokenPill from "./GlobalAiTokenPill";
 import PanelResizer from "./PanelResizer";
 import ConfirmDialog from "../common/ConfirmDialog";
 import ProjectExportDialog from "./ProjectExportDialog";
+import PlatformGuidanceModal from "./guidance/PlatformGuidanceModal";
 import {
   PanelLeftClose,
   PanelLeftOpen,
@@ -58,6 +59,7 @@ import {
   Network,
   Layers,
   FileText,
+  BookOpen,
 } from "lucide-react";
 import CovaiLogo from "../common/CovaiLogo";
 import "./portfolio/portfolio.css";
@@ -84,6 +86,12 @@ import {
 import { getProjectJobsApi } from "../../services/job.service";
 import { queryClient } from "../../lib/queryClient.js";
 import { openFloatingJobQueue } from "../../lib/floatingJobQueuePrefs.js";
+import {
+  resolveCachedProjectsList as resolveCachedProjectsListFromCache,
+  readCachedProjectTree,
+  loadWorkspaceProjectAndTree,
+  shouldFetchExplorerTreeOnSwitch,
+} from "../../services/workspaceTreeLoader.js";
 
 const INITIAL_TABS = [];
 const DEFAULT_SIDEBAR_WIDTH = 260;
@@ -132,6 +140,43 @@ function LayoutInner() {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [showCFG, setShowCFG] = useState(false);
+  const [showGuidance, setShowGuidance] = useState(false);
+  const [guidanceInitialStepId, setGuidanceInitialStepId] = useState(null);
+  const [activeActivity, setActiveActivity] = useState(initialTab);
+  const [visitedPanels, setVisitedPanels] = useState(
+    () => new Set([initialTab]),
+  );
+  const [showGit, setShowGit] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+  const [isDraggingSidebar, setIsDraggingSidebar] = useState(false);
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [aiPanelWidth, setAiPanelWidth] = useState(DEFAULT_AI_PANEL_WIDTH);
+  const [isDraggingAiPanel, setIsDraggingAiPanel] = useState(false);
+  const [tabs, setTabs] = useState(INITIAL_TABS);
+  const [activeTabId, setActiveTabId] = useState(null);
+  const [activeFileId, setActiveFileId] = useState(null);
+  const initialCoverageType =
+    searchParams.get("coverageType") ||
+    searchParams.get("type") ||
+    (searchParams.get("tab") === "system" ? "system" : "unit");
+  const [coverageType, setCoverageType] = useState(initialCoverageType);
+  const [unifiedSummary, setUnifiedSummary] = useState(null);
+  const [testPromptSnapshotId, setTestPromptSnapshotId] = useState(null);
+  const [aiPanelOwner, setAiPanelOwner] = useState(null);
+  const [chatTestContext, setChatTestContext] = useState({});
+  const [showImport, setShowImport] = useState(false);
+  const [showQualityDashboard, setShowQualityDashboard] = useState(false);
+  const [cfgInitialContext, setCfgInitialContext] = useState(null);
+  const [editorJumpTarget, setEditorJumpTarget] = useState(null);
+  const [archInitialContext, setArchInitialContext] = useState(null);
+  const [integrationInitialContext, setIntegrationInitialContext] =
+    useState(null);
+  const [showTestPrompt, setShowTestPrompt] = useState(false);
+  const [showMissingTestFilesModal, setShowMissingTestFilesModal] =
+    useState(false);
+  const [currentProjectName, setCurrentProjectName] = useState(null);
+  const [pendingAiSuggestion, setPendingAiSuggestion] = useState(null);
 
   const handleLogout = () => {
     setShowLogoutConfirm(false);
@@ -154,7 +199,7 @@ function LayoutInner() {
     }
     setShowCFG(false);
     if (id === "explorer") {
-      if (activeActivity === "explorer") {
+      if (activeActivity === "explorer" && !showCFG) {
         setSidebarOpen((prev) => !prev);
         return;
       }
@@ -173,12 +218,6 @@ function LayoutInner() {
     params.delete("focusScenario");
     navigate(`${location.pathname}?${params.toString()}`);
   };
-
-  const [activeActivity, setActiveActivity] = useState(initialTab);
-  const [visitedPanels, setVisitedPanels] = useState(
-    () => new Set([initialTab]),
-  );
-  const [showGit, setShowGit] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -258,24 +297,6 @@ function LayoutInner() {
     params.set("membersTab", tab === "pending" ? "pending" : "members");
     navigate(`${location.pathname}?${params}`);
   };
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
-  const [isDraggingSidebar, setIsDraggingSidebar] = useState(false);
-  const [aiPanelOpen, setAiPanelOpen] = useState(false);
-  const [aiPanelWidth, setAiPanelWidth] = useState(DEFAULT_AI_PANEL_WIDTH);
-  const [isDraggingAiPanel, setIsDraggingAiPanel] = useState(false);
-  const [tabs, setTabs] = useState(INITIAL_TABS);
-  const [activeTabId, setActiveTabId] = useState(null);
-  const [activeFileId, setActiveFileId] = useState(null);
-  const initialCoverageType =
-    searchParams.get("coverageType") ||
-    searchParams.get("type") ||
-    (searchParams.get("tab") === "system" ? "system" : "unit");
-  const [coverageType, setCoverageType] = useState(initialCoverageType);
-  const [unifiedSummary, setUnifiedSummary] = useState(null);
-  const [testPromptSnapshotId, setTestPromptSnapshotId] = useState(null);
-  const [aiPanelOwner, setAiPanelOwner] = useState(null);
-  const [chatTestContext, setChatTestContext] = useState({});
   const updateChatTestContext = useCallback((detail) => {
     setChatTestContext((previous) =>
       JSON.stringify(previous[detail.testType]) === JSON.stringify(detail)
@@ -293,13 +314,6 @@ function LayoutInner() {
     "activity",
     "coverage",
   ].includes(activeActivity);
-  const [showImport, setShowImport] = useState(false);
-  const [showQualityDashboard, setShowQualityDashboard] = useState(false);
-  const [cfgInitialContext, setCfgInitialContext] = useState(null);
-  const [editorJumpTarget, setEditorJumpTarget] = useState(null);
-  const [archInitialContext, setArchInitialContext] = useState(null);
-  const [integrationInitialContext, setIntegrationInitialContext] =
-    useState(null);
 
   useEffect(() => {
     if (activeActivity !== "architecture") {
@@ -341,11 +355,6 @@ function LayoutInner() {
       navigate(`${location.pathname}?${params.toString()}`);
     }
   };
-  const [showTestPrompt, setShowTestPrompt] = useState(false);
-  const [showMissingTestFilesModal, setShowMissingTestFilesModal] =
-    useState(false);
-  const [currentProjectName, setCurrentProjectName] = useState(null);
-  const [pendingAiSuggestion, setPendingAiSuggestion] = useState(null);
 
   const handleSuggestTestcase = (filePath, options = {}) => {
     // Never open AIPanel for bulk test suggestions; they belong to the guided dashboard workflow
@@ -368,7 +377,66 @@ function LayoutInner() {
     if (!promptText) return;
     setAiPanelOpen(true);
     setPendingAiSuggestion({ promptText, timestamp: Date.now() });
+  }, [setAiPanelOpen, setPendingAiSuggestion]);
+
+  useEffect(() => {
+    const onOpenGuide = (event) => {
+      setGuidanceInitialStepId(event.detail?.stepId || null);
+      setShowGuidance(true);
+    };
+    window.addEventListener("covai:open-guide", onOpenGuide);
+    return () => window.removeEventListener("covai:open-guide", onOpenGuide);
   }, []);
+
+  const handleNavigateGuideTarget = useCallback(
+    (target) => {
+      if (!target) return;
+      if (target.kind === "portfolio") {
+        navigate("/projects");
+        return;
+      }
+      if (target.activity === "logic-analysis") {
+        setShowCFG(true);
+        return;
+      }
+      setShowCFG(false);
+      const nextActivity = target.activity || "explorer";
+      if (nextActivity === "explorer") {
+        setSidebarOpen(true);
+      }
+      setActiveActivity(nextActivity);
+      if (nextActivity === "coverage" && target.coverageType) {
+        setCoverageType(target.coverageType);
+      }
+      const params = new URLSearchParams(location.search);
+      params.set("tab", nextActivity);
+      if (nextActivity === "coverage" && target.coverageType) {
+        params.set("coverageType", target.coverageType);
+        params.set("type", target.coverageType);
+      } else {
+        params.delete("coverageType");
+        params.delete("type");
+      }
+      if (nextActivity === "trustworthiness" && target.evalView) {
+        params.set("view", target.evalView);
+      } else if (nextActivity !== "trustworthiness") {
+        params.delete("view");
+      }
+      params.delete("focusFile");
+      params.delete("focusEndpoint");
+      params.delete("focusScenario");
+      navigate(`${location.pathname}?${params.toString()}`, { replace: true });
+    },
+    [
+      location.pathname,
+      location.search,
+      navigate,
+      setShowCFG,
+      setSidebarOpen,
+      setActiveActivity,
+      setCoverageType,
+    ],
+  );
 
   useEffect(() => {
     const onPrefillEvent = (e) => {
@@ -388,42 +456,10 @@ function LayoutInner() {
       window.removeEventListener("covai:prefill-prompt", onPrefillEvent);
   }, []);
 
-  const resolveCachedProjectsList = useCallback(() => {
-    const direct = queryClient.getQueryData(["projects", user?.id]);
-    if (Array.isArray(direct) && direct.length > 0) return direct;
-
-    const allProjectQueries = queryClient.getQueriesData({
-      queryKey: ["projects"],
-    });
-    for (const [, data] of allProjectQueries) {
-      if (Array.isArray(data) && data.length > 0) return data;
-    }
-
-    const portfolioRaw = queryClient.getQueryData([
-      "projectsPortfolio",
-      "live",
-    ]);
-    const portfolioProjects =
-      portfolioRaw?.data?.projects || portfolioRaw?.projects || null;
-    if (Array.isArray(portfolioProjects) && portfolioProjects.length > 0) {
-      return portfolioProjects.map((p) => ({
-        id: p.id,
-        name: p.name,
-        description: p.description || "",
-        repoUrl: p.repoUrl || null,
-        defaultBranch: p.defaultBranch || "main",
-        lifecycleStatus: p.lifecycleStatus || "NOT_STARTED",
-        lifecycleUpdatedAt: p.lifecycleUpdatedAt || p.updatedAt || null,
-        isPinned: Boolean(p.isPinned),
-        activeSnapshotId: p.snapshotId || p.activeSnapshotId || null,
-        latestSnapshotId: p.snapshotId || p.latestSnapshotId || null,
-        snapshots: p.snapshotId ? [{ id: p.snapshotId }] : [],
-        createdAt: p.createdAt,
-        updatedAt: p.updatedAt,
-      }));
-    }
-    return [];
-  }, [queryClient, user?.id]);
+  const resolveCachedProjectsList = useCallback(
+    () => resolveCachedProjectsListFromCache(queryClient, user?.id),
+    [user?.id],
+  );
 
   const [projects, setProjects] = useState(() => resolveCachedProjectsList());
   const [project, setProject] = useState(() => {
@@ -463,6 +499,7 @@ function LayoutInner() {
     unifiedSummary?.snapshotId === chatSnapshotId
       ? unifiedSummary
       : null;
+  const currentProjectId = project?.id;
   const screenContext = useMemo(
     () => ({
       activity: activeActivity,
@@ -478,10 +515,10 @@ function LayoutInner() {
       testRunId: activeChatTest?.testRunId,
       scenarioId: activeChatTest?.scenarioId,
       displayedMetrics:
-        activeOverviewSummary && project?.id && chatSnapshotId
+        activeOverviewSummary && currentProjectId && chatSnapshotId
           ? {
               kind: "overview",
-              projectId: project.id,
+              projectId: currentProjectId,
               snapshotId: chatSnapshotId,
               state: activeOverviewSummary.state || "ready",
               healthScore: activeOverviewSummary.healthScore,
@@ -504,7 +541,7 @@ function LayoutInner() {
       activeTabId,
       activeOverviewSummary,
       activeChatTest,
-      project?.id,
+      currentProjectId,
       chatSnapshotId,
     ],
   );
@@ -534,9 +571,45 @@ function LayoutInner() {
     setAiPanelOpen(false);
     document.getElementById("covai-chatbot-toggle")?.focus();
   };
-  const [fileTree, setFileTree] = useState([]);
-  const [treeVersion, setTreeVersion] = useState(null);
-  const [isLoadingTree, setIsLoadingTree] = useState(true);
+  const [initialTreeCache] = useState(() =>
+    readCachedProjectTree(queryClient, user?.id, project?.id),
+  );
+  const [fileTree, setFileTree] = useState(() => initialTreeCache?.tree || []);
+  const [treeVersion, setTreeVersion] = useState(() =>
+    initialTreeCache
+      ? {
+          snapshotId: initialTreeCache.snapshotId,
+          expectedWorkspaceRevision: initialTreeCache.workspaceRevision,
+        }
+      : null,
+  );
+  const [isLoadingTree, setIsLoadingTree] = useState(
+    () => !initialTreeCache || initialTreeCache.isInvalidated,
+  );
+  const isMountedRef = useRef(true);
+  const loadRequestIdRef = useRef(0);
+  const loadedTreeProjectIdRef = useRef(
+    initialTreeCache && !initialTreeCache.isInvalidated
+      ? project?.id || null
+      : null,
+  );
+  const isLoadingTreeRef = useRef(isLoadingTree);
+  const locationRef = useRef(location);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    isLoadingTreeRef.current = isLoadingTree;
+  }, [isLoadingTree]);
+
+  useEffect(() => {
+    locationRef.current = location;
+  }, [location]);
   const [latestRunJob, setLatestRunJob] = useState(null);
   const [isSubmittingAnalysis, setIsSubmittingAnalysis] = useState(false);
   const [editorRefreshTrigger, setEditorRefreshTrigger] = useState(0);
@@ -593,7 +666,7 @@ function LayoutInner() {
 
   const handleGitSync = async () => {
     try {
-      await loadData(project?.id, 1, 0);
+      await loadData(project?.id, 1, 0, { forceRefresh: true });
       setEditorRefreshTrigger((prev) => prev + 1);
     } catch (err) {
       console.error("Failed to sync after git operation", err);
@@ -673,160 +746,114 @@ function LayoutInner() {
   }, [isMobile, isTablet]);
 
   const loadData = useCallback(
-    async (activeProjId = null, retries = 3, delay = 2000) => {
-      setIsLoadingTree(true);
-      try {
-        const { getProjectsApi, getProjectTreeApi } =
-          await import("../../services/project.service");
+    async (
+      activeProjId = null,
+      retries = 3,
+      delay = 2000,
+      { forceRefresh = false } = {},
+    ) => {
+      const requestId = ++loadRequestIdRef.current;
+      const isStaleRequest = () =>
+        !isMountedRef.current || requestId !== loadRequestIdRef.current;
 
-        const seededProjects = resolveCachedProjectsList();
-        if (seededProjects.length > 0) {
+      await loadWorkspaceProjectAndTree({
+        queryClient,
+        userId: user?.id,
+        activeProjId,
+        retries,
+        delay,
+        forceRefresh,
+        getProjectsApi,
+        getProjectTreeApi,
+        isStaleRequest,
+        onLoadingChange: (loading) => {
+          setIsLoadingTree(loading);
+        },
+        onSeedProjects: (seededProjects) => {
           setProjects((prev) => (prev.length > 0 ? prev : seededProjects));
-          const seededTarget = activeProjId
-            ? seededProjects.find((p) => p.id === activeProjId) ||
-              seededProjects[0]
-            : seededProjects[0];
-          if (seededTarget) {
-            setProject((prev) =>
-              prev?.id === seededTarget.id ? prev : seededTarget,
-            );
-          }
-        }
-
-        const loadedProjects = await queryClient.ensureQueryData({
-          queryKey: ["projects", user?.id],
-          queryFn: async () => {
-            const res = await getProjectsApi();
-            return res?.projects || [];
-          },
-          staleTime: 5 * 60 * 1000,
-        });
-        if (loadedProjects && loadedProjects.length > 0) {
+        },
+        onSeedProject: (seededTarget) => {
+          setProject((prev) =>
+            prev?.id === seededTarget.id ? prev : seededTarget,
+          );
+        },
+        onProjectsLoaded: (loadedProjects) => {
           setProjects(loadedProjects);
-          const targetProj = activeProjId
-            ? loadedProjects.find((p) => p.id === activeProjId) ||
-              loadedProjects[0]
-            : loadedProjects[0];
+        },
+        onProjectSelected: (targetProj) => {
           setProject(targetProj);
-          if (targetProj && searchParams.get("projectId") !== targetProj.id) {
-            const newParams = new URLSearchParams(location.search);
-            newParams.set("projectId", targetProj.id);
-            navigate(`${location.pathname}?${newParams.toString()}`, {
+          const currLocation = locationRef.current;
+          const currParams = new URLSearchParams(currLocation.search);
+          if (targetProj && currParams.get("projectId") !== targetProj.id) {
+            currParams.set("projectId", targetProj.id);
+            navigate(`${currLocation.pathname}?${currParams.toString()}`, {
               replace: true,
             });
           }
-
-          const loadProjectFileTree = async () => {
-            let lastError = null;
-            for (let attempt = 1; attempt <= retries; attempt++) {
-              try {
-                const tree = await queryClient.ensureQueryData({
-                  queryKey: ["projectTree", user?.id, targetProj.id],
-                  queryFn: async () => {
-                    const res = await getProjectTreeApi(targetProj.id);
-                    return {
-                      tree: res?.data || [],
-                      snapshotId: res.snapshotId,
-                      workspaceRevision: res.workspaceRevision,
-                    };
-                  },
-                  staleTime: 15 * 1000,
-                });
-                const sourceTree = Array.isArray(tree) ? tree : tree.tree;
-                setTreeVersion(
-                  Array.isArray(tree)
-                    ? null
-                    : {
-                        snapshotId: tree.snapshotId,
-                        expectedWorkspaceRevision: tree.workspaceRevision,
-                      },
-                );
-                setFileTree(sourceTree || []);
-                if (sourceTree && sourceTree.length > 0) {
-                  const fileExistsInTree = (nodes, path) => {
-                    for (const node of nodes) {
-                      if (node.id === path) return true;
-                      if (
-                        node.children &&
-                        fileExistsInTree(node.children, path)
-                      )
-                        return true;
-                    }
-                    return false;
-                  };
-                  setTabs((prev) => {
-                    const remaining = prev.filter((t) =>
-                      fileExistsInTree(sourceTree, t.id),
-                    );
-                    if (remaining.length !== prev.length) {
-                      setActiveTabId((currActive) => {
-                        if (remaining.some((t) => t.id === currActive))
-                          return currActive;
-                        const nextId = remaining[0]?.id || null;
-                        setActiveFileId(nextId);
-                        return nextId;
-                      });
-                    }
-                    return remaining;
-                  });
-                }
-                lastError = null;
-                break;
-              } catch (treeErr) {
-                if (
-                  treeErr?.name === "CancelledError" ||
-                  treeErr?.name === "AbortError" ||
-                  /cancelled/i.test(treeErr?.message || "")
-                ) {
-                  lastError = null;
-                  break;
-                }
-                lastError = treeErr;
-                if (attempt < retries) {
-                  await new Promise((r) => setTimeout(r, delay));
-                }
-              }
-            }
-            if (lastError) {
-              setFileTree([]);
-              showToast({
-                type: "warning",
-                title: "Project tree not ready",
-                message: "Source code is still being extracted.",
-              });
-            }
-          };
-
-          if (activeActivity === "overview") {
-            window.setTimeout(() => {
-              loadProjectFileTree().catch(() => {});
-            }, 600);
-          } else {
-            await loadProjectFileTree();
-          }
-        } else {
+        },
+        onNoProjects: () => {
+          loadedTreeProjectIdRef.current = null;
           setProjects([]);
           setProject(null);
           setFileTree([]);
-        }
-      } catch (err) {
-        if (
-          err?.name === "CancelledError" ||
-          err?.name === "AbortError" ||
-          /cancelled/i.test(err?.message || "")
-        ) {
-          return;
-        }
-        showToast({
-          type: "error",
-          title: "Load failed",
-          message: "Could not load project data.",
-        });
-      } finally {
-        setIsLoadingTree(false);
-      }
+        },
+        onTreeLoaded: ({ projectId: loadedProjectId, tree, snapshotId, workspaceRevision }) => {
+          loadedTreeProjectIdRef.current = loadedProjectId;
+          setTreeVersion(
+            snapshotId !== null || workspaceRevision !== null
+              ? {
+                  snapshotId,
+                  expectedWorkspaceRevision: workspaceRevision,
+                }
+              : null,
+          );
+          const sourceTree = tree || [];
+          setFileTree(sourceTree);
+          if (sourceTree.length > 0) {
+            const fileExistsInTree = (nodes, path) => {
+              for (const node of nodes) {
+                if (node.id === path) return true;
+                if (node.children && fileExistsInTree(node.children, path))
+                  return true;
+              }
+              return false;
+            };
+            setTabs((prev) => {
+              const remaining = prev.filter((t) =>
+                fileExistsInTree(sourceTree, t.id),
+              );
+              if (remaining.length !== prev.length) {
+                setActiveTabId((currActive) => {
+                  if (remaining.some((t) => t.id === currActive))
+                    return currActive;
+                  const nextId = remaining[0]?.id || null;
+                  setActiveFileId(nextId);
+                  return nextId;
+                });
+              }
+              return remaining;
+            });
+          }
+        },
+        onTreeNotReady: () => {
+          loadedTreeProjectIdRef.current = null;
+          setFileTree([]);
+          showToast({
+            type: "warning",
+            title: "Project tree not ready",
+            message: "Source code is still being extracted.",
+          });
+        },
+        onLoadFailed: () => {
+          showToast({
+            type: "error",
+            title: "Load failed",
+            message: "Could not load project data.",
+          });
+        },
+      });
     },
-    [showToast, user?.id, resolveCachedProjectsList],
+    [navigate, showToast, user?.id],
   );
 
   const handleSidebarResize = useCallback(
@@ -890,9 +917,23 @@ function LayoutInner() {
   };
 
   useEffect(() => {
-    if (initialProjectId && project?.id === initialProjectId) return;
     loadData(initialProjectId);
   }, [loadData, initialProjectId]);
+
+  useEffect(() => {
+    if (
+      shouldFetchExplorerTreeOnSwitch({
+        activeActivity,
+        projectId: project?.id,
+        userId: user?.id,
+        queryClient,
+        isLoadingTree: isLoadingTreeRef.current,
+        loadedTreeProjectId: loadedTreeProjectIdRef.current,
+      })
+    ) {
+      loadData(project.id);
+    }
+  }, [activeActivity, project?.id, user?.id, loadData]);
 
   useEffect(() => {
     if (!project?.id) return;
@@ -908,17 +949,20 @@ function LayoutInner() {
       try {
         const response = await getProjectTreeApi(project.id);
         if (!alive || currentRequest !== request) return;
+        if (!response || response.success === false) return;
         const next = {
           tree: response.data || [],
           snapshotId: response.snapshotId,
           workspaceRevision: response.workspaceRevision,
         };
         queryClient.setQueryData(["projectTree", user?.id, project.id], next);
+        loadedTreeProjectIdRef.current = project.id;
         setFileTree(next.tree);
         setTreeVersion({
           snapshotId: next.snapshotId,
           expectedWorkspaceRevision: next.workspaceRevision,
         });
+        setIsLoadingTree(false);
       } catch {
         /* A revoked project is handled by the access boundary. */
       }
@@ -1004,12 +1048,14 @@ function LayoutInner() {
     unifiedSummary?.lifecycleStatus,
     project?.id,
     project?.lifecycleStatus,
-    queryClient,
   ]);
 
   const handleChangeProject = (projectId) => {
     if (project?.id === projectId) return;
+    loadedTreeProjectIdRef.current = null;
     setFileTree([]);
+    setTreeVersion(null);
+    setIsLoadingTree(true);
     setTabs([]);
     setActiveFileId(null);
     setActiveTabId(null);
@@ -1020,7 +1066,6 @@ function LayoutInner() {
     newParams.delete("focusEndpoint");
     newParams.delete("focusScenario");
     navigate(`${location.pathname}?${newParams.toString()}`);
-    loadData(projectId);
   };
 
   const handleDeleteProject = async (projectId) => {
@@ -1031,15 +1076,26 @@ function LayoutInner() {
         await import("../../services/project.service");
       await deleteProjectApi(projectId);
       invalidateFileContentCache(projectId);
+      queryClient.removeQueries({
+        queryKey: ["projectTree", user?.id, projectId],
+      });
+      queryClient.setQueriesData({ queryKey: ["projects"] }, (old) =>
+        Array.isArray(old) ? old.filter((p) => p.id !== projectId) : old,
+      );
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["projectsPortfolio"] });
       showToast({ type: "success", title: "Project deleted" });
       if (project?.id === projectId) {
+        loadedTreeProjectIdRef.current = null;
+        setProject(null);
         setFileTree([]);
+        setTreeVersion(null);
+        setIsLoadingTree(true);
         setTabs([]);
         setActiveFileId(null);
         setActiveTabId(null);
         const newParams = new URLSearchParams(location.search);
+        const hadProjectIdParam = Boolean(newParams.get("projectId"));
         newParams.delete("projectId");
         newParams.delete("snapshotId");
         newParams.delete("focusFile");
@@ -1048,7 +1104,9 @@ function LayoutInner() {
         navigate(`${location.pathname}?${newParams.toString()}`, {
           replace: true,
         });
-        loadData();
+        if (!hadProjectIdParam) {
+          loadData();
+        }
       } else {
         setProjects((prev) => prev.filter((p) => p.id !== projectId));
       }
@@ -1159,25 +1217,26 @@ function LayoutInner() {
         const sourceTree = Array.isArray(res)
           ? res
           : res?.data || res?.tree || [];
-        if (sourceTree && sourceTree.length > 0) {
+        if (res?.success !== false && Array.isArray(sourceTree)) {
+          loadedTreeProjectIdRef.current = project.id;
           setFileTree(sourceTree);
-          if (res.snapshotId) {
+          if (res?.snapshotId !== undefined || res?.workspaceRevision !== undefined) {
             setTreeVersion({
-              snapshotId: res.snapshotId,
-              expectedWorkspaceRevision: res.workspaceRevision,
+              snapshotId: res.snapshotId ?? null,
+              expectedWorkspaceRevision: res.workspaceRevision ?? null,
             });
           }
           queryClient.setQueryData(["projectTree", user?.id, project.id], {
             tree: sourceTree,
-            snapshotId: res.snapshotId,
-            workspaceRevision: res.workspaceRevision,
+            snapshotId: res?.snapshotId ?? null,
+            workspaceRevision: res?.workspaceRevision ?? null,
           });
         }
         await projectAccess.refetch();
       } else {
         await queryClient.invalidateQueries({ queryKey: ["projectTree"] });
         await projectAccess.refetch();
-        await loadData(project?.id, 1, 0);
+        await loadData(project?.id, 1, 0, { forceRefresh: true });
       }
     } catch (err) {
       console.warn("Silent tree refresh failed", err);
@@ -1642,6 +1701,21 @@ function LayoutInner() {
             </button>
           )}
 
+          <button
+            type="button"
+            id="covai-guide-toggle"
+            onClick={() => {
+              setGuidanceInitialStepId(null);
+              setShowGuidance(true);
+            }}
+            aria-label="Open workspace guide"
+            title="Workspace Guide (step-by-step walkthrough)"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] bg-[var(--ps-surface-2)] hover:border-[var(--ps-line-strong)] border border-[var(--ps-line)] transition-colors duration-150 cursor-pointer focus-visible:outline-2 focus-visible:outline-[var(--ps-cobalt)]"
+          >
+            <BookOpen size={13} className="text-[var(--ps-cobalt)]" />
+            {!isMobile && <span>Guide</span>}
+          </button>
+
           <div className="flex items-center rounded-md bg-[var(--ps-inset)] border border-[var(--ps-line)] p-0.5 gap-0.5">
             <button
               type="button"
@@ -1769,7 +1843,11 @@ function LayoutInner() {
                   onChangeProject={handleChangeProject}
                   onDeleteProject={handleDeleteProject}
                   isLoading={isLoadingTree}
-                  onRefresh={() => loadData(project?.id, 3, 2000)}
+                  onRefresh={() =>
+                    loadData(project?.id || initialProjectId, 3, 2000, {
+                      forceRefresh: true,
+                    })
+                  }
                   onCreateFile={handleCreateFile}
                   onCreateFolder={handleCreateFolder}
                   onRenameEntry={handleRenameEntry}
@@ -2211,7 +2289,10 @@ function LayoutInner() {
               setShowImport(false);
               setShowCFG(false);
               openFloatingJobQueue({ domain: "import" });
-              setTimeout(() => loadData(null, 3, 2500), 1500);
+              setTimeout(
+                () => loadData(null, 3, 2500, { forceRefresh: true }),
+                1500,
+              );
             }}
           />
         )}
@@ -2269,6 +2350,20 @@ function LayoutInner() {
           onClose={() => setShowExport(false)}
         />
       )}
+      <PlatformGuidanceModal
+        isOpen={showGuidance}
+        onClose={() => setShowGuidance(false)}
+        initialStepId={guidanceInitialStepId}
+        currentContext={{
+          page: "workspace",
+          activeActivity,
+          coverageType,
+          evalView: searchParams.get("view") || "home",
+          showCFG,
+        }}
+        onNavigateTarget={handleNavigateGuideTarget}
+        onAskAi={handleAskAiPrompt}
+      />
     </div>
   );
 }

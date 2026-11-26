@@ -211,12 +211,17 @@ function RepoItem({ repo, onClose, onSuccess, showToast }) {
   );
 }
 
-export default function RepoList({ onClose, onSuccess, hasGithub }) {
+export default function RepoList({
+  onClose,
+  onSuccess,
+  hasGithub,
+  onReconnectGithub,
+}) {
   const [searchQuery, setSearchQuery] = useState("");
   const [repos, setRepos] = useState([]);
   const [loading, setLoading] = useState(hasGithub !== false);
   const [refreshing, setRefreshing] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
+  const [errorState, setErrorState] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const reposPerPage = 10;
   const { showToast } = useToast();
@@ -275,12 +280,15 @@ export default function RepoList({ onClose, onSuccess, hasGithub }) {
     async ({ manual = false } = {}) => {
       if (manual) setRefreshing(true);
       else setLoading(true);
-      setErrorMsg("");
+      setErrorState(null);
       try {
         const data = await getGithubRepositoriesApi();
         setRepos(mapRepositories(data));
       } catch (err) {
-        setErrorMsg(err.message || "Failed to load repositories.");
+        setErrorState({
+          message: err.message || "Failed to load repositories.",
+          code: err.code || null,
+        });
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -297,12 +305,15 @@ export default function RepoList({ onClose, onSuccess, hasGithub }) {
     getGithubRepositoriesApi()
       .then((data) => {
         if (cancelled) return;
-        setErrorMsg("");
+        setErrorState(null);
         setRepos(mapRepositories(data));
       })
       .catch((err) => {
         if (!cancelled) {
-          setErrorMsg(err.message || "Failed to load repositories.");
+          setErrorState({
+            message: err.message || "Failed to load repositories.",
+            code: err.code || null,
+          });
         }
       })
       .finally(() => {
@@ -395,13 +406,35 @@ export default function RepoList({ onClose, onSuccess, hasGithub }) {
               </div>
             ))}
           </div>
-        ) : errorMsg ? (
+        ) : errorState ? (
           <div
-            className="flex flex-col items-center justify-center flex-1 py-8 text-xs text-center rounded-lg border border-dashed border-[var(--ps-line)]"
+            className="flex flex-col items-center justify-center flex-1 py-8 px-4 text-xs text-center rounded-lg border border-dashed border-[var(--ps-line)] gap-2"
             style={{ color: "var(--ps-rose)" }}
           >
             <p className="font-semibold">Unable to load repositories</p>
-            <p className="text-[var(--ps-ink-muted)] mt-1">{errorMsg}</p>
+            <p className="text-[var(--ps-ink-muted)] max-w-xs">
+              {errorState.message}
+            </p>
+            <div className="flex items-center gap-2 mt-1">
+              {(errorState.code === "GITHUB_NOT_CONNECTED" ||
+                errorState.code === "GITHUB_TOKEN_INVALID") &&
+                onReconnectGithub && (
+                  <button
+                    type="button"
+                    onClick={onReconnectGithub}
+                    className="h-7 px-3 rounded-md text-xs font-semibold ps-btn-contrast cursor-pointer"
+                  >
+                    Reconnect GitHub
+                  </button>
+                )}
+              <button
+                type="button"
+                onClick={() => fetchRepositories({ manual: true })}
+                className="h-7 px-3 rounded-md border border-[var(--ps-line)] bg-[var(--ps-surface)] text-[var(--ps-ink)] text-xs font-medium cursor-pointer"
+              >
+                Retry
+              </button>
+            </div>
           </div>
         ) : displayedRepos.length > 0 ? (
           displayedRepos.map((repo) => (

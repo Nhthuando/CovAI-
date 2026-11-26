@@ -1,7 +1,7 @@
 import axios from 'axios';
-import { installAxiosAuthRefresh } from '../lib/authSession.js';
+import { API_BASE, installAxiosAuthRefresh } from '../lib/authSession.js';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_URL = API_BASE;
 
 const notificationApi = axios.create({
     baseURL: `${API_URL}/notifications`,

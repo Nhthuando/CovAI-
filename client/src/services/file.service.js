@@ -1,19 +1,24 @@
-const API_BASE = '/api/file-manager';
+import { API_BASE, authAwareFetch, getAccessToken } from "../lib/authSession.js";
 
-const getHeaders = () => ({
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${localStorage.getItem('token')}`
-});
+const FILE_API_BASE = `${API_BASE}/file-manager`;
+
+const getHeaders = () => {
+    const token = getAccessToken();
+    return {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    };
+};
 
 export const getFileTree = async (rootDir) => {
-    const response = await fetch(`${API_BASE}/tree?rootDir=${encodeURIComponent(rootDir)}`, {
+    const response = await authAwareFetch(fetch, `${FILE_API_BASE}/tree?rootDir=${encodeURIComponent(rootDir)}`, {
         headers: getHeaders()
     });
     return response.json();
 };
 
 export const readFile = async (filePath) => {
-    const response = await fetch(`${API_BASE}/read`, {
+    const response = await authAwareFetch(fetch, `${FILE_API_BASE}/read`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({ filePath }),
@@ -22,7 +27,7 @@ export const readFile = async (filePath) => {
 };
 
 export const saveFile = async (filePath, content) => {
-    const response = await fetch(`${API_BASE}/save`, {
+    const response = await authAwareFetch(fetch, `${FILE_API_BASE}/save`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({ filePath, content }),
@@ -31,7 +36,7 @@ export const saveFile = async (filePath, content) => {
 };
 
 export const deleteFile = async (filePath) => {
-    const response = await fetch(`${API_BASE}/delete`, {
+    const response = await authAwareFetch(fetch, `${FILE_API_BASE}/delete`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({ filePath }),

@@ -1,41 +1,35 @@
 import axios from "axios";
 import {
+  API_BASE,
+  authAwareFetch,
   getAccessToken,
-  isAuthEndpoint,
   installAxiosAuthRefresh,
-  redirectToLogin,
-  refreshAccessTokenWithStatus,
 } from "../lib/authSession.js";
 
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const BASE_URL = API_BASE;
 
 async function fetchWithAuth(input, init = {}) {
   const token = getAccessToken();
   const headers = {
     ...init.headers,
-    Authorization: token ? `Bearer ${token}` : "",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 
-  // credentials: the API sets the HttpOnly refresh-token cookie on login, register
-  // and GitHub sign-in; a cross-origin fetch only stores it with "include".
-  let response = await fetch(input, { ...init, headers, credentials: "include" });
-
-  if (response.status === 401 && !init._retry && !isAuthEndpoint(input)) {
-    const { token: accessToken, invalidSession } =
-      await refreshAccessTokenWithStatus();
-    if (accessToken) {
-      response = await fetch(input, {
-        ...init,
-        headers: { ...headers, Authorization: `Bearer ${accessToken}` },
-        credentials: "include",
-        _retry: true,
-      });
-    } else if (invalidSession) {
-      redirectToLogin();
+  try {
+    return await authAwareFetch(fetch, input, {
+      ...init,
+      headers,
+      credentials: "include",
+    });
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error(
+        "Unable to reach CovAI server. Please verify the backend is running and try again.",
+        { cause: error },
+      );
     }
+    throw error;
   }
-
-  return response;
 }
 
 export function parseAuthErrorResponse(res, data, fallbackMessage) {

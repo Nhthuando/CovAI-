@@ -43,29 +43,53 @@ const OAUTH_STATE_COOKIE_NAME = "covai_oauth_state";
 function isSecureCookieRequest(req) {
   return Boolean(
     req?.secure ||
-      req?.headers?.["x-forwarded-proto"] === "https" ||
-      (/^https:/i.test(process.env.CLIENT_URL || "") &&
-        process.env.NODE_ENV === "production"),
+    req?.headers?.["x-forwarded-proto"] === "https" ||
+    (/^https:/i.test(process.env.CLIENT_URL || "") &&
+      process.env.NODE_ENV === "production"),
   );
 }
 
-export const getRefreshCookieOptions = (req) => ({
-  httpOnly: true,
-  secure: isSecureCookieRequest(req),
-  sameSite: "lax",
-  path: "/",
-  maxAge: REFRESH_COOKIE_MAX_AGE_MS,
-});
+function resolveCookieSameSite(req, secure) {
+  if (!secure) return "lax";
+  const origin = req?.headers?.origin;
+  const host = req?.headers?.["x-forwarded-host"] || req?.headers?.host;
+  if (origin && host) {
+    try {
+      const originHost = new URL(origin).host;
+      if (originHost && originHost !== host) {
+        return "none";
+      }
+    } catch {
+      return "lax";
+    }
+  }
+  return "lax";
+}
+
+export const getRefreshCookieOptions = (req) => {
+  const secure = isSecureCookieRequest(req);
+  return {
+    httpOnly: true,
+    secure,
+    sameSite: resolveCookieSameSite(req, secure),
+    path: "/",
+    maxAge: REFRESH_COOKIE_MAX_AGE_MS,
+  };
+};
 
 export const setRefreshTokenCookie = (req, res, refreshToken) => {
   res.cookie("refreshToken", refreshToken, getRefreshCookieOptions(req));
 };
 
-function getOAuthStateCookieOptions(req, maxAge = AUTH_LIMITS.OAUTH_STATE_TTL_MS) {
+function getOAuthStateCookieOptions(
+  req,
+  maxAge = AUTH_LIMITS.OAUTH_STATE_TTL_MS,
+) {
+  const secure = isSecureCookieRequest(req);
   return {
     httpOnly: true,
-    secure: isSecureCookieRequest(req),
-    sameSite: "lax",
+    secure,
+    sameSite: resolveCookieSameSite(req, secure),
     path: "/",
     maxAge,
   };
@@ -114,7 +138,10 @@ export const register = async (req, res) => {
         message: error.message,
       });
     }
-    logger.error("[register] Unexpected error:", error?.message || "Unknown error");
+    logger.error(
+      "[register] Unexpected error:",
+      error?.message || "Unknown error",
+    );
     return res.status(500).json({ message: "Internal server error!" });
   }
 };
@@ -155,7 +182,10 @@ export const login = async (req, res) => {
         ...(error.details || {}),
       });
     }
-    logger.error("[login] Unexpected error:", error?.message || "Unknown error");
+    logger.error(
+      "[login] Unexpected error:",
+      error?.message || "Unknown error",
+    );
     return res.status(500).json({ message: "Internal server error!" });
   }
 };
@@ -194,7 +224,9 @@ export const getGithubRepositories = async (req, res) => {
     });
 
     if (!user || !user.githubAccessTokenEnc) {
-      return res.status(401).json({
+      return res.status(400).json({
+        success: false,
+        code: "GITHUB_NOT_CONNECTED",
         message: "User has not linked GitHub or token is invalid!",
       });
     }
@@ -211,7 +243,7 @@ export const getGithubRepositories = async (req, res) => {
     const perPage = 100;
 
     while (true) {
-      const response = await fetch(
+      const response = await githubFetch(
         `https://api.github.com/user/repos?per_page=${perPage}&page=${page}&sort=pushed&direction=desc&affiliation=owner,collaborator,organization_member`,
         {
           cache: "no-store",
@@ -223,12 +255,25 @@ export const getGithubRepositories = async (req, res) => {
         },
       );
 
+      if (response.status === 401) {
+        return res.status(422).json({
+          success: false,
+          code: "GITHUB_TOKEN_INVALID",
+          message:
+            "GitHub authorization expired or was revoked. Please reconnect your GitHub account.",
+        });
+      }
+
       if (!response.ok) {
-        throw new Error("Unable to fetch repositories from GitHub!");
+        throw new ServiceError(
+          "Unable to fetch repositories from GitHub!",
+          502,
+          AUTH_ERROR_CODES.OAUTH_PROVIDER_ERROR,
+        );
       }
 
       const pageRepos = await response.json();
-      if (pageRepos.length === 0) break;
+      if (!Array.isArray(pageRepos) || pageRepos.length === 0) break;
 
       repos = repos.concat(pageRepos);
       if (pageRepos.length < perPage) break;
@@ -241,59 +286,76 @@ export const getGithubRepositories = async (req, res) => {
       return timeB - timeA;
     });
 
-    const enrichedRepos = await Promise.all(
-      repos.map(async (repo) => {
-        let languages = [];
-        let hasJsOrTs = false;
-        const primLang = repo.language || "";
+    const enrichRepo = async (repo) => {
+      let languages = [];
+      let hasJsOrTs = false;
+      const primLang = repo.language || "";
 
-        if (primLang === "JavaScript" || primLang === "TypeScript") {
-          hasJsOrTs = true;
-          languages = [primLang];
-        } else if (repo.languages_url) {
-          try {
-            const langRes = await fetch(repo.languages_url, {
+      if (primLang === "JavaScript" || primLang === "TypeScript") {
+        hasJsOrTs = true;
+        languages = [primLang];
+      } else if (repo.languages_url) {
+        try {
+          const langRes = await githubFetch(
+            repo.languages_url,
+            {
               headers: {
                 Authorization: `Bearer ${accessToken}`,
                 Accept: "application/vnd.github.v3+json",
                 "User-Agent": "CovAI-App",
               },
-            });
-            if (langRes.ok) {
-              const langData = await langRes.json();
-              languages = Object.keys(langData || {});
-              hasJsOrTs = languages.some(
-                (l) =>
-                  l.toLowerCase() === "javascript" ||
-                  l.toLowerCase() === "typescript",
-              );
-            }
-          } catch (err) {
-            logger.warn(
-              `[getGithubRepositories] Could not fetch languages for ${repo.name}:`,
-              err.message,
+            },
+            { maxAttempts: 1, timeoutMs: 8000 },
+          );
+          if (langRes.ok) {
+            const langData = await langRes.json();
+            languages = Object.keys(langData || {});
+            hasJsOrTs = languages.some(
+              (l) =>
+                l.toLowerCase() === "javascript" ||
+                l.toLowerCase() === "typescript",
             );
           }
+        } catch (err) {
+          logger.warn(
+            `[getGithubRepositories] Could not fetch languages for ${repo.name}:`,
+            err.message,
+          );
         }
+      }
 
-        if (
-          !hasJsOrTs &&
-          (!primLang || ["HTML", "CSS", "Vue"].includes(primLang))
-        ) {
-          hasJsOrTs = true;
-        }
+      if (
+        !hasJsOrTs &&
+        (!primLang || ["HTML", "CSS", "Vue"].includes(primLang))
+      ) {
+        hasJsOrTs = true;
+      }
 
-        return {
-          ...repo,
-          languages,
-          hasJsOrTs,
-        };
-      }),
-    );
+      return {
+        ...repo,
+        languages,
+        hasJsOrTs,
+      };
+    };
+
+    const enrichedRepos = [];
+    const CONCURRENCY = 5;
+    for (let i = 0; i < repos.length; i += CONCURRENCY) {
+      const batch = repos.slice(i, i + CONCURRENCY);
+      const batchResult = await Promise.all(batch.map(enrichRepo));
+      enrichedRepos.push(...batchResult);
+    }
 
     res.set("Cache-Control", "no-store, no-cache, must-revalidate");
     return res.status(200).json(enrichedRepos);
   } catch (error) {
+    if (error instanceof GithubNetworkError || error instanceof ServiceError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        code: error.code,
+        message: error.message,
+      });
+    }
     logger.error("[getGithubRepositories] Error:", error?.message || error);
     return res.status(500).json({ message: error.message });
   }
@@ -304,9 +366,7 @@ export const githubOAuthAccess = async (req, res) => {
     const { allowAccess } = req.body;
 
     if (allowAccess === undefined) {
-      return res
-        .status(400)
-        .json({ message: "Missing permission parameter!" });
+      return res.status(400).json({ message: "Missing permission parameter!" });
     }
 
     if (!allowAccess) {
@@ -380,7 +440,12 @@ export const oAuthGithub = async (req, res) => {
   clearOAuthStateCookie(req, res);
 
   try {
-    const { code, error, error_description: errorDescription, state } = req.query;
+    const {
+      code,
+      error,
+      error_description: errorDescription,
+      state,
+    } = req.query;
 
     if (error) {
       if (error === "access_denied") {
@@ -462,7 +527,9 @@ export const confirmGithubLink = async (req, res) => {
     if (!parsed.success) {
       const flat = parsed.error.flatten().fieldErrors;
       const firstMessage =
-        flat.linkToken?.[0] || flat.password?.[0] || "Invalid link confirmation payload.";
+        flat.linkToken?.[0] ||
+        flat.password?.[0] ||
+        "Invalid link confirmation payload.";
       const code = flat.linkToken
         ? AUTH_ERROR_CODES.INVALID_LINK_TOKEN
         : AUTH_ERROR_CODES.VALIDATION_ERROR;

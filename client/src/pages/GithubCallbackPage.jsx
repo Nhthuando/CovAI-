@@ -17,6 +17,7 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import { consumeAuthReturn } from "../lib/authReturn";
+import { getAccessToken, refreshAccessToken } from "../lib/authSession";
 import { queryClient } from "../lib/queryClient";
 import {
   AUTH_ERROR_CODES,
@@ -86,12 +87,12 @@ export default function GithubCallbackPage() {
   const errorDescription = searchParams.get("error_description");
   const oauthState = searchParams.get("state");
   const storedMode = sessionStorage.getItem("covai.githubOAuthMode");
-  const hasToken = Boolean(localStorage.getItem("token"));
-  const isConnectMode =
-    (oauthState === "connect" ||
-      oauthState?.startsWith("connect.") ||
-      storedMode === "connect") &&
-    hasToken;
+  const hasToken = Boolean(getAccessToken());
+  const wantsConnectMode =
+    oauthState === "connect" ||
+    oauthState?.startsWith("connect.") ||
+    storedMode === "connect";
+  const isConnectMode = wantsConnectMode && hasToken;
 
   const [asyncErrorState, setAsyncErrorState] = useState(null);
   const [pendingLink, setPendingLink] = useState(null);
@@ -104,12 +105,13 @@ export default function GithubCallbackPage() {
 
   const initialErrorState = errorParam
     ? {
-        mode: isConnectMode ? "connect" : "login",
-        returnPath: isConnectMode ? safeConnectReturnPath() : "/login",
+        mode: wantsConnectMode ? "connect" : "login",
+        returnPath: wantsConnectMode ? safeConnectReturnPath() : "/login",
         message:
           errorParam === "access_denied"
             ? AUTH_MESSAGES.OAUTH_ACCESS_DENIED
-            : errorDescription || "GitHub authentication failed. Please try again.",
+            : errorDescription ||
+              "GitHub authentication failed. Please try again.",
       }
     : null;
 
@@ -128,7 +130,7 @@ export default function GithubCallbackPage() {
     }
 
     if (!code) {
-      navigate(isConnectMode ? "/projects" : "/login", { replace: true });
+      navigate(wantsConnectMode ? "/projects" : "/login", { replace: true });
       return () => {
         active = false;
       };
@@ -137,50 +139,80 @@ export default function GithubCallbackPage() {
     // Clear code and state from the address bar to avoid reuse on manual refresh
     window.history.replaceState({}, document.title, "/auth/github/callback");
 
-    const task = getOrCreateOAuthTask(code, oauthState, isConnectMode);
-    task.promise
-      .then((data) => {
+    const runCallback = async () => {
+      let resolvedConnectMode = isConnectMode;
+      if (wantsConnectMode && !hasToken) {
+        const refreshedToken = await refreshAccessToken();
         if (!active) return;
-
-        if (task.mode === "connect") {
-          queryClient.invalidateQueries();
-          navigate(task.returnPath || "/projects", {
-            replace: true,
-            state: { openImport: true, githubConnected: true },
+        if (!refreshedToken) {
+          sessionStorage.removeItem("covai.githubOAuthMode");
+          sessionStorage.removeItem("covai.githubConnectReturn");
+          setAsyncErrorState({
+            mode: "login",
+            returnPath: "/login",
+            message:
+              "Please sign in to your CovAI account before connecting GitHub.",
           });
           return;
         }
+        resolvedConnectMode = true;
+      }
 
-        if (data?.status === "LINK_REQUIRED") {
-          setPendingLink(data);
-          return;
-        }
+      const task = getOrCreateOAuthTask(code, oauthState, resolvedConnectMode);
+      const data = await task.promise;
+      if (!active) return;
 
-        persistAuthenticatedSession(data);
-        const target = consumeAuthReturn();
-        queryClient.clear();
-        navigate(target, { replace: true });
-        window.dispatchEvent(new Event("covai:auth-change"));
-      })
-      .catch((err) => {
-        if (!active) return;
-        setAsyncErrorState({
-          mode: task.mode,
-          returnPath:
-            task.returnPath ||
-            (task.mode === "connect" ? "/projects" : "/login"),
-          message: err?.message || "GitHub authentication failed.",
+      if (task.mode === "connect") {
+        queryClient.invalidateQueries();
+        navigate(task.returnPath || "/projects", {
+          replace: true,
+          state: { openImport: true, githubConnected: true },
         });
+        return;
+      }
+
+      if (data?.status === "LINK_REQUIRED") {
+        setPendingLink(data);
+        return;
+      }
+
+      persistAuthenticatedSession(data);
+      const target = consumeAuthReturn();
+      queryClient.clear();
+      navigate(target, { replace: true });
+      window.dispatchEvent(new Event("covai:auth-change"));
+    };
+
+    runCallback().catch((err) => {
+      if (!active) return;
+      setAsyncErrorState({
+        mode: wantsConnectMode ? "connect" : "login",
+        returnPath: wantsConnectMode ? safeConnectReturnPath() : "/login",
+        message: err?.message || "GitHub authentication failed.",
       });
+    });
 
     return () => {
       active = false;
     };
-  }, [code, oauthState, errorParam, isConnectMode, navigate]);
+  }, [
+    code,
+    oauthState,
+    errorParam,
+    isConnectMode,
+    wantsConnectMode,
+    hasToken,
+    navigate,
+  ]);
 
   const handleConfirmLink = async (e) => {
     e.preventDefault();
-    if (!pendingLink?.linkToken || confirmBusy || cancelBusy || linkTokenExpired) {
+    if (
+      !pendingLink?.linkToken ||
+      confirmBusy ||
+      cancelBusy ||
+      linkTokenExpired
+    ) {
       return;
     }
     if (!password) {
@@ -274,7 +306,8 @@ export default function GithubCallbackPage() {
               )}
               <div className="min-w-0">
                 <p className="text-xs font-semibold text-[var(--color-text)] truncate">
-                  {githubName || (githubLogin ? `@${githubLogin}` : "GitHub Account")}
+                  {githubName ||
+                    (githubLogin ? `@${githubLogin}` : "GitHub Account")}
                 </p>
                 {githubLogin && (
                   <p className="text-[11px] font-mono text-[var(--color-text-muted)] truncate">
@@ -303,7 +336,11 @@ export default function GithubCallbackPage() {
             </div>
           )}
 
-          <form onSubmit={handleConfirmLink} noValidate className="flex flex-col gap-4">
+          <form
+            onSubmit={handleConfirmLink}
+            noValidate
+            className="flex flex-col gap-4"
+          >
             <div>
               <label
                 htmlFor="github-link-password"

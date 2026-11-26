@@ -12,7 +12,7 @@ import HomeScreen from './HomeScreen';
 import TargetSetup from './TargetSetup';
 import KnowledgeSources from './KnowledgeSources';
 import BenchmarkEditor from './BenchmarkEditor';
-import { ArrowLeft, ArrowRight, Check, Code2, House, Power, ScanSearch } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, Check, Code2, House, Power, ScanSearch } from 'lucide-react';
 import { Button as UiButton } from '../../ui/button';
 import { TooltipProvider } from '../../ui/tooltip';
 import { getStepStatus, nextStep } from './evaluationSteps';
@@ -213,6 +213,27 @@ export default function TrustworthinessWorkspace({ projectId }) {
               <span aria-hidden="true" className="size-2 rounded-full bg-amber-400" />Reconnecting…
             </span>
           )}
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className={buttonClass}
+            onClick={() =>
+              window.dispatchEvent(
+                new CustomEvent('covai:open-guide', {
+                  detail: {
+                    stepId: ['audit', 'connect'].includes(view)
+                      ? 'chatbot-audit-connect'
+                      : 'chatbot-benchmark-run',
+                  },
+                }),
+              )
+            }
+            title="Chatbot Evaluation Guide (code review, target setup, benchmarks & calibration)"
+          >
+            <BookOpen className="size-3.5 text-[var(--color-primary)]" aria-hidden="true" />
+            <span>Guide</span>
+          </Button>
           {renderOnOffSwitch()}
         </div>
       </header>

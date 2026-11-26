@@ -13,27 +13,97 @@ import {
 
 const JWT_TTL = process.env.JWT_ACCESS_EXPIRES_IN || "15m";
 const REFRESH_TTL = process.env.JWT_REFRESH_EXPIRES_IN || "30d";
+const MAX_ACTIVE_REFRESH_TOKENS = 5;
 
 // Constant-time timing guard used when login email does not exist.
 const DUMMY_BCRYPT_HASH =
   "$2b$10$CwTycUXWue0Thq9StjUM0uJ8lG1WQe6K0V7V9rB0Y4cE6y3m6w9K.";
 
-export const issueSessionTokensForUser = async (user, extraUserUpdates = {}) => {
+function getRefreshSecret() {
+  return process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
+}
+
+export function parseStoredRefreshTokens(rawValue) {
+  if (!rawValue || typeof rawValue !== "string") return [];
+  const trimmed = rawValue.trim();
+  if (!trimmed) return [];
+  if (trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((t) => typeof t === "string" && t.length > 0);
+      }
+    } catch {
+      return [];
+    }
+  }
+  return [trimmed];
+}
+
+export function serializeRefreshTokens(tokens) {
+  const unique = [];
+  const seen = new Set();
+  for (const token of tokens) {
+    if (typeof token !== "string" || !token || seen.has(token)) continue;
+    seen.add(token);
+    unique.push(token);
+  }
+  const bounded = unique.slice(-MAX_ACTIVE_REFRESH_TOKENS);
+  if (bounded.length === 0) return null;
+  if (bounded.length === 1) return bounded[0];
+  return JSON.stringify(bounded);
+}
+
+export function isStoredRefreshTokenValid(storedValue, candidateToken) {
+  if (!candidateToken || typeof candidateToken !== "string") return false;
+  return parseStoredRefreshTokens(storedValue).includes(candidateToken);
+}
+
+function retainActiveRefreshTokens(storedValue) {
+  const secret = getRefreshSecret();
+  const active = [];
+  for (const token of parseStoredRefreshTokens(storedValue)) {
+    try {
+      if (secret) jwt.verify(token, secret);
+      active.push(token);
+    } catch {
+      // Drop expired or re-signed tokens when rotating.
+    }
+  }
+  return active;
+}
+
+export const issueSessionTokensForUser = async (
+  user,
+  extraUserUpdates = {},
+) => {
   const accessToken = jwt.sign(
     { userId: user.id, userEmail: user.email, userName: user.name },
     process.env.JWT_SECRET,
     { expiresIn: JWT_TTL },
   );
 
-  const refreshToken = jwt.sign(
-    { userId: user.id },
-    process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
-    { expiresIn: REFRESH_TTL },
-  );
+  const refreshToken = jwt.sign({ userId: user.id }, getRefreshSecret(), {
+    expiresIn: REFRESH_TTL,
+  });
+
+  let existingRefreshValue = user.refreshToken;
+  if (existingRefreshValue === undefined) {
+    const row = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { refreshToken: true },
+    });
+    existingRefreshValue = row?.refreshToken ?? null;
+  }
+
+  const nextRefreshValue = serializeRefreshTokens([
+    ...retainActiveRefreshTokens(existingRefreshValue),
+    refreshToken,
+  ]);
 
   await prisma.user.update({
     where: { id: user.id },
-    data: { refreshToken, ...extraUserUpdates },
+    data: { refreshToken: nextRefreshValue, ...extraUserUpdates },
     select: { id: true },
   });
 
@@ -244,7 +314,9 @@ export const login = async (
     if (outcome.locked && outcome.lockedUntil) {
       const retryAfterSeconds = Math.max(
         1,
-        Math.ceil((outcome.lockedUntil.getTime() - currentTime.getTime()) / 1000),
+        Math.ceil(
+          (outcome.lockedUntil.getTime() - currentTime.getTime()) / 1000,
+        ),
       );
       throw new ServiceError(
         formatLockoutMessage(retryAfterSeconds),

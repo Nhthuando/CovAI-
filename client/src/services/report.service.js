@@ -1,5 +1,10 @@
-import { authAwareFetch, getAccessToken, handleUnauthorizedResponse } from "../lib/authSession.js";
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+import {
+  API_BASE,
+  authAwareFetch,
+  getAccessToken,
+  handleUnauthorizedResponse,
+} from "../lib/authSession.js";
+const BASE_URL = API_BASE;
 
 function getAuthHeaders() {
   const token = getAccessToken();
@@ -21,20 +26,31 @@ async function handleResponse(res) {
 }
 
 export const fetchIntegrationReport = async (projectId) => {
-  const res = await authAwareFetch(fetch, `${BASE_URL}/reports/project/${projectId}/integration?t=${Date.now()}`, {
-    headers: getAuthHeaders(),
-  });
+  const res = await authAwareFetch(
+    fetch,
+    `${BASE_URL}/reports/project/${projectId}/integration?t=${Date.now()}`,
+    {
+      headers: getAuthHeaders(),
+    },
+  );
   return handleResponse(res);
 };
 
 export const fetchIntegrationGuidance = async (projectId) => {
-  const res = await authAwareFetch(fetch, `${BASE_URL}/reports/project/${projectId}/integration/guidance?t=${Date.now()}`, {
-    headers: getAuthHeaders(),
-  });
+  const res = await authAwareFetch(
+    fetch,
+    `${BASE_URL}/reports/project/${projectId}/integration/guidance?t=${Date.now()}`,
+    {
+      headers: getAuthHeaders(),
+    },
+  );
   return handleResponse(res);
 };
 
-export async function downloadIntegrationReportApi(projectId, { snapshotId = null, format = "pdf", signal } = {}) {
+export async function downloadIntegrationReportApi(
+  projectId,
+  { snapshotId = null, format = "pdf", signal } = {},
+) {
   const query = new URLSearchParams({ format });
   if (snapshotId) query.set("snapshotId", snapshotId);
 
@@ -54,11 +70,14 @@ export async function downloadIntegrationReportApi(projectId, { snapshotId = nul
     if (response.status === 401) {
       await handleUnauthorizedResponse();
     }
-    throw new Error(data.message || `Could not export ${format.toUpperCase()} report.`);
+    throw new Error(
+      data.message || `Could not export ${format.toUpperCase()} report.`,
+    );
   }
 
   const blob = await response.blob();
-  if (signal?.aborted) throw new DOMException("Download cancelled", "AbortError");
+  if (signal?.aborted)
+    throw new DOMException("Download cancelled", "AbortError");
 
   const disposition = response.headers.get("Content-Disposition") || "";
   const candidate = disposition.match(/filename="([^"]+)"/)?.[1];

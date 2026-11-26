@@ -1,14 +1,23 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Zap, Clock, ShieldCheck, ChevronDown, Sparkles, RefreshCw, Layers } from "lucide-react";
+import {
+  Zap,
+  Clock,
+  ShieldCheck,
+  ChevronDown,
+  Sparkles,
+  RefreshCw,
+  Layers,
+} from "lucide-react";
+import {
+  API_BASE,
+  authAwareFetch,
+  getAccessToken,
+} from "../../lib/authSession.js";
 
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const BASE_URL = API_BASE;
 
 function getAuthHeaders() {
-  const token =
-    localStorage.getItem("token") ||
-    (localStorage.getItem("user")
-      ? JSON.parse(localStorage.getItem("user")).token
-      : null);
+  const token = getAccessToken();
   return {
     "Content-Type": "application/json",
     ...(token && { Authorization: `Bearer ${token}` }),
@@ -29,7 +38,7 @@ export default function GlobalAiTokenPill() {
 
   const fetchQuota = useCallback(async () => {
     try {
-      const res = await fetch(`${BASE_URL}/users/ai-quota`, {
+      const res = await authAwareFetch(fetch, `${BASE_URL}/users/ai-quota`, {
         headers: getAuthHeaders(),
       });
       if (res.ok) {
@@ -37,7 +46,9 @@ export default function GlobalAiTokenPill() {
         setQuota({
           dailyLimit: data.dailyLimit ?? 50,
           usedToday: data.usedToday ?? 0,
-          remainingRequests: data.remainingRequests ?? Math.max(0, (data.dailyLimit ?? 50) - (data.usedToday ?? 0)),
+          remainingRequests:
+            data.remainingRequests ??
+            Math.max(0, (data.dailyLimit ?? 50) - (data.usedToday ?? 0)),
           totalTokens: data.totalTokens ?? 0,
           usageDate: data.usageDate ?? null,
         });
@@ -78,7 +89,12 @@ export default function GlobalAiTokenPill() {
     };
   }, [isOpen]);
 
-  const usedPct = Math.min(100, Math.round(((quota.usedToday || 0) / Math.max(1, quota.dailyLimit || 50)) * 100));
+  const usedPct = Math.min(
+    100,
+    Math.round(
+      ((quota.usedToday || 0) / Math.max(1, quota.dailyLimit || 50)) * 100,
+    ),
+  );
   const isWarning = usedPct >= 75 && usedPct < 90;
   const isCritical = usedPct >= 90;
 
@@ -102,19 +118,25 @@ export default function GlobalAiTokenPill() {
             isCritical
               ? "text-[var(--ps-rose)]"
               : isWarning
-              ? "text-[var(--ps-amber)]"
-              : "text-[var(--ps-cobalt)]"
+                ? "text-[var(--ps-amber)]"
+                : "text-[var(--ps-cobalt)]"
           }
         />
         <span className="font-semibold text-[var(--ps-ink)] tabular-nums">
           {quota.remainingRequests}
-          <span className="text-[10px] text-[var(--ps-ink-muted)] font-normal font-sans ml-0.5">reqs</span>
+          <span className="text-[10px] text-[var(--ps-ink-muted)] font-normal font-sans ml-0.5">
+            reqs
+          </span>
         </span>
         <span className="text-[var(--ps-line-strong)]">|</span>
         <span className="text-[11px] text-[var(--ps-ink-muted)] font-sans hidden md:inline tabular-nums">
-          {(quota.totalTokens || 0).toLocaleString()} <span className="text-[10px]">tok</span>
+          {(quota.totalTokens || 0).toLocaleString()}{" "}
+          <span className="text-[10px]">tok</span>
         </span>
-        <ChevronDown size={11} className={`opacity-60 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+        <ChevronDown
+          size={11}
+          className={`opacity-60 transition-transform ${isOpen ? "rotate-180" : ""}`}
+        />
       </button>
 
       {/* Popover Card */}
@@ -152,10 +174,14 @@ export default function GlobalAiTokenPill() {
           {/* Daily Request Budget Gauge */}
           <div className="py-3 space-y-1.5 border-b border-[var(--color-border)]">
             <div className="flex items-center justify-between text-[11px]">
-              <span className="text-[var(--color-text-secondary)] font-medium">Daily Requests Budget</span>
+              <span className="text-[var(--color-text-secondary)] font-medium">
+                Daily Requests Budget
+              </span>
               <span className="font-mono font-bold text-[var(--color-text)]">
                 {quota.usedToday} / {quota.dailyLimit}{" "}
-                <span className="text-[10px] text-[var(--color-text-muted)]">({quota.remainingRequests} left)</span>
+                <span className="text-[10px] text-[var(--color-text-muted)]">
+                  ({quota.remainingRequests} left)
+                </span>
               </span>
             </div>
             <div className="w-full h-1.5 rounded-sm bg-[var(--ps-inset)] border border-[var(--ps-line)] overflow-hidden">
@@ -164,8 +190,8 @@ export default function GlobalAiTokenPill() {
                   isCritical
                     ? "bg-[var(--ps-rose)]"
                     : isWarning
-                    ? "bg-[var(--ps-amber)]"
-                    : "bg-[var(--ps-cobalt)]"
+                      ? "bg-[var(--ps-amber)]"
+                      : "bg-[var(--ps-cobalt)]"
                 }`}
                 style={{ width: `${usedPct}%` }}
               />
@@ -184,7 +210,8 @@ export default function GlobalAiTokenPill() {
               </span>
             </div>
             <p className="text-[10px] text-[var(--ps-ink-muted)] m-0 leading-relaxed">
-              Tokens are dynamically metered during AST branch synthesis, Supertest contract creation, and Playwright journeys.
+              Tokens are dynamically metered during AST branch synthesis,
+              Supertest contract creation, and Playwright journeys.
             </p>
           </div>
 
@@ -201,16 +228,28 @@ export default function GlobalAiTokenPill() {
             </div>
             <div className="grid grid-cols-3 gap-1.5 pt-1 text-center ps-mono text-[10px]">
               <div className="p-1.5 rounded-md bg-[var(--ps-inset)] border border-[var(--ps-line)]">
-                <span className="text-[var(--ps-ink-muted)] block text-[9px] font-sans">Unit</span>
-                <span className="text-[var(--ps-emerald)] font-medium">Active</span>
+                <span className="text-[var(--ps-ink-muted)] block text-[9px] font-sans">
+                  Unit
+                </span>
+                <span className="text-[var(--ps-emerald)] font-medium">
+                  Active
+                </span>
               </div>
               <div className="p-1.5 rounded-md bg-[var(--ps-inset)] border border-[var(--ps-line)]">
-                <span className="text-[var(--ps-ink-muted)] block text-[9px] font-sans">Integration</span>
-                <span className="text-[var(--ps-emerald)] font-medium">Active</span>
+                <span className="text-[var(--ps-ink-muted)] block text-[9px] font-sans">
+                  Integration
+                </span>
+                <span className="text-[var(--ps-emerald)] font-medium">
+                  Active
+                </span>
               </div>
               <div className="p-1.5 rounded-md bg-[var(--ps-inset)] border border-[var(--ps-line)]">
-                <span className="text-[var(--ps-ink-muted)] block text-[9px] font-sans">System</span>
-                <span className="text-[var(--ps-emerald)] font-medium">Active</span>
+                <span className="text-[var(--ps-ink-muted)] block text-[9px] font-sans">
+                  System
+                </span>
+                <span className="text-[var(--ps-emerald)] font-medium">
+                  Active
+                </span>
               </div>
             </div>
           </div>
@@ -219,4 +258,3 @@ export default function GlobalAiTokenPill() {
     </div>
   );
 }
-

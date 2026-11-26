@@ -4,6 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import prisma from '../config/prisma.js';
 import { withProjectGuard } from './projectAccess.service.js';
+import * as projectAccessModule from './projectAccess.service.js';
 import { publishProjectEvent,deliverProjectEvent } from './projectEvent.service.js';
 import { findEditableSnapshot,hashFileContent,projectFileError,resolveContainedProjectPath,MAX_PROJECT_FILE_BYTES } from './projectFileVersion.service.js';
 import { durableWrite,mutationJournalDirectory,mutationKey,recoverProjectMutationMarkers } from './projectMutationRecovery.service.js';
@@ -153,6 +154,7 @@ export const publishPreparedWorkspace = async ({projectId,snapshotId,userId,capa
         throw error;
     }
     if (committed.cleanup) {
+        projectAccessModule.invalidateProjectAccessCache?.(projectId);
         for (const target of committed.cleanup) await fs.rm(target,{recursive:true,force:true}).catch(()=>{});
         // Source, receipt, file versions and event are already committed. Slow
         // subscriber revalidation must not keep the Save button spinning.

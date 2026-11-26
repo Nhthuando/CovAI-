@@ -1,8 +1,11 @@
-import { editorAwareFetch } from './editorAwareRequest';
-import { normalizeChatScreenContext, chatErrorMessage } from './chatScreenContext';
-import { getAIModelHeaders } from './aiModel.service.js';
-import { handleUnauthorizedResponse } from "../lib/authSession.js";
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+import { editorAwareFetch } from "./editorAwareRequest";
+import {
+  normalizeChatScreenContext,
+  chatErrorMessage,
+} from "./chatScreenContext";
+import { getAIModelHeaders } from "./aiModel.service.js";
+import { API_BASE, handleUnauthorizedResponse } from "../lib/authSession.js";
+const BASE_URL = API_BASE;
 
 function getAuthHeaders() {
   const token = localStorage.getItem("token");
@@ -59,7 +62,9 @@ export async function deleteProjectApi(projectId) {
     return handleResponse(res);
   } catch (err) {
     if (err?.name === "AbortError") {
-      throw new Error("Project deletion timed out. Please check the server and try again.");
+      throw new Error(
+        "Project deletion timed out. Please check the server and try again.",
+      );
     }
     throw err;
   } finally {
@@ -139,19 +144,11 @@ export async function importGithubRepoApi(projectId, owner, repo) {
 }
 
 export async function getGithubRepositoriesApi() {
-  try {
-    const res = await editorAwareFetch(`${BASE_URL}/auth/github/repositories`, {
-      headers: getAuthHeaders(),
-      cache: "no-store",
-    });
-    if (!res.ok) {
-      return [];
-    }
-    return handleResponse(res);
-  } catch (err) {
-    console.warn("[getGithubRepositoriesApi]", err);
-    return [];
-  }
+  const res = await editorAwareFetch(`${BASE_URL}/auth/github/repositories`, {
+    headers: getAuthHeaders(),
+    cache: "no-store",
+  });
+  return handleResponse(res);
 }
 
 // --- In-Memory & Session Storage Cache for File Contents ---
@@ -176,7 +173,7 @@ export function getFileContentFromCache(projectId, filePath, snapshotId = "") {
       fileContentCache.set(key, parsed);
       return parsed;
     }
-  } catch (_) { }
+  } catch (_) {}
   return null;
 }
 
@@ -193,7 +190,7 @@ export function setFileContentToCache(
     if (typeof data.content === "string" && data.content.length < 500000) {
       sessionStorage.setItem(`${CACHE_PREFIX}${key}`, JSON.stringify(data));
     }
-  } catch (_) { }
+  } catch (_) {}
 }
 
 export function invalidateFileContentCache(projectId, filePath = null) {
@@ -208,7 +205,7 @@ export function invalidateFileContentCache(projectId, filePath = null) {
         if (k && k.startsWith(`${CACHE_PREFIX}${projectId}:`))
           sessionStorage.removeItem(k);
       }
-    } catch (_) { }
+    } catch (_) {}
     return;
   }
   const normPath = filePath.replace(/\\/g, "/");
@@ -231,7 +228,7 @@ export function invalidateFileContentCache(projectId, filePath = null) {
         sessionStorage.removeItem(k);
       }
     }
-  } catch (_) { }
+  } catch (_) {}
 }
 
 export async function getFileContentApi(projectId, filePath, options = {}) {
@@ -451,20 +448,47 @@ export async function sendAiChatMessageApi(
   context = {},
 ) {
   let res;
-  try { res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/chat`, {
-    method: "POST",
-    signal: AbortSignal.timeout(75000),
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ message, model, attachments, sessionId, ...context, clientRequestId: context.clientRequestId || crypto.randomUUID(), screenContext: normalizeChatScreenContext(context.screenContext) }),
-  }); } catch (error) {
-    const code = ['TimeoutError', 'AbortError'].includes(error.name) ? 'AI_REQUEST_TIMEOUT' : 'CHAT_CONNECTION_ERROR';
-    throw Object.assign(new Error(chatErrorMessage({ code }, message)), { code });
+  try {
+    res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/chat`, {
+      method: "POST",
+      signal: AbortSignal.timeout(75000),
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        message,
+        model,
+        attachments,
+        sessionId,
+        ...context,
+        clientRequestId: context.clientRequestId || crypto.randomUUID(),
+        screenContext: normalizeChatScreenContext(context.screenContext),
+      }),
+    });
+  } catch (error) {
+    const code = ["TimeoutError", "AbortError"].includes(error.name)
+      ? "AI_REQUEST_TIMEOUT"
+      : "CHAT_CONNECTION_ERROR";
+    throw Object.assign(new Error(chatErrorMessage({ code }, message)), {
+      code,
+    });
   }
   let result;
-  try { result = await handleResponse(res); }
-  catch (error) { throw Object.assign(new Error(chatErrorMessage(error, message)), { code: error.code, status: error.status, retryAt: error.retryAt, resetAt: error.resetAt }); }
-  if (result.data?.processing) throw Object.assign(new Error(chatErrorMessage({ code: 'CHAT_BUSY' }, message)), { code: 'CHAT_BUSY' });
-  if (typeof result.data?.reply !== 'string') throw new Error(chatErrorMessage({}, message));
+  try {
+    result = await handleResponse(res);
+  } catch (error) {
+    throw Object.assign(new Error(chatErrorMessage(error, message)), {
+      code: error.code,
+      status: error.status,
+      retryAt: error.retryAt,
+      resetAt: error.resetAt,
+    });
+  }
+  if (result.data?.processing)
+    throw Object.assign(
+      new Error(chatErrorMessage({ code: "CHAT_BUSY" }, message)),
+      { code: "CHAT_BUSY" },
+    );
+  if (typeof result.data?.reply !== "string")
+    throw new Error(chatErrorMessage({}, message));
   return result;
 }
 
@@ -525,9 +549,11 @@ export async function deleteChatSessionApi(projectId, sessionId) {
 
 const resolveSafeSnapshotId = (snapshotId) => {
   if (!snapshotId) return "";
-  if (typeof snapshotId === "object") return snapshotId.id || snapshotId.snapshotId || "";
+  if (typeof snapshotId === "object")
+    return snapshotId.id || snapshotId.snapshotId || "";
   const str = String(snapshotId).trim();
-  if (str === "undefined" || str === "null" || str === "[object Object]") return "";
+  if (str === "undefined" || str === "null" || str === "[object Object]")
+    return "";
   return str;
 };
 
@@ -558,11 +584,14 @@ export async function getProjectCcApi(projectId, snapshotId) {
 export async function buildCfgApi(projectId, snapshotId) {
   const cleanId = resolveSafeSnapshotId(snapshotId);
   const payload = cleanId ? { snapshotId: cleanId } : {};
-  const res = await editorAwareFetch(`${BASE_URL}/projects/${projectId}/cfg/build`, {
-    method: "POST",
-    headers: getAuthHeaders(),
-    body: JSON.stringify(payload),
-  });
+  const res = await editorAwareFetch(
+    `${BASE_URL}/projects/${projectId}/cfg/build`,
+    {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    },
+  );
   return handleResponse(res);
 }
 
@@ -646,7 +675,7 @@ export function generateSystemTestApi(
   snapshotId,
   executionMode = "full",
 ) {
-  return fetch(`${BASE_URL}/projects/${projectId}/ai-tests`, {
+  return editorAwareFetch(`${BASE_URL}/projects/${projectId}/ai-tests`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify({ snapshotId, mode: "PLAYWRIGHT_E2E", executionMode }),
@@ -718,7 +747,7 @@ export async function createProjectSnapshotApi(projectId, { label, message }) {
 }
 
 export async function activateProjectSnapshotApi(projectId, snapshotId) {
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/snapshots/${snapshotId}/activate`,
     {
       method: "POST",
@@ -768,7 +797,7 @@ export async function getProjectEventsApi(
   projectId,
   { after = 0, limit = 100 } = {},
 ) {
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/projects/${projectId}/events?after=${after}&limit=${limit}`,
     {
       headers: getAuthHeaders(),
