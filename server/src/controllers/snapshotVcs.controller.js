@@ -344,7 +344,10 @@ export const mergeBranch = async (req, res) => {
     const data = await SnapshotVcsService.mergeBranch(
       req.params.projectId,
       req.user.id,
-      input,
+      {
+        ...input,
+        dirtyPolicy: input.dirtyPolicy || input.dirtyStrategy,
+      },
     );
     return res.status(200).json({ success: true, data });
   } catch (error) {

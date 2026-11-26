@@ -121,7 +121,28 @@ export const resolveContainedProjectPath = async (snapshot, value, options = {})
     return { root, target: candidate, relativePath: canonicalPath };
 };
 
-export const resolveActiveProjectSnapshot = async (tx, projectId, preferredSnapshotId = null) => {
+export const VCS_SNAPSHOT_LEAN_SELECT = {
+    id: true,
+    projectId: true,
+    source: true,
+    storagePath: true,
+    rootDir: true,
+    commitSha: true,
+    casMaterialized: true,
+    versionNumber: true,
+    label: true,
+    commitMessage: true,
+    contentHash: true,
+    parentSnapshotId: true,
+    restoredFromSnapshotId: true,
+    vcsBranchId: true,
+    statsJson: true,
+    isPinned: true,
+    isAutoBackup: true,
+    createdAt: true,
+};
+
+export const resolveActiveProjectSnapshot = async (tx, projectId, preferredSnapshotId = null, { select } = {}) => {
     if (!projectId || !tx?.projectSnapshot) return null;
     let targetSnapshotId = preferredSnapshotId || null;
     if (!targetSnapshotId && tx.project) {
@@ -137,12 +158,14 @@ export const resolveActiveProjectSnapshot = async (tx, projectId, preferredSnaps
     if (targetSnapshotId) {
         const active = await tx.projectSnapshot.findFirst({
             where: { id: targetSnapshotId, projectId },
+            ...(select ? { select } : {}),
         });
         if (active?.rootDir) return active;
     }
     return tx.projectSnapshot.findFirst({
         where: { projectId },
         orderBy: { createdAt: 'desc' },
+        ...(select ? { select } : {}),
     });
 };
 

@@ -1,9 +1,11 @@
 import { GitService } from "../services/git.service.js";
+import { dispatchGitConsoleCommand } from "../services/gitCommandDispatcher.service.js";
 import { redactGitOutput } from "../services/gitCredentialHelper.service.js";
 import { ServiceError } from "../utils/serviceError.js";
 import {
   gitAiCommitSchema,
   gitCheckoutSchema,
+  gitCommandSchema,
   gitCommitActionSchema,
   gitCommitSchema,
   gitCreatePrSchema,
@@ -507,6 +509,26 @@ export const rebaseContinue = async (req, res) => {
   }
 };
 
+export const abortGitOperation = async (req, res) => {
+  try {
+    const { projectId } = parseInput(gitProjectOnlySchema, req.body);
+    const data = await GitService.abortOperation(projectId, req.user?.id);
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    return handleError(res, error, "Failed to abort Git operation");
+  }
+};
+
+export const continueGitOperation = async (req, res) => {
+  try {
+    const { projectId } = parseInput(gitProjectOnlySchema, req.body);
+    const data = await GitService.continueOperation(projectId, req.user?.id);
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    return handleError(res, error, "Failed to continue Git operation");
+  }
+};
+
 export const getConflicts = async (req, res) => {
   try {
     const { projectId } = parseInput(gitProjectOnlySchema, req.query);
@@ -828,27 +850,22 @@ export const getCommitChecks = async (req, res) => {
 
 export const handleGitCommand = async (req, res) => {
   try {
-    const { projectId, command, args } = req.body;
-    if (!projectId || !command) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Missing required parameters" });
-    }
-
-    const allowedCommands = ["status", "log", "diff", "branch"];
-    if (!allowedCommands.includes(command)) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Command not allowed" });
-    }
-
-    const result = await GitService.runGitCommand(
-      projectId,
-      command,
-      args || [],
-      req.user?.id,
+    const { projectId, input, command, args } = parseInput(
+      gitCommandSchema,
+      req.body,
     );
-    return res.status(200).json({ success: true, result });
+    const data = await dispatchGitConsoleCommand({
+      projectId,
+      userId: req.user?.id,
+      input,
+      command,
+      args,
+    });
+    return res.status(200).json({
+      success: true,
+      result: data.output,
+      data,
+    });
   } catch (error) {
     return handleError(res, error, "Failed to execute git command");
   }

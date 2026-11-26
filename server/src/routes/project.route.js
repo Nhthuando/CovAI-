@@ -1,3 +1,5 @@
+import { AUTH_PROVIDERS } from "../../../shared/versionControlMode.js";
+import { requireAuthProvider } from "../middlewares/requireAuthProvider.middleware.js";
 import { enforceProjectEndpointPolicy } from '../middlewares/projectEndpointPolicy.js';
 import express from "express";
 import { aiContextController } from "../controllers/aiContext.controller.js";
@@ -26,13 +28,19 @@ router.get("/:id", projectController.getProjectById);
 router.patch("/:id/status", projectController.updateProjectStatus);
 router.get("/:id/export", downloadProjectExport);
 router.get("/:id/snapshots", projectController.listSnapshots);
-router.post("/:id/snapshots", projectController.createSnapshot);
+router.post(
+  "/:id/snapshots",
+  requireAuthProvider(AUTH_PROVIDERS.EMAIL),
+  projectController.createSnapshot,
+);
 router.post(
   "/:id/snapshots/:snapshotId/activate",
+  requireAuthProvider(AUTH_PROVIDERS.EMAIL),
   projectController.activateSnapshot,
 );
 router.post(
   "/:id/snapshots/:snapshotId/restore",
+  requireAuthProvider(AUTH_PROVIDERS.EMAIL),
   projectController.restoreSnapshot,
 );
 router.get("/:id/structure-analysis", projectController.getStructureAnalysis);
@@ -93,7 +101,11 @@ router.post(
   "/:id/run-integration-tests",
   projectController.runIntegrationTests,
 );
-router.post("/:id/import-github", projectController.importGitHub);
+router.post(
+  "/:id/import-github",
+  requireAuthProvider(AUTH_PROVIDERS.GITHUB),
+  projectController.importGitHub,
+);
 router.post("/:id/ai-suggest", projectController.runAiSuggest);
 router.post("/:id/ai-tests", projectController.runAiTests);
 router.get("/:id/ai-context", aiContextController.settings);

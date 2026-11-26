@@ -51,6 +51,35 @@ export const VCS_IGNORED_PATH_PREFIXES = Object.freeze([
   "cypress/screenshots",
 ]);
 
+export const ALLOWED_ENV_TEMPLATE_FILES = new Set([
+  ".env.example",
+  ".env.sample",
+  ".env.template",
+  ".env.dist",
+]);
+
+const SOURCE_DOC_EXTENSIONS = new Set([
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".jsx",
+  ".ts",
+  ".mts",
+  ".cts",
+  ".tsx",
+  ".py",
+  ".go",
+  ".java",
+  ".rb",
+  ".php",
+  ".cs",
+  ".rs",
+  ".md",
+  ".css",
+  ".scss",
+  ".html",
+]);
+
 /**
  * Checks whether a single file or folder name is a secret/credential file
  * that must never be indexed into Snapshot CAS or auto-tracked.
@@ -59,11 +88,24 @@ export function isVcsSecretFileName(name) {
   if (typeof name !== "string" || !name) return false;
   const trimmed = name.trim();
   if (!trimmed) return false;
-  return (
-    /^\.env(?:\.|$)/i.test(trimmed) ||
-    /(?:credential|service[-_]?account|secret|private[-_]?key)/i.test(trimmed) ||
-    /\.(?:pem|key|p12)$/i.test(trimmed)
-  );
+  const lower = trimmed.toLowerCase();
+
+  if (ALLOWED_ENV_TEMPLATE_FILES.has(lower)) {
+    return false;
+  }
+  if (lower === ".env" || lower.startsWith(".env.")) {
+    return true;
+  }
+  if (/\.(?:pem|key|p12|pfx|jks|keystore)$/i.test(lower)) {
+    return true;
+  }
+
+  const dotIdx = lower.lastIndexOf(".");
+  const ext = dotIdx >= 0 ? lower.slice(dotIdx) : "";
+  if (/(?:credential|service[-_]?account|secret|private[-_]?key)/i.test(lower)) {
+    return !SOURCE_DOC_EXTENSIONS.has(ext);
+  }
+  return false;
 }
 
 /**

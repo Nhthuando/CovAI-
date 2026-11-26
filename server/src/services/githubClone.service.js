@@ -55,10 +55,14 @@ export class GitHubCloneService {
     fs.mkdirSync(repoDir, { recursive: true });
 
     try {
-      await execGit(repoDir, ["clone", cleanUrl, "."], {
-        githubToken: accessToken,
-        isNetwork: true,
-      });
+      await execGit(
+        repoDir,
+        ["clone", "-c", "core.autocrlf=false", "-c", "core.eol=lf", cleanUrl, "."],
+        {
+          githubToken: accessToken,
+          isNetwork: true,
+        },
+      );
 
       const { stdout: commitSha } = await execGit(repoDir, ["rev-parse", "HEAD"]);
 

@@ -1,6 +1,48 @@
 import prisma from '../config/prisma.js';
 import { capabilitiesForRole } from '../../../shared/projectAccess.js';
 import { ServiceError } from '../utils/serviceError.js';
+import {
+    getProjectRequestContext,
+    invalidateProjectRequestContext,
+    updateProjectRequestContext,
+} from './vcsRequestContext.service.js';
+
+const PROJECT_ACCESS_SELECT = {
+    id: true,
+    ownerId: true,
+    name: true,
+    description: true,
+    repoUrl: true,
+    defaultBranch: true,
+    rootDir: true,
+    jestConfigPath: true,
+    storageBasePath: true,
+    hasJest: true,
+    jestCommand: true,
+    hasVitest: true,
+    vitestCommand: true,
+    vitestConfigPath: true,
+    hasPlaywright: true,
+    playwrightBrowsers: true,
+    playwrightCommand: true,
+    playwrightConfigPath: true,
+    playwrightTestDir: true,
+    hasCypress: true,
+    cypressCommand: true,
+    cypressConfigPath: true,
+    cypressTestDir: true,
+    cypressVersion: true,
+    accessRevision: true,
+    eventSequence: true,
+    workspaceRevision: true,
+    activeSnapshotId: true,
+    activeVcsBranchId: true,
+    isPinned: true,
+    lifecycleStatus: true,
+    lifecycleUpdatedAt: true,
+    createdAt: true,
+    updatedAt: true,
+};
 
 const failure = (message, status, code) => new ServiceError(message, status, code);
 const READ_ACCESS_CACHE_TTL_MS = 3000;
@@ -15,6 +57,7 @@ export function getProjectInvalidationVersion(projectId = null) {
 }
 
 export function invalidateProjectAccessCache(projectId = null) {
+    invalidateProjectRequestContext(projectId);
     if (!projectId) {
         globalInvalidationVersion += 1;
         readAccessCache.clear();
@@ -37,6 +80,26 @@ export function membershipWhere(userId) {
 export async function resolveProjectAccess({ projectId, userId, capability, db = prisma }) {
     if (!userId) throw failure('Authentication required', 401, 'AUTH_REQUIRED');
     if (!projectId || !capability) throw failure('Resource authorization context required', 400, 'ACCESS_CONTEXT_REQUIRED');
+
+    const reqCtx = db === prisma ? getProjectRequestContext() : null;
+    if (
+        reqCtx &&
+        reqCtx.projectId === projectId &&
+        reqCtx.userId === userId &&
+        reqCtx.project &&
+        Array.isArray(reqCtx.capabilities)
+    ) {
+        if (!reqCtx.capabilities.includes(capability)) {
+            throw failure('Your role does not allow this action', 403, 'CAPABILITY_DENIED');
+        }
+        return {
+            project: reqCtx.project,
+            role: reqCtx.role,
+            disciplineRole: reqCtx.disciplineRole ?? null,
+            capabilities: reqCtx.capabilities,
+        };
+    }
+
     const canCache = db === prisma && process.env.NODE_ENV !== 'test' && capability === 'project.read';
     const cacheKey = canCache ? `proj:${projectId}:${userId}:${capability}` : null;
     if (cacheKey) {
@@ -46,12 +109,33 @@ export async function resolveProjectAccess({ projectId, userId, capability, db =
         if (pending) return pending;
     }
     const load = async () => {
-        const project = await db.project.findFirst({ where: { id: projectId, ...membershipWhere(userId) } });
-        if (!project) throw failure('Project not found', 404, 'PROJECT_NOT_FOUND');
+        const rawProject = await db.project.findFirst({
+            where: { id: projectId, ...membershipWhere(userId) },
+            select: {
+                ...PROJECT_ACCESS_SELECT,
+                members: {
+                    where: { userId },
+                    select: { role: true, disciplineRole: true },
+                    take: 1,
+                },
+            },
+        });
+        if (!rawProject) throw failure('Project not found', 404, 'PROJECT_NOT_FOUND');
+        let project = rawProject;
+        let inlineMember = null;
+        let hasInlineMembers = false;
+        if (Array.isArray(rawProject.members)) {
+            hasInlineMembers = true;
+            inlineMember = rawProject.members[0] || null;
+            const { members: _ignoredMembers, ...cleanProject } = rawProject;
+            project = cleanProject;
+        }
         let role = 'OWNER';
         let disciplineRole = 'PM';
         if (project.ownerId !== userId) {
-            const member = await db.projectMember.findUnique({ where: { projectId_userId: { projectId, userId } } });
+            const member = hasInlineMembers
+                ? inlineMember
+                : await db.projectMember.findUnique({ where: { projectId_userId: { projectId, userId } } });
             if (!member) throw failure('Project not found', 404, 'PROJECT_NOT_FOUND');
             role = member.role;
             disciplineRole = member.disciplineRole ?? null;
@@ -59,6 +143,14 @@ export async function resolveProjectAccess({ projectId, userId, capability, db =
         const capabilities = capabilitiesForRole(role);
         if (!capabilities.includes(capability)) throw failure('Your role does not allow this action', 403, 'CAPABILITY_DENIED');
         const value = { project, role, disciplineRole, capabilities };
+        if (
+            db === prisma &&
+            reqCtx &&
+            reqCtx.projectId === projectId &&
+            reqCtx.userId === userId
+        ) {
+            updateProjectRequestContext({ project, role, disciplineRole, capabilities });
+        }
         if (cacheKey) {
             if (readAccessCache.size > 500) readAccessCache.clear();
             readAccessCache.set(cacheKey, { value, at: Date.now() });

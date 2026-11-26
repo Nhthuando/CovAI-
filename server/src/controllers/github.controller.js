@@ -82,7 +82,7 @@ async function finalizeGitHubImportSnapshot({ projectId, ownerId, cloneResult, r
     .update({
       where: { id: projectId },
       data: {
-        repoUrl,
+        ...(repoUrl ? { repoUrl } : {}),
         defaultBranch: cloneResult.defaultBranch || "main",
         activeSnapshotId: snapshot.id,
         workspaceRevision: { increment: 1 },
@@ -169,21 +169,41 @@ export const cloneGitHubRepositoryByUrl = async (req, res) => {
       });
     }
 
+    const isEmailSession = req.user?.authProvider === "email";
+    if (isEmailSession) {
+      for (const candidateDir of new Set([
+        cloneResult.localPath,
+        resolveProjectRoot(cloneResult.localPath),
+      ].filter(Boolean))) {
+        const gitDir = path.join(candidateDir, ".git");
+        if (fs.existsSync(gitDir)) {
+          try {
+            fs.rmSync(gitDir, { recursive: true, force: true });
+          } catch (cleanupErr) {
+            console.warn(
+              "[GitHub Import URL] Failed removing .git from email snapshot workspace:",
+              cleanupErr?.message || cleanupErr,
+            );
+          }
+        }
+      }
+    }
+
     const { snapshot, testingFrameworks, reused } = await finalizeGitHubImportSnapshot({
       projectId,
       ownerId: req.user?.id,
       cloneResult,
-      repoUrl: url,
+      repoUrl: isEmailSession ? null : url,
     });
 
-    if (!reused && req.user?.authProvider === "email") {
+    if (!reused && isEmailSession) {
       try {
         const { ensureProjectCasBaseline } = await import("../services/snapshotCas.service.js");
         await ensureProjectCasBaseline({
           projectId,
           snapshotId: snapshot.id,
           userId: req.user?.id,
-          rootDir: cloneResult.localPath,
+          rootDir: snapshot.rootDir || cloneResult.localPath,
         });
       } catch (casErr) {
         console.warn("[GitHub Import URL] CAS baseline warning:", casErr?.message || casErr);

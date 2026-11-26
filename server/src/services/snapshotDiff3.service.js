@@ -195,7 +195,8 @@ export function buildDiffPairResult({
 }
 
 /**
- * Finds the Lowest Common Ancestor (LCA) between two snapshots along `parentSnapshotId`.
+ * Finds the Lowest Common Ancestor (LCA) between two snapshots along the
+ * Snapshot DAG (`parentSnapshotId` and `statsJson.secondParentSnapshotId`).
  */
 export function findLowestCommonAncestor(
   snapshotsById,
@@ -205,22 +206,119 @@ export function findLowestCommonAncestor(
   if (!oursSnapshotId || !theirsSnapshotId) return null;
   if (oursSnapshotId === theirsSnapshotId) return oursSnapshotId;
 
+  const getParents = (snapId) => {
+    const snap = snapshotsById.get(snapId);
+    if (!snap) return [];
+    const parents = [];
+    if (snap.parentSnapshotId) parents.push(snap.parentSnapshotId);
+    const secondParent = snap.statsJson?.secondParentSnapshotId;
+    if (secondParent && secondParent !== snap.parentSnapshotId) {
+      parents.push(secondParent);
+    }
+    return parents;
+  };
+
   const oursAncestors = new Set();
-  let cur = oursSnapshotId;
-  while (cur && !oursAncestors.has(cur)) {
+  const oursQueue = [oursSnapshotId];
+  while (oursQueue.length > 0) {
+    const cur = oursQueue.shift();
+    if (!cur || oursAncestors.has(cur)) continue;
     oursAncestors.add(cur);
-    cur = snapshotsById.get(cur)?.parentSnapshotId || null;
+    for (const parentId of getParents(cur)) {
+      if (!oursAncestors.has(parentId)) {
+        oursQueue.push(parentId);
+      }
+    }
   }
 
   const visitedTheirs = new Set();
-  cur = theirsSnapshotId;
-  while (cur && !visitedTheirs.has(cur)) {
+  const theirsQueue = [theirsSnapshotId];
+  while (theirsQueue.length > 0) {
+    const cur = theirsQueue.shift();
+    if (!cur || visitedTheirs.has(cur)) continue;
     if (oursAncestors.has(cur)) return cur;
     visitedTheirs.add(cur);
-    cur = snapshotsById.get(cur)?.parentSnapshotId || null;
+    for (const parentId of getParents(cur)) {
+      if (!visitedTheirs.has(parentId)) {
+        theirsQueue.push(parentId);
+      }
+    }
   }
 
   return null;
+}
+
+/**
+ * Resolves standard conflict marker blocks (`<<<<<<<`, `|||||||`, `=======`, `>>>>>>>`)
+ * by keeping non-conflicting lines once and combining ours + theirs inside each
+ * conflict hunk only (avoiding full-file duplication).
+ */
+export function resolveConflictMarkersKeepBoth(
+  conflictText = "",
+  { ours = null, theirs = null } = {},
+) {
+  const raw = typeof conflictText === "string" ? conflictText : "";
+  if (raw) {
+    const eol = raw.includes("\r\n") ? "\r\n" : "\n";
+    const hadTrailingNewline = /\r?\n$/.test(raw);
+    const normalized = raw.replace(/\r\n/g, "\n");
+    const lines = normalized.split("\n");
+    if (hadTrailingNewline && lines[lines.length - 1] === "") {
+      lines.pop();
+    }
+
+    const out = [];
+    let state = "normal";
+    let oursBuf = [];
+    let theirsBuf = [];
+    let resolvedBlocks = 0;
+
+    for (const line of lines) {
+      if (state === "normal") {
+        if (/^<{7}(?:\s|$)/.test(line)) {
+          state = "ours";
+          oursBuf = [];
+          theirsBuf = [];
+        } else {
+          out.push(line);
+        }
+      } else if (state === "ours") {
+        if (/^\|{7}(?:\s|$)/.test(line)) {
+          state = "base";
+        } else if (/^={7}\s*$/.test(line)) {
+          state = "theirs";
+        } else {
+          oursBuf.push(line);
+        }
+      } else if (state === "base") {
+        if (/^={7}\s*$/.test(line)) {
+          state = "theirs";
+        }
+      } else if (state === "theirs") {
+        if (/^>{7}(?:\s|$)/.test(line)) {
+          out.push(...oursBuf, ...theirsBuf);
+          resolvedBlocks += 1;
+          state = "normal";
+          oursBuf = [];
+          theirsBuf = [];
+        } else {
+          theirsBuf.push(line);
+        }
+      }
+    }
+
+    if (resolvedBlocks > 0 && state === "normal") {
+      const joined = out.join(eol);
+      return hadTrailingNewline && joined.length > 0 ? `${joined}${eol}` : joined;
+    }
+  }
+
+  // Fallback for markerless add/add binary-boundary text conflicts
+  if (ours !== null && theirs !== null) {
+    if (ours === theirs) return ours;
+    return `${ours}${ours.endsWith("\n") ? "" : "\n"}${theirs}`;
+  }
+  return ours ?? theirs ?? "";
 }
 
 function splitLinesPreservingNewlines(text) {

@@ -45,6 +45,8 @@ import {
   rebaseAbort,
   rebaseBranch,
   rebaseContinue,
+  abortGitOperation,
+  continueGitOperation,
   renameBranch,
   resetRepo,
   resolveConflict,
@@ -113,6 +115,8 @@ router.post("/merge/continue", mergeContinue);
 router.post("/rebase", rebaseBranch);
 router.post("/rebase/abort", rebaseAbort);
 router.post("/rebase/continue", rebaseContinue);
+router.post("/operation/abort", abortGitOperation);
+router.post("/operation/continue", continueGitOperation);
 router.get("/conflicts", getConflicts);
 router.post("/conflicts/resolve", resolveConflict);
 

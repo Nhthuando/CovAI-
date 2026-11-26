@@ -111,6 +111,28 @@ export const snapshotMergeBranchSchema = z.object({
   sourceBranchId: z.string().trim().min(1).max(128),
   targetBranchId: z.string().trim().max(128).optional(),
   message: z.string().max(SNAPSHOT_VCS_LIMITS.MAX_MESSAGE_LENGTH).optional(),
+  dirtyPolicy: z
+    .enum([
+      "AUTO_BACKUP",
+      "DISCARD_DIRTY",
+      "FAIL_IF_DIRTY",
+      "DISCARD",
+      "auto_backup",
+      "discard",
+      "fail",
+    ])
+    .optional(),
+  dirtyStrategy: z
+    .enum([
+      "AUTO_BACKUP",
+      "DISCARD_DIRTY",
+      "FAIL_IF_DIRTY",
+      "DISCARD",
+      "auto_backup",
+      "discard",
+      "fail",
+    ])
+    .optional(),
   resolutions: z
     .record(
       z.string(),

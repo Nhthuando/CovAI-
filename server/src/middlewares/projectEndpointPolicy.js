@@ -1,7 +1,11 @@
 import { editorEnabled } from '../../../shared/editorProtocol.js';
 import { editorSnapshotStatus, checkpointEditorDocuments } from '../services/projectEditorCheckpoint.service.js';
 import { withEditorCheckpoint } from '../services/projectEditorRequestContext.service.js';
-import { editorDocumentsFor } from '../services/projectEditorBridge.service.js';
+import {
+    EDITOR_DOC_REVISION_SELECT,
+    editorDocumentsFor,
+} from '../services/projectEditorBridge.service.js';
+import { runWithProjectRequestContext } from '../services/vcsRequestContext.service.js';
 import prisma from "../config/prisma.js";
 import { resolveProjectAccess, resolveSnapshotAccess } from "../services/projectAccess.service.js";
 import { ServiceError } from "../utils/serviceError.js";
@@ -74,7 +78,7 @@ export const projectEndpointRule = (family, method, path, input = {}) => {
         if (family === "ai-suggestions" && parts[0] === "refresh") projectId = cleanId(parts[1]) || projectId;
         capability = read ? "project.read" : "ai.use";
     } else if (family === "git") {
-        if (read) capability = "project.read";
+        if (read || (method === "POST" && path === "/command")) capability = "project.read";
         else if (path === "/ai-commit-message") capability = "ai.use";
         else if (
             /^\/(?:stage|unstage|stage-hunk|unstage-hunk|revert-hunk|discard|commit|undo-commit|gitignore|conflicts\/resolve)$/.test(path) ||
@@ -147,11 +151,35 @@ export const enforceProjectEndpointPolicy = (family, dependencies = {}) => async
             // redundant prefetch that can diverge from the actual resolver.
             req.projectAccess = await snapshotAccess({ ...rule, userId: req.user.id, db });
         } else req.projectAccess = await projectAccess({ ...rule, userId: req.user.id, db });
+        if (req.projectAccess?.project?.id) {
+            req.projectContext = {
+                projectId: req.projectAccess.project.id,
+                userId: req.user.id,
+                user: req.user,
+                project: req.projectAccess.project,
+                role: req.projectAccess.role,
+                disciplineRole: req.projectAccess.disciplineRole ?? null,
+                capabilities: req.projectAccess.capabilities,
+                activeSnapshot: req.projectAccess.snapshot || null,
+                activeBranch: null,
+            };
+        }
+        const continueWithContext = () =>
+            req.projectContext
+                ? runWithProjectRequestContext(req.projectContext, () => next())
+                : next();
         if (editorEnabled() && !["GET", "HEAD"].includes(req.method)) {
             const projectId = req.projectAccess.project.id;
-            if (family === 'git' || family === 'snapshot-vcs' || /upload-zip|import-github|\/restore$|\/snapshots$/.test(req.path)) {
+            const cleanReqPath = "/" + String(req.path || "").split("/").filter(Boolean).join("/");
+            const skipDraftConflictCheck =
+                (family === 'git' && ['/command', '/stage', '/unstage'].includes(cleanReqPath)) ||
+                (family === 'snapshot-vcs' && /^(?:\/[^/]+)?\/(?:stage|unstage)$/.test(cleanReqPath));
+            if (
+                !skipDraftConflictCheck &&
+                (family === 'git' || family === 'snapshot-vcs' || /upload-zip|import-github|\/restore$|\/snapshots$/.test(req.path))
+            ) {
                 if (rule.capability !== 'ai.use') {
-                    const rows = await editorDocumentsFor(db, { projectId, active: true });
+                    const rows = await editorDocumentsFor(db, { projectId, active: true }, EDITOR_DOC_REVISION_SELECT);
                     if (rows.some(row => row.revision !== row.checkpointRevision)) throw new ServiceError('Save shared changes before changing the workspace or Git state.',409,'EDITOR_DRAFT_CONFLICT');
                 }
             }
@@ -161,11 +189,11 @@ export const enforceProjectEndpointPolicy = (family, dependencies = {}) => async
                     const state = await editorSnapshotStatus({projectId,snapshotId,userId:req.user.id,db});
                     const documents = state.documents.filter(doc=>doc.dirty);
                     const checkpoint = documents.length ? await checkpointEditorDocuments({projectId,snapshotId,userId:req.user.id,db,documents,expectedWorkspaceRevision:state.workspaceRevision}) : state;
-                    return withEditorCheckpoint(checkpoint.workspaceRevision,()=>next());
+                    return withEditorCheckpoint(checkpoint.workspaceRevision, continueWithContext);
                 }
             }
         }
-        return next();
+        return continueWithContext();
     } catch (error) {
         return res.status(error.statusCode || 500).json({ success: false, code: error.code || "PROJECT_POLICY_ERROR", message: error.statusCode ? error.message : "Project access could not be verified" });
     }

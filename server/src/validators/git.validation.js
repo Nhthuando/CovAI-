@@ -207,3 +207,14 @@ export const gitCreatePrSchema = z.object({
   base: z.string().trim().min(1).max(GIT_LIMITS.MAX_BRANCH_NAME).default("main"),
   draft: z.boolean().optional(),
 });
+
+export const gitCommandSchema = z
+  .object({
+    projectId: nonEmptyId,
+    input: z.string().trim().min(1).max(1000).optional(),
+    command: z.string().trim().min(1).max(120).optional(),
+    args: z.array(z.string().max(400)).max(25).optional(),
+  })
+  .refine((value) => Boolean(value.input || value.command), {
+    message: "Git command input is required",
+  });

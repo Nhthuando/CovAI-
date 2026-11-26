@@ -5,8 +5,15 @@ import { createTwoFilesPatch } from "diff";
 import prisma from "../config/prisma.js";
 import { ServiceError } from "../utils/serviceError.js";
 import { snapshotWorkspaceRoot } from "../utils/snapshotWorkspace.js";
-import { resolveProjectAccess, membershipWhere } from "./projectAccess.service.js";
-import { resolveActiveProjectSnapshot } from "./projectFileVersion.service.js";
+import { invalidateProjectAccessCache, resolveProjectAccess } from "./projectAccess.service.js";
+import {
+  resolveActiveProjectSnapshot,
+  VCS_SNAPSHOT_LEAN_SELECT,
+} from "./projectFileVersion.service.js";
+import {
+  getProjectRequestContext,
+  updateProjectRequestContext,
+} from "./vcsRequestContext.service.js";
 import { withPreparedProjectWorkspace } from "./projectWorkspacePreparation.service.js";
 import {
   deferPreparedCommit,
@@ -18,6 +25,7 @@ import { checkStaleGitIndexLock, withProjectVcsLock } from "./vcsLock.service.js
 import {
   ensureCovaiGitExcludes,
   execGit,
+  invalidateGitExcludeCache,
   normalizeCleanGithubUrl,
   redactGitOutput,
   resolveActingUserGithubToken,
@@ -37,6 +45,7 @@ import {
 import { applyHunkAction } from "./gitHunkPatch.service.js";
 import { GitHubPlatformService } from "./githubPlatform.service.js";
 import { generateGitCommitMessage } from "./gitAiCommit.service.js";
+import { resolveConflictMarkersKeepBoth } from "./snapshotDiff3.service.js";
 import {
   GIT_LIMITS,
   GIT_REPO_OPERATION_STATE,
@@ -44,7 +53,25 @@ import {
   validateGitBranchName,
   validateGitTagName,
 } from "../../../shared/gitProtocol.js";
-import { isVcsIgnoredRelativePath } from "../../../shared/versionControlMode.js";
+import {
+  isVcsIgnoredRelativePath,
+  isVcsSecretFileName,
+} from "../../../shared/versionControlMode.js";
+
+const ensuredGitReposCache = new Map();
+
+export function invalidateGitRepoCache(rootDir = null) {
+  invalidateGitExcludeCache(rootDir);
+  if (!rootDir) {
+    ensuredGitReposCache.clear();
+    return;
+  }
+  ensuredGitReposCache.delete(path.resolve(rootDir));
+}
+
+const USE_PREPARED_GIT_WORKSPACE = () =>
+  process.env.COVAI_GIT_PREPARED_WORKSPACE === "true" ||
+  process.env.COLLABORATION_INTEGRATION === "true";
 
 const EMPTY_TREE_OID = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const EXEC_OPTION_KEYS = new Set([
@@ -173,26 +200,12 @@ export class GitService {
       return active.repo;
     }
 
-    await resolveProjectAccess({ projectId, userId, capability: "project.read" });
-    const project = await prisma.project.findFirst({
-      where: {
-        id: projectId,
-        ...membershipWhere(userId),
-      },
-      select: {
-        id: true,
-        name: true,
-        ownerId: true,
-        repoUrl: true,
-        defaultBranch: true,
-        activeSnapshotId: true,
-        workspaceRevision: true,
-        owner: {
-          select: { id: true, name: true, email: true, githubLogin: true },
-        },
-      },
+    const access = await resolveProjectAccess({
+      projectId,
+      userId,
+      capability: "project.read",
     });
-
+    const project = access.project;
     if (!project) {
       throw new ServiceError(
         "Project not found or you don't have permission",
@@ -200,7 +213,24 @@ export class GitService {
       );
     }
 
-    const snapshot = await resolveActiveProjectSnapshot(prisma, projectId);
+    const reqCtx = getProjectRequestContext();
+    let snapshot =
+      reqCtx?.projectId === projectId && reqCtx.activeSnapshot?.rootDir
+        ? reqCtx.activeSnapshot
+        : null;
+
+    if (!snapshot) {
+      snapshot = await resolveActiveProjectSnapshot(
+        prisma,
+        projectId,
+        project.activeSnapshotId,
+        { select: VCS_SNAPSHOT_LEAN_SELECT },
+      );
+      if (snapshot && reqCtx?.projectId === projectId) {
+        updateProjectRequestContext({ activeSnapshot: snapshot });
+      }
+    }
+
     if (!snapshot || !snapshot.rootDir) {
       throw new ServiceError(
         "Project snapshot not ready or not extracted yet",
@@ -307,8 +337,56 @@ export class GitService {
   }
 
   static async _recordSnapshotHeadSync(rootDir, projectId, snapshotId, statusData) {
-    if (!preparedGit.getStore()) return;
-    const headOid = await this._hasHeadCommit(rootDir);
+    const active = preparedGit.getStore();
+    if (!active) return;
+
+    const headOid = statusData?.headOid || (await this._hasHeadCommit(rootDir));
+
+    if (active.isDirect) {
+      const dbWrites = [];
+      const prevCommitSha = active.repo?.snapshot?.commitSha || null;
+      const headChanged = Boolean(headOid && snapshotId && headOid !== prevCommitSha);
+
+      if (headChanged) {
+        dbWrites.push(
+          prisma.projectSnapshot.update({
+            where: { id: snapshotId },
+            data: { commitSha: headOid },
+            select: { id: true },
+          }),
+        );
+      }
+
+      if (active.workingTreeChanging) {
+        dbWrites.push(
+          prisma.project.update({
+            where: { id: projectId },
+            data: { workspaceRevision: { increment: 1 } },
+            select: { workspaceRevision: true },
+          }),
+        );
+      }
+
+      if (dbWrites.length > 0) {
+        await Promise.all(dbWrites);
+      }
+
+      if (headChanged && active.repo?.snapshot) {
+        active.repo.snapshot.commitSha = headOid;
+        updateProjectRequestContext({ activeSnapshot: active.repo.snapshot });
+      }
+      if (active.workingTreeChanging || headChanged) {
+        clearProjectTreeCache();
+        invalidateProjectAccessCache(projectId);
+      }
+
+      emitGitTransport(projectId, GIT_SOCKET_EVENTS.STATUS_UPDATED, {
+        projectId,
+        actorId: active.userId,
+        ...summarizeHeadChange(statusData),
+      });
+      return;
+    }
 
     await stagePreparedPublication(async (tx) => {
       if (headOid && snapshotId) {
@@ -324,7 +402,7 @@ export class GitService {
       await deliverScopedProjectTransport({
         projectId,
         event: GIT_SOCKET_EVENTS.STATUS_UPDATED,
-        payload: { projectId, ...summarizeHeadChange(statusData) },
+        payload: { projectId, actorId: active.userId, ...summarizeHeadChange(statusData) },
       });
     });
   }
@@ -335,36 +413,71 @@ export class GitService {
   static async ensureGitRepo(projectId, userId, options = {}) {
     const { rootDir, project, snapshot } = await this.getRepoPath(projectId, userId);
     const gitDir = path.join(rootDir, ".git");
+    const cacheKey = path.resolve(rootDir);
+    const gitExists = fs.existsSync(gitDir);
+
+    if (gitExists && !options.createGitignore && !options.createInitialCommit) {
+      const cached = ensuredGitReposCache.get(cacheKey);
+      if (
+        cached &&
+        cached.userId === userId &&
+        cached.repoUrl === (project.repoUrl || null)
+      ) {
+        ensureCovaiGitExcludes(rootDir);
+        return { rootDir, project, snapshot };
+      }
+    }
+
     const defaultBranch = branchName(options.defaultBranch || project.defaultBranch || "main");
     const author = await resolveGitAuthorIdentity(userId);
 
-    if (!fs.existsSync(gitDir)) {
+    if (!gitExists) {
+      invalidateGitRepoCache(rootDir);
       try {
         await this.runCommand(rootDir, ["init", "-b", defaultBranch]);
       } catch {
         await this.runCommand(rootDir, ["init"]);
       }
 
-      await this.runCommand(rootDir, ["config", "user.name", author.name]);
-      await this.runCommand(rootDir, ["config", "user.email", author.email]);
-      await this.runCommand(rootDir, ["config", "commit.gpgsign", "false"]);
-      await this.runCommand(rootDir, ["config", "core.autocrlf", "false"]);
-      await this.runCommand(rootDir, ["config", "core.quotepath", "false"]);
+      const initialConfigEntries = [
+        ["user.name", author.name],
+        ["user.email", author.email],
+        ["commit.gpgsign", "false"],
+        ["core.autocrlf", "false"],
+        ["core.quotepath", "false"],
+      ];
+      for (const [configKey, configVal] of initialConfigEntries) {
+        await this.runCommand(rootDir, ["config", configKey, configVal]);
+      }
 
       if (project.repoUrl) {
         try {
           const { cleanUrl } = normalizeCleanGithubUrl(project.repoUrl);
           await this.runCommand(rootDir, ["remote", "add", "origin", cleanUrl]);
-        } catch {
-          // Non-fatal if repoUrl is malformed
+        } catch (remoteErr) {
+          console.warn(
+            "[GitService] Skipping invalid repository URL during git init:",
+            remoteErr?.message || remoteErr,
+          );
         }
       }
     } else {
-      await this.runCommand(rootDir, ["config", "user.name", author.name]).catch(() => {});
-      await this.runCommand(rootDir, ["config", "user.email", author.email]).catch(() => {});
-      await this.runCommand(rootDir, ["config", "commit.gpgsign", "false"]).catch(() => {});
-      await this.runCommand(rootDir, ["config", "core.autocrlf", "false"]).catch(() => {});
-      await this.runCommand(rootDir, ["config", "core.quotepath", "false"]).catch(() => {});
+      const syncConfigEntries = [
+        ["user.name", author.name],
+        ["user.email", author.email],
+        ["commit.gpgsign", "false"],
+        ["core.quotepath", "false"],
+      ];
+      for (const [configKey, configVal] of syncConfigEntries) {
+        try {
+          await this.runCommand(rootDir, ["config", configKey, configVal]);
+        } catch (configErr) {
+          console.warn(
+            `[GitService] Non-fatal git config sync failed (${configKey}):`,
+            configErr?.message || configErr,
+          );
+        }
+      }
 
       try {
         const { stdout: existingOrigin } = await this.runCommand(rootDir, [
@@ -379,12 +492,16 @@ export class GitService {
           }
           if (!project.repoUrl) {
             project.repoUrl = webUrl;
-            await stagePreparedPublication((tx) =>
+            const persistRemote = (tx) =>
               tx.project.update({
                 where: { id: projectId },
                 data: { repoUrl: webUrl },
-              }),
-            );
+              });
+            if (preparedGit.getStore()?.isDirect) {
+              await persistRemote(prisma);
+            } else {
+              await stagePreparedPublication(persistRemote);
+            }
           }
         }
       } catch {
@@ -410,6 +527,9 @@ export class GitService {
             "node_modules/",
             ".env",
             ".env.*",
+            "!.env.example",
+            "!.env.sample",
+            "!.env.template",
             "coverage/",
             "dist/",
             "build/",
@@ -433,6 +553,12 @@ export class GitService {
       }
     }
 
+    if (ensuredGitReposCache.size > 1000) ensuredGitReposCache.clear();
+    ensuredGitReposCache.set(cacheKey, {
+      userId,
+      repoUrl: project.repoUrl || null,
+    });
+
     return { rootDir, project, snapshot };
   }
 
@@ -440,6 +566,8 @@ export class GitService {
    * Explicitly initializes a Git repository (works for ZIP projects opened by GitHub users).
    */
   static async initRepo(projectId, userId, options = {}) {
+    const { rootDir: targetRoot } = await this.getRepoPath(projectId, userId);
+    invalidateGitRepoCache(targetRoot);
     const { project, rootDir, snapshot } = await this.ensureGitRepo(
       projectId,
       userId,
@@ -491,6 +619,7 @@ export class GitService {
       defaultBranch: targetBranch,
       createGitignore: true,
     });
+    invalidateGitRepoCache(rootDir);
     project.repoUrl = repoWebUrl;
     project.defaultBranch = targetBranch;
 
@@ -526,12 +655,16 @@ export class GitService {
       isNetwork: true,
     });
 
-    await stagePreparedPublication((tx) =>
+    const persistPublish = (tx) =>
       tx.project.update({
         where: { id: projectId },
         data: { repoUrl: repoWebUrl, defaultBranch: targetBranch },
-      }),
-    );
+      });
+    if (preparedGit.getStore()?.isDirect) {
+      await persistPublish(prisma);
+    } else {
+      await stagePreparedPublication(persistPublish);
+    }
 
     const status = await this.getStatus(projectId, userId);
     await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
@@ -641,31 +774,42 @@ export class GitService {
 
     ensureCovaiGitExcludes(rootDir);
 
+    const hasStashRef =
+      fs.existsSync(path.join(gitDir, "refs", "stash")) ||
+      fs.existsSync(path.join(gitDir, "logs", "refs", "stash"));
+
+    const [statusRes, lsRes, stashRes, originRes] = await Promise.all([
+      this.runCommand(
+        rootDir,
+        ["status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"],
+        { rawOutput: true },
+      ),
+      this.runCommand(rootDir, ["ls-files", "-z"], { rawOutput: true }).catch(
+        () => ({ stdout: "" }),
+      ),
+      hasStashRef
+        ? this.runCommand(rootDir, ["stash", "list", "--oneline"]).catch(() => ({
+            stdout: "",
+          }))
+        : Promise.resolve({ stdout: "" }),
+      !project.repoUrl
+        ? this.runCommand(rootDir, ["remote", "get-url", "origin"]).catch(() => ({
+            stdout: "",
+          }))
+        : Promise.resolve({ stdout: "" }),
+    ]);
+
     let activeRepoUrl = project.repoUrl || null;
-    if (!activeRepoUrl) {
-      try {
-        const { stdout: originUrl } = await this.runCommand(rootDir, [
-          "remote",
-          "get-url",
-          "origin",
-        ]);
-        if (originUrl && originUrl.includes("github.com")) {
-          activeRepoUrl = normalizeCleanGithubUrl(originUrl).webUrl;
-        } else if (originUrl) {
-          activeRepoUrl = redactGitOutput(originUrl);
-        }
-      } catch {
-        // Local-only git repo
+    if (!activeRepoUrl && originRes?.stdout) {
+      const originUrl = originRes.stdout;
+      if (originUrl.includes("github.com")) {
+        activeRepoUrl = normalizeCleanGithubUrl(originUrl).webUrl;
+      } else {
+        activeRepoUrl = redactGitOutput(originUrl);
       }
     }
 
-    const { stdout: statusOutput } = await this.runCommand(
-      rootDir,
-      ["status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"],
-      { rawOutput: true },
-    );
-
-    const parsed = parsePorcelainV2Z(statusOutput);
+    const parsed = parsePorcelainV2Z(statusRes.stdout);
     const untracked = parsed.untracked.filter(
       (item) => !isVcsIgnoredRelativePath(item.path),
     );
@@ -675,50 +819,32 @@ export class GitService {
       untracked.length === 0 &&
       parsed.conflicts.length === 0;
 
-    let stashCount = 0;
-    try {
-      const { stdout: stashOut } = await this.runCommand(rootDir, [
-        "stash",
-        "list",
-        "--oneline",
-      ]);
-      stashCount = stashOut
-        ? stashOut.split(/\r?\n/).filter((line) => line.trim().length > 0).length
-        : 0;
-    } catch {
-      stashCount = 0;
-    }
+    const stashOut = stashRes?.stdout || "";
+    const stashCount = stashOut
+      ? stashOut.split(/\r?\n/).filter((line) => line.trim().length > 0).length
+      : 0;
 
     let trackedFiles = [];
     let unchangedFiles = [];
     let unchangedCount = 0;
-    try {
-      const { stdout: lsOut } = await this.runCommand(
-        rootDir,
-        ["ls-files", "-z"],
-        { rawOutput: true },
-      );
-      const changedPaths = new Set([
-        ...parsed.staged.map((f) => f.path),
-        ...parsed.unstaged.map((f) => f.path),
-        ...parsed.conflicts.map((f) => f.path),
-      ]);
-      const allTracked = String(lsOut || "")
-        .split("\0")
-        .map(normalizePosixPath)
-        .filter((p) => p && !isVcsIgnoredRelativePath(p));
-      const unchangedList = allTracked.filter((p) => !changedPaths.has(p));
-      unchangedCount = unchangedList.length;
-      if (includeTracked) {
-        trackedFiles = allTracked;
-        unchangedFiles = unchangedList.map((p) => ({
-          path: p,
-          status: " ",
-          statusText: "Unchanged",
-        }));
-      }
-    } catch {
-      unchangedCount = 0;
+    const changedPaths = new Set([
+      ...parsed.staged.map((f) => f.path),
+      ...parsed.unstaged.map((f) => f.path),
+      ...parsed.conflicts.map((f) => f.path),
+    ]);
+    const allTracked = String(lsRes?.stdout || "")
+      .split("\0")
+      .map(normalizePosixPath)
+      .filter(Boolean);
+    const unchangedList = allTracked.filter((p) => !changedPaths.has(p));
+    unchangedCount = unchangedList.length;
+    if (includeTracked) {
+      trackedFiles = allTracked;
+      unchangedFiles = unchangedList.map((p) => ({
+        path: p,
+        status: " ",
+        statusText: "Unchanged",
+      }));
     }
 
     return {
@@ -755,8 +881,19 @@ export class GitService {
    */
   static async stageFiles(projectId, userId, files, folder) {
     if (folder) fileName(folder);
+    let targetList = null;
     if (files && files !== "all") {
-      (Array.isArray(files) ? files : [files]).forEach(fileName);
+      targetList = (Array.isArray(files) ? files : [files]).map((entry) => {
+        const clean = fileName(entry);
+        if (isVcsSecretFileName(path.posix.basename(clean))) {
+          throw new ServiceError(
+            `Secret file '${clean}' cannot be staged or committed`,
+            400,
+            "SECRET_FILE_BLOCKED",
+          );
+        }
+        return clean;
+      });
     }
 
     const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
@@ -766,11 +903,10 @@ export class GitService {
     } else if (
       files === "all" ||
       !files ||
-      (Array.isArray(files) && files.length === 0)
+      (Array.isArray(targetList) && targetList.length === 0)
     ) {
       await this.runCommand(rootDir, ["add", "-A"]);
     } else {
-      const targetList = (Array.isArray(files) ? files : [files]).map(fileName);
       await this.runCommand(rootDir, ["add", "-A", "--", ...targetList]);
     }
 
@@ -789,61 +925,40 @@ export class GitService {
     }
 
     const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
-    const hasHead = Boolean(await this._hasHeadCommit(rootDir));
+    const isAll =
+      !folder &&
+      (files === "all" || !files || (Array.isArray(files) && files.length === 0));
+    const safeFolder = folder ? sanitizeGitFilePath(folder) : null;
+    const targetList =
+      !folder && !isAll
+        ? (Array.isArray(files) ? files : [files]).map(fileName)
+        : null;
 
-    if (!hasHead) {
-      if (folder) {
-        await this.runCommand(rootDir, [
-          "rm",
-          "--cached",
-          "-r",
-          "-f",
-          "--",
-          sanitizeGitFilePath(folder),
-        ]).catch(() => {});
-      } else if (
-        files === "all" ||
-        !files ||
-        (Array.isArray(files) && files.length === 0)
-      ) {
-        await this.runCommand(rootDir, ["rm", "--cached", "-r", "-f", "."]).catch(
-          () => {},
-        );
+    const tryRestore = safeFolder
+      ? ["restore", "--staged", "--", safeFolder]
+      : isAll
+        ? ["restore", "--staged", "."]
+        : ["restore", "--staged", "--", ...targetList];
+
+    try {
+      await this.runCommand(rootDir, tryRestore);
+    } catch {
+      const hasHead = Boolean(await this._hasHeadCommit(rootDir));
+      if (!hasHead) {
+        const unbornArgs = safeFolder
+          ? ["rm", "--cached", "-r", "-f", "--", safeFolder]
+          : isAll
+            ? ["rm", "--cached", "-r", "-f", "."]
+            : ["rm", "--cached", "-f", "--", ...targetList];
+        await this.runCommand(rootDir, unbornArgs).catch(() => {});
       } else {
-        const targetList = (Array.isArray(files) ? files : [files]).map(fileName);
-        await this.runCommand(rootDir, [
-          "rm",
-          "--cached",
-          "-f",
-          "--",
-          ...targetList,
-        ]).catch(() => {});
+        const resetArgs = safeFolder
+          ? ["reset", "HEAD", "--", safeFolder]
+          : isAll
+            ? ["reset", "HEAD", "--", "."]
+            : ["reset", "HEAD", "--", ...targetList];
+        await this.runCommand(rootDir, resetArgs).catch(() => {});
       }
-    } else if (folder) {
-      const safeFolder = sanitizeGitFilePath(folder);
-      await this.runCommand(rootDir, ["restore", "--staged", "--", safeFolder]).catch(
-        async () => {
-          await this.runCommand(rootDir, ["reset", "HEAD", "--", safeFolder]);
-        },
-      );
-    } else if (
-      files === "all" ||
-      !files ||
-      (Array.isArray(files) && files.length === 0)
-    ) {
-      await this.runCommand(rootDir, ["reset", "HEAD", "--", "."]).catch(async () => {
-        await this.runCommand(rootDir, ["restore", "--staged", "."]).catch(() => {});
-      });
-    } else {
-      const targetList = (Array.isArray(files) ? files : [files]).map(fileName);
-      await this.runCommand(rootDir, [
-        "restore",
-        "--staged",
-        "--",
-        ...targetList,
-      ]).catch(async () => {
-        await this.runCommand(rootDir, ["reset", "HEAD", "--", ...targetList]);
-      });
     }
 
     const status = await this.getStatus(projectId, userId);
@@ -1020,26 +1135,31 @@ export class GitService {
     const amend = Boolean(opts.amend);
 
     let hasStaged = false;
-    try {
-      const { stdout: diffCached } = await this.runCommand(rootDir, [
-        "diff",
-        "--cached",
-        "--name-only",
-      ]);
-      hasStaged = Boolean(diffCached && diffCached.trim().length > 0);
-    } catch {
-      hasStaged = false;
-    }
-
-    if (opts.stageAll === true || (opts.stageAll !== false && !hasStaged && !amend)) {
+    if (opts.stageAll === true) {
       await this.runCommand(rootDir, ["add", "-A"]);
       hasStaged = true;
-    } else if (!hasStaged && !amend) {
-      throw new ServiceError(
-        "No staged changes to commit. Stage files or enable stageAll.",
-        400,
-        "NOTHING_STAGED",
-      );
+    } else {
+      try {
+        const { stdout: diffCached } = await this.runCommand(rootDir, [
+          "diff",
+          "--cached",
+          "--name-only",
+        ]);
+        hasStaged = Boolean(diffCached && diffCached.trim().length > 0);
+      } catch {
+        hasStaged = false;
+      }
+
+      if (opts.stageAll !== false && !hasStaged && !amend) {
+        await this.runCommand(rootDir, ["add", "-A"]);
+        hasStaged = true;
+      } else if (!hasStaged && !amend) {
+        throw new ServiceError(
+          "No staged changes to commit. Stage files or enable stageAll.",
+          400,
+          "NOTHING_STAGED",
+        );
+      }
     }
 
     const author = await resolveGitAuthorIdentity(userId, {
@@ -1422,91 +1542,62 @@ export class GitService {
   static async getBranches(projectId, userId) {
     const { rootDir, project } = await this.getRepoPath(projectId, userId);
 
-    let current = "main";
-    try {
-      const { stdout } = await this.runCommand(rootDir, [
-        "rev-parse",
-        "--abbrev-ref",
-        "HEAD",
-      ]);
-      if (stdout) current = stdout.trim();
-    } catch {
-      current = project?.defaultBranch || "main";
-    }
+    const fmt =
+      "%(refname)%09%(refname:short)%09%(objectname:short)%09%(upstream:short)%09%(upstream:track)%09%(committerdate:iso-strict)%09%(subject)";
 
-    const { stdout: branchOutput } = await this.runCommand(rootDir, [
-      "branch",
-      "-a",
+    const [headRes, refsRes] = await Promise.all([
+      this.runCommand(rootDir, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => ({
+        stdout: "",
+      })),
+      this.runCommand(rootDir, [
+        "for-each-ref",
+        `--format=${fmt}`,
+        "refs/heads",
+        "refs/remotes",
+      ]).catch(() => ({ stdout: "" })),
     ]);
 
+    const current = headRes?.stdout?.trim() || project?.defaultBranch || "main";
     const local = [];
     const remote = [];
-    const lines = String(branchOutput || "")
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter(Boolean);
+    const localBranches = [];
+    const remoteBranches = [];
 
-    for (const line of lines) {
-      const cleanName = line.replace(/^\*\s*/, "").trim();
-      if (cleanName.startsWith("remotes/origin/")) {
-        const remoteName = cleanName.replace(/^remotes\/origin\//, "");
-        if (!remoteName.includes("HEAD ->") && !remote.includes(remoteName)) {
-          remote.push(remoteName);
-        }
+    for (const row of String(refsRes?.stdout || "").split(/\r?\n/).filter(Boolean)) {
+      const [fullRef, shortName, oid, upstream, track, dateIso, ...subjectParts] =
+        row.split("\t");
+      if (fullRef.startsWith("refs/heads/")) {
+        if (!local.includes(shortName)) local.push(shortName);
+        const aheadMatch = track?.match(/ahead (\d+)/);
+        const behindMatch = track?.match(/behind (\d+)/);
+        localBranches.push({
+          name: shortName,
+          oid,
+          upstream: upstream || null,
+          ahead: aheadMatch ? Number.parseInt(aheadMatch[1], 10) : 0,
+          behind: behindMatch ? Number.parseInt(behindMatch[1], 10) : 0,
+          lastCommitDate: dateIso || null,
+          lastCommitSubject: subjectParts.join("\t"),
+          isCurrent: shortName === current,
+        });
       } else if (
-        !cleanName.includes("HEAD detached") &&
-        !local.includes(cleanName)
+        fullRef.startsWith("refs/remotes/origin/") &&
+        !fullRef.endsWith("/HEAD")
       ) {
-        local.push(cleanName);
+        const remoteShort = shortName.replace(/^origin\//, "");
+        if (!remote.includes(remoteShort)) remote.push(remoteShort);
+        remoteBranches.push({
+          name: remoteShort,
+          fullName: shortName,
+          oid,
+          lastCommitDate: dateIso || null,
+          lastCommitSubject: subjectParts.join("\t"),
+        });
       }
     }
 
     if (local.length === 0 && current && current !== "HEAD") {
       local.push(current);
-    }
-
-    const localBranches = [];
-    const remoteBranches = [];
-    try {
-      const fmt =
-        "%(refname)%09%(refname:short)%09%(objectname:short)%09%(upstream:short)%09%(upstream:track)%09%(committerdate:iso-strict)%09%(subject)";
-      const { stdout: richOut } = await this.runCommand(rootDir, [
-        "for-each-ref",
-        `--format=${fmt}`,
-        "refs/heads",
-        "refs/remotes",
-      ]);
-      for (const row of String(richOut || "").split(/\r?\n/).filter(Boolean)) {
-        const [fullRef, shortName, oid, upstream, track, dateIso, ...subjectParts] =
-          row.split("\t");
-        if (fullRef.startsWith("refs/heads/")) {
-          const aheadMatch = track?.match(/ahead (\d+)/);
-          const behindMatch = track?.match(/behind (\d+)/);
-          localBranches.push({
-            name: shortName,
-            oid,
-            upstream: upstream || null,
-            ahead: aheadMatch ? Number.parseInt(aheadMatch[1], 10) : 0,
-            behind: behindMatch ? Number.parseInt(behindMatch[1], 10) : 0,
-            lastCommitDate: dateIso || null,
-            lastCommitSubject: subjectParts.join("\t"),
-            isCurrent: shortName === current,
-          });
-        } else if (
-          fullRef.startsWith("refs/remotes/origin/") &&
-          !fullRef.endsWith("/HEAD")
-        ) {
-          remoteBranches.push({
-            name: shortName.replace(/^origin\//, ""),
-            fullName: shortName,
-            oid,
-            lastCommitDate: dateIso || null,
-            lastCommitSubject: subjectParts.join("\t"),
-          });
-        }
-      }
-    } catch {
-      // Fallback gracefully when repo has no refs yet
     }
 
     return {
@@ -1518,6 +1609,29 @@ export class GitService {
       localBranches,
       remoteBranches,
     };
+  }
+
+  /**
+   * Creates a new local branch without switching HEAD away from the active branch.
+   */
+  static async createBranch(projectId, userId, { branch, fromRef } = {}) {
+    const cleanBranch = branchName(branch)?.trim();
+    if (!cleanBranch) {
+      throw new ServiceError("Branch name is required", 400);
+    }
+    if (fromRef) sanitizeGitRef(fromRef, "base ref");
+
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const args = ["branch", cleanBranch];
+    if (fromRef) args.push(fromRef.trim());
+    await this.runCommand(rootDir, args);
+
+    const [branches, status] = await Promise.all([
+      this.getBranches(projectId, userId),
+      this.getStatus(projectId, userId),
+    ]);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return { ...branches, createdBranch: cleanBranch, status };
   }
 
   /**
@@ -1581,8 +1695,10 @@ export class GitService {
       }
     }
 
-    const branches = await this.getBranches(projectId, userId);
-    const status = await this.getStatus(projectId, userId);
+    const [branches, status] = await Promise.all([
+      this.getBranches(projectId, userId),
+      this.getStatus(projectId, userId),
+    ]);
     await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
     return { ...branches, stashed, status };
   }
@@ -1592,10 +1708,12 @@ export class GitService {
     const cleanNew = branchName(newName)?.trim();
     const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
     await this.runCommand(rootDir, ["branch", "-m", cleanOld, cleanNew]);
-    const branches = await this.getBranches(projectId, userId);
-    const status = await this.getStatus(projectId, userId);
+    const [branches, status] = await Promise.all([
+      this.getBranches(projectId, userId),
+      this.getStatus(projectId, userId),
+    ]);
     await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
-    return branches;
+    return { ...branches, status };
   }
 
   static async deleteBranch(
@@ -1640,10 +1758,12 @@ export class GitService {
       await this.runCommand(rootDir, ["push", "origin", "--delete", target], execOptions);
     }
 
-    const updated = await this.getBranches(projectId, userId);
-    const status = await this.getStatus(projectId, userId);
+    const [updated, status] = await Promise.all([
+      this.getBranches(projectId, userId),
+      this.getStatus(projectId, userId),
+    ]);
     await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
-    return updated;
+    return { ...updated, status };
   }
 
   /**
@@ -1780,14 +1900,212 @@ export class GitService {
   static async rebaseContinue(projectId, userId) {
     const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
     const author = await resolveGitAuthorIdentity(userId);
-    const { stdout, stderr } = await this.runCommand(
-      rootDir,
-      ["rebase", "--continue"],
-      { author, env: { GIT_EDITOR: "true" } },
-    );
+    try {
+      const { stdout, stderr } = await this.runCommand(
+        rootDir,
+        ["rebase", "--continue"],
+        { author, env: { GIT_EDITOR: "true" } },
+      );
+      const status = await this.getStatus(projectId, userId);
+      await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+      return {
+        completed: true,
+        conflicted: false,
+        operationState: status.operationState,
+        conflicts: [],
+        output: stdout || stderr || "Rebase completed",
+        status,
+      };
+    } catch (error) {
+      const conflictStatus = await this.getStatus(projectId, userId).catch(() => null);
+      if (
+        conflictStatus &&
+        (conflictStatus.conflicts.length > 0 ||
+          conflictStatus.operationState === GIT_REPO_OPERATION_STATE.REBASING)
+      ) {
+        await this._recordSnapshotHeadSync(
+          rootDir,
+          projectId,
+          snapshot.id,
+          conflictStatus,
+        );
+        return {
+          completed: false,
+          conflicted: true,
+          operationState: conflictStatus.operationState,
+          conflicts: conflictStatus.conflicts,
+          output: error.message,
+          status: conflictStatus,
+        };
+      }
+      throw error;
+    }
+  }
+
+  static async cherryPickAbort(projectId, userId) {
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    await this.runCommand(rootDir, ["cherry-pick", "--abort"]);
     const status = await this.getStatus(projectId, userId);
     await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
-    return { output: stdout || stderr, status };
+    return status;
+  }
+
+  static async cherryPickContinue(projectId, userId) {
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const author = await resolveGitAuthorIdentity(userId);
+    const pre = await this.getStatus(projectId, userId);
+    if (pre.conflicts.length > 0) {
+      throw new ServiceError(
+        "Resolve all remaining cherry-pick conflicts before continuing",
+        409,
+        "GIT_CONFLICT",
+        { conflicts: pre.conflicts },
+      );
+    }
+    try {
+      const { stdout, stderr } = await this.runCommand(
+        rootDir,
+        ["cherry-pick", "--continue"],
+        { author, env: { GIT_EDITOR: "true" } },
+      );
+      const status = await this.getStatus(projectId, userId);
+      await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+      return {
+        completed: true,
+        conflicted: false,
+        operationState: status.operationState,
+        conflicts: [],
+        output: stdout || stderr || "Cherry-pick completed",
+        status,
+      };
+    } catch (error) {
+      const conflictStatus = await this.getStatus(projectId, userId).catch(() => null);
+      if (
+        conflictStatus &&
+        (conflictStatus.conflicts.length > 0 ||
+          conflictStatus.operationState === GIT_REPO_OPERATION_STATE.CHERRY_PICKING)
+      ) {
+        await this._recordSnapshotHeadSync(
+          rootDir,
+          projectId,
+          snapshot.id,
+          conflictStatus,
+        );
+        return {
+          completed: false,
+          conflicted: true,
+          operationState: conflictStatus.operationState,
+          conflicts: conflictStatus.conflicts,
+          output: error.message,
+          status: conflictStatus,
+        };
+      }
+      throw error;
+    }
+  }
+
+  static async revertAbort(projectId, userId) {
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    await this.runCommand(rootDir, ["revert", "--abort"]);
+    const status = await this.getStatus(projectId, userId);
+    await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+    return status;
+  }
+
+  static async revertContinue(projectId, userId) {
+    const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    const author = await resolveGitAuthorIdentity(userId);
+    const pre = await this.getStatus(projectId, userId);
+    if (pre.conflicts.length > 0) {
+      throw new ServiceError(
+        "Resolve all remaining revert conflicts before continuing",
+        409,
+        "GIT_CONFLICT",
+        { conflicts: pre.conflicts },
+      );
+    }
+    try {
+      const { stdout, stderr } = await this.runCommand(
+        rootDir,
+        ["revert", "--continue"],
+        { author, env: { GIT_EDITOR: "true" } },
+      );
+      const status = await this.getStatus(projectId, userId);
+      await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+      return {
+        completed: true,
+        conflicted: false,
+        operationState: status.operationState,
+        conflicts: [],
+        output: stdout || stderr || "Revert completed",
+        status,
+      };
+    } catch (error) {
+      const conflictStatus = await this.getStatus(projectId, userId).catch(() => null);
+      if (
+        conflictStatus &&
+        (conflictStatus.conflicts.length > 0 ||
+          conflictStatus.operationState === GIT_REPO_OPERATION_STATE.REVERTING)
+      ) {
+        await this._recordSnapshotHeadSync(
+          rootDir,
+          projectId,
+          snapshot.id,
+          conflictStatus,
+        );
+        return {
+          completed: false,
+          conflicted: true,
+          operationState: conflictStatus.operationState,
+          conflicts: conflictStatus.conflicts,
+          output: error.message,
+          status: conflictStatus,
+        };
+      }
+      throw error;
+    }
+  }
+
+  static async abortOperation(projectId, userId) {
+    const { rootDir } = await this.getRepoPath(projectId, userId);
+    const opState = detectRepoOperationState(rootDir);
+    switch (opState) {
+      case GIT_REPO_OPERATION_STATE.REBASING:
+        return this.rebaseAbort(projectId, userId);
+      case GIT_REPO_OPERATION_STATE.MERGING:
+        return this.mergeAbort(projectId, userId);
+      case GIT_REPO_OPERATION_STATE.CHERRY_PICKING:
+        return this.cherryPickAbort(projectId, userId);
+      case GIT_REPO_OPERATION_STATE.REVERTING:
+        return this.revertAbort(projectId, userId);
+      default:
+        throw new ServiceError("No active merge, rebase, cherry-pick, or revert in progress", 409, "NO_ACTIVE_OPERATION");
+    }
+  }
+
+  static async continueOperation(projectId, userId) {
+    const { rootDir } = await this.getRepoPath(projectId, userId);
+    const opState = detectRepoOperationState(rootDir);
+    switch (opState) {
+      case GIT_REPO_OPERATION_STATE.REBASING:
+        return this.rebaseContinue(projectId, userId);
+      case GIT_REPO_OPERATION_STATE.MERGING: {
+        const status = await this.mergeContinue(projectId, userId);
+        return {
+          completed: true,
+          conflicted: false,
+          operationState: status.operationState,
+          conflicts: [],
+          status,
+        };
+      }
+      case GIT_REPO_OPERATION_STATE.CHERRY_PICKING:
+        return this.cherryPickContinue(projectId, userId);
+      case GIT_REPO_OPERATION_STATE.REVERTING:
+        return this.revertContinue(projectId, userId);
+      default:
+        throw new ServiceError("No active merge, rebase, cherry-pick, or revert in progress", 409, "NO_ACTIVE_OPERATION");
+    }
   }
 
   /**
@@ -1888,14 +2206,14 @@ export class GitService {
         await this.runCommand(rootDir, ["add", "--", safePath]);
       }
     } else if (resolution === "both") {
-      const ours = await readStage(2);
-      const theirs = await readStage(3);
-      const combined =
-        ours !== null && theirs !== null
-          ? ours === theirs
-            ? ours
-            : `${ours}${ours.endsWith("\n") ? "" : "\n"}${theirs}`
-          : ours ?? theirs ?? "";
+      const working = fs.existsSync(target)
+        ? fs.readFileSync(target, "utf8")
+        : "";
+      const [ours, theirs] = await Promise.all([readStage(2), readStage(3)]);
+      const combined = resolveConflictMarkersKeepBoth(working, {
+        ours,
+        theirs,
+      });
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, combined, "utf8");
       await this.runCommand(rootDir, ["add", "--", safePath]);
@@ -1917,14 +2235,20 @@ export class GitService {
     const active = preparedGit.getStore();
     if (active) active.repo.project.repoUrl = webUrl;
 
-    await stagePreparedPublication((tx) =>
+    const persistRemote = (tx) =>
       tx.project.update({
         where: { id: projectId },
         data: { repoUrl: webUrl },
-      }),
-    );
+      });
+    if (active?.isDirect) {
+      await persistRemote(prisma);
+      invalidateProjectAccessCache(projectId);
+    } else {
+      await stagePreparedPublication(persistRemote);
+    }
 
     const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
+    invalidateGitRepoCache(rootDir);
     await this.runCommand(rootDir, ["remote", "set-url", "origin", cleanUrl]).catch(
       async () => {
         await this.runCommand(rootDir, ["remote", "add", "origin", cleanUrl]);
@@ -1989,32 +2313,34 @@ export class GitService {
     const cleanHash = sanitizeGitRef(hash, "commit hash");
     const { rootDir } = await this.getRepoPath(projectId, userId);
 
-    const { stdout: metaRaw } = await this.runCommand(
-      rootDir,
-      [
-        "show",
-        "-s",
-        "--date=relative",
-        "--format=%x1e%H%x1f%h%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%ar%x1f%D%x1f%s%x1f%b",
-        cleanHash,
-      ],
-      { rawOutput: true },
-    );
+    const [{ stdout: metaRaw }, { stdout: statusRaw }, { stdout: numstatRaw }] =
+      await Promise.all([
+        this.runCommand(
+          rootDir,
+          [
+            "show",
+            "-s",
+            "--date=relative",
+            "--format=%x1e%H%x1f%h%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%ar%x1f%D%x1f%s%x1f%b",
+            cleanHash,
+          ],
+          { rawOutput: true },
+        ),
+        this.runCommand(
+          rootDir,
+          ["diff-tree", "--no-commit-id", "--name-status", "--root", "-r", "-M", cleanHash],
+          { rawOutput: true },
+        ),
+        this.runCommand(
+          rootDir,
+          ["diff-tree", "--no-commit-id", "--numstat", "--root", "-r", "-M", cleanHash],
+          { rawOutput: true },
+        ),
+      ]);
     const meta = parseGitLogRecords(metaRaw)[0];
     if (!meta) {
       throw new ServiceError("Commit not found", 404, "COMMIT_NOT_FOUND");
     }
-
-    const { stdout: statusRaw } = await this.runCommand(
-      rootDir,
-      ["diff-tree", "--no-commit-id", "--name-status", "--root", "-r", "-M", cleanHash],
-      { rawOutput: true },
-    );
-    const { stdout: numstatRaw } = await this.runCommand(
-      rootDir,
-      ["diff-tree", "--no-commit-id", "--numstat", "--root", "-r", "-M", cleanHash],
-      { rawOutput: true },
-    );
 
     const numstats = new Map();
     for (const line of String(numstatRaw || "").split(/\r?\n/).filter(Boolean)) {
@@ -2217,46 +2543,57 @@ export class GitService {
     let unifiedDiff = "";
 
     if (mode === "working") {
-      const isTracked = await this.runCommand(rootDir, [
-        "ls-files",
-        "--error-unmatch",
-        "--",
-        safePath,
-      ])
-        .then(() => true)
-        .catch(() => false);
-
       modifiedBlob = readWorkingDisk(safePath);
       modifiedLabel = "Working Tree";
 
-      if (isTracked) {
-        const inIndex = await readBlob(`:0:${safePath}`);
-        originalBlob = inIndex.exists ? inIndex : await readBlob(`HEAD:${safePath}`);
-        originalLabel = inIndex.exists ? "Staged Index" : "HEAD";
-        const { stdout } = await this.runCommand(
+      const [inIndex, diffRes, isTracked] = await Promise.all([
+        readBlob(`:0:${safePath}`),
+        this.runCommand(
           rootDir,
           ["diff", "--no-color", "-U3", "--", safePath],
           { rawOutput: true },
-        ).catch(() => ({ stdout: "" }));
-        unifiedDiff = stdout || "";
+        ).catch(() => ({ stdout: "" })),
+        this.runCommand(rootDir, ["ls-files", "--error-unmatch", "--", safePath])
+          .then(() => true)
+          .catch(() => false),
+      ]);
+
+      if (inIndex.exists) {
+        originalBlob = inIndex;
+        originalLabel = "Staged Index";
+        unifiedDiff = diffRes.stdout || "";
+      } else if (isTracked) {
+        originalBlob = await readBlob(`HEAD:${safePath}`);
+        originalLabel = "HEAD";
+        unifiedDiff = diffRes.stdout || "";
       } else {
         originalLabel = "New File (Untracked)";
       }
     } else if (mode === "staged") {
-      originalBlob = await readBlob(`HEAD:${safeOrigPath}`);
-      modifiedBlob = await readBlob(`:0:${safePath}`);
+      const [headBlob, indexBlob, cachedDiffRes] = await Promise.all([
+        readBlob(`HEAD:${safeOrigPath}`),
+        readBlob(`:0:${safePath}`),
+        this.runCommand(
+          rootDir,
+          ["diff", "--cached", "--no-color", "-U3", "--", safePath],
+          { rawOutput: true },
+        ).catch(() => null),
+      ]);
+      originalBlob = headBlob;
+      modifiedBlob = indexBlob;
       originalLabel = originalBlob.exists ? "HEAD" : "Empty";
       modifiedLabel = modifiedBlob.exists ? "Staged Index" : "Deleted";
 
-      const hasHead = Boolean(await this._hasHeadCommit(rootDir));
-      const { stdout } = await this.runCommand(
-        rootDir,
-        hasHead
-          ? ["diff", "--cached", "--no-color", "-U3", "--", safePath]
-          : ["diff", "--no-color", "-U3", EMPTY_TREE_OID, "--cached", "--", safePath],
-        { rawOutput: true },
-      ).catch(() => ({ stdout: "" }));
-      unifiedDiff = stdout || "";
+      if (cachedDiffRes !== null) {
+        unifiedDiff = cachedDiffRes.stdout || "";
+      } else {
+        const { stdout } = await this.runCommand(
+          rootDir,
+          ["diff", "--no-color", "-U3", EMPTY_TREE_OID, "--cached", "--", safePath],
+          { rawOutput: true },
+        ).catch(() => ({ stdout: "" }));
+        unifiedDiff = stdout || "";
+      }
     } else if (mode === "commit") {
       const targetCommit = sanitizeGitRef(commitHash, "commit hash");
       const resolvedParent = parentHash
@@ -2265,23 +2602,26 @@ export class GitService {
             .then((r) => r.stdout.trim())
             .catch(() => EMPTY_TREE_OID);
 
-      originalBlob =
+      const [origRes, modRes, diffRes] = await Promise.all([
         resolvedParent === EMPTY_TREE_OID
-          ? { exists: false, buf: Buffer.alloc(0) }
-          : await readBlob(`${resolvedParent}:${safeOrigPath}`);
-      modifiedBlob = await readBlob(`${targetCommit}:${safePath}`);
+          ? Promise.resolve({ exists: false, buf: Buffer.alloc(0) })
+          : readBlob(`${resolvedParent}:${safeOrigPath}`),
+        readBlob(`${targetCommit}:${safePath}`),
+        this.runCommand(
+          rootDir,
+          ["diff", "--no-color", "-U3", resolvedParent, targetCommit, "--", safePath],
+          { rawOutput: true },
+        ).catch(() => ({ stdout: "" })),
+      ]);
+
+      originalBlob = origRes;
+      modifiedBlob = modRes;
       originalLabel =
         resolvedParent === EMPTY_TREE_OID
           ? "Initial Commit"
           : resolvedParent.slice(0, 7);
       modifiedLabel = targetCommit.slice(0, 7);
-
-      const { stdout } = await this.runCommand(
-        rootDir,
-        ["diff", "--no-color", "-U3", resolvedParent, targetCommit, "--", safePath],
-        { rawOutput: true },
-      ).catch(() => ({ stdout: "" }));
-      unifiedDiff = stdout || "";
+      unifiedDiff = diffRes.stdout || "";
     } else {
       throw new ServiceError("Unsupported diff mode", 400);
     }
@@ -2410,8 +2750,10 @@ export class GitService {
       args.push("-m", message.trim());
     }
     const { stdout } = await this.runCommand(rootDir, args);
-    const status = await this.getStatus(projectId, userId);
-    const stashes = await this.listStashes(projectId, userId);
+    const [status, stashes] = await Promise.all([
+      this.getStatus(projectId, userId),
+      this.listStashes(projectId, userId),
+    ]);
     await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
     return { output: stdout, stashes, status };
   }
@@ -2439,8 +2781,10 @@ export class GitService {
     }
     const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
     await this.runCommand(rootDir, ["stash", "apply", `stash@{${idx}}`]);
-    const status = await this.getStatus(projectId, userId);
-    const stashes = await this.listStashes(projectId, userId);
+    const [status, stashes] = await Promise.all([
+      this.getStatus(projectId, userId),
+      this.listStashes(projectId, userId),
+    ]);
     await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
     return { stashes, status };
   }
@@ -2452,8 +2796,10 @@ export class GitService {
     }
     const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
     await this.runCommand(rootDir, ["stash", "pop", `stash@{${idx}}`]);
-    const status = await this.getStatus(projectId, userId);
-    const stashes = await this.listStashes(projectId, userId);
+    const [status, stashes] = await Promise.all([
+      this.getStatus(projectId, userId),
+      this.listStashes(projectId, userId),
+    ]);
     await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
     return { stashes, status };
   }
@@ -2465,8 +2811,10 @@ export class GitService {
     }
     const { rootDir, snapshot } = await this.ensureGitRepo(projectId, userId);
     await this.runCommand(rootDir, ["stash", "drop", `stash@{${idx}}`]);
-    const status = await this.getStatus(projectId, userId);
-    const stashes = await this.listStashes(projectId, userId);
+    const [status, stashes] = await Promise.all([
+      this.getStatus(projectId, userId),
+      this.listStashes(projectId, userId),
+    ]);
     await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
     return { stashes, status };
   }
@@ -2529,10 +2877,12 @@ export class GitService {
       await this.runCommand(rootDir, ["push", "origin", cleanTag], execOptions);
     }
 
-    const tags = await this.listTags(projectId, userId);
-    const status = await this.getStatus(projectId, userId);
+    const [tags, status] = await Promise.all([
+      this.listTags(projectId, userId),
+      this.getStatus(projectId, userId),
+    ]);
     await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
-    return { tag: tags.find((t) => t.name === cleanTag) || { name: cleanTag }, tags };
+    return { tag: tags.find((t) => t.name === cleanTag) || { name: cleanTag }, tags, status };
   }
 
   static async pushTag(projectId, userId, name) {
@@ -2567,8 +2917,10 @@ export class GitService {
       );
     }
 
-    const tags = await this.listTags(projectId, userId);
-    const status = await this.getStatus(projectId, userId);
+    const [tags, status] = await Promise.all([
+      this.listTags(projectId, userId),
+      this.getStatus(projectId, userId),
+    ]);
     await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
     return { tags, status };
   }
@@ -2677,6 +3029,7 @@ const INTEGRATION_VCS_MUTATIONS = [
   "pull",
   "push",
   "sync",
+  "createBranch",
   "checkout",
   "renameBranch",
   "deleteBranch",
@@ -2686,6 +3039,10 @@ const INTEGRATION_VCS_MUTATIONS = [
   "rebase",
   "rebaseAbort",
   "rebaseContinue",
+  "cherryPickAbort",
+  "cherryPickContinue",
+  "revertAbort",
+  "revertContinue",
   "revertCommit",
   "cherryPickCommit",
   "reset",
@@ -2693,6 +3050,34 @@ const INTEGRATION_VCS_MUTATIONS = [
   "pushTag",
   "deleteTag",
 ];
+
+const WORKING_TREE_CHANGING_METHODS = new Set([
+  "initRepo",
+  "publishToGitHub",
+  "discardChanges",
+  "revertHunk",
+  "addGitignorePattern",
+  "pull",
+  "sync",
+  "checkout",
+  "merge",
+  "mergeAbort",
+  "mergeContinue",
+  "rebase",
+  "rebaseAbort",
+  "rebaseContinue",
+  "cherryPickAbort",
+  "cherryPickContinue",
+  "revertAbort",
+  "revertContinue",
+  "revertCommit",
+  "cherryPickCommit",
+  "reset",
+  "resolveConflict",
+  "stashPush",
+  "stashApply",
+  "stashPop",
+]);
 
 for (const [capability, methods] of [
   ["vcs.local", LOCAL_VCS_MUTATIONS],
@@ -2707,7 +3092,7 @@ for (const [capability, methods] of [
         fileName(args[0]);
       } else if (method === "resolveConflict") {
         if (args[0]?.filePath) fileName(args[0].filePath);
-      } else if (["checkout", "pull", "push"].includes(method)) {
+      } else if (["createBranch", "checkout", "pull", "push"].includes(method)) {
         const b = typeof args[0] === "string" ? args[0] : args[0]?.branch;
         if (b !== undefined) branchName(b);
       } else if (method === "renameBranch") {
@@ -2733,12 +3118,14 @@ for (const [capability, methods] of [
           ? "integrations.write"
           : capability;
 
-      const repo = await this.getRepoPath(projectId, userId);
-      await resolveProjectAccess({
-        projectId,
-        userId,
-        capability: effectiveCapability,
-      });
+      const [repo] = await Promise.all([
+        this.getRepoPath(projectId, userId),
+        resolveProjectAccess({
+          projectId,
+          userId,
+          capability: effectiveCapability,
+        }),
+      ]);
 
       const dotGit = path.join(repo.rootDir, ".git");
       if (
@@ -2754,6 +3141,20 @@ for (const [capability, methods] of [
 
       return withProjectVcsLock(projectId, async () => {
         checkStaleGitIndexLock(repo.rootDir, { removeStale: true });
+
+        if (!USE_PREPARED_GIT_WORKSPACE()) {
+          return preparedGit.run(
+            {
+              projectId,
+              userId,
+              repo,
+              isDirect: true,
+              workingTreeChanging: WORKING_TREE_CHANGING_METHODS.has(method),
+            },
+            () => original.call(this, projectId, userId, ...args),
+          );
+        }
+
         return withPreparedProjectWorkspace(
           {
             projectId,
