@@ -8,13 +8,10 @@ import { PortfolioBenchmarkAndRiskZone } from "./zones/PortfolioBenchmarkAndRisk
 import { ProjectDirectoryWorkspaceZone } from "./zones/ProjectDirectoryWorkspaceZone.jsx";
 import { PortfolioActivityAndInfraZone } from "./zones/PortfolioActivityAndInfraZone.jsx";
 import { ExportPortfolioReportModal } from "./modals/ExportPortfolioReportModal.jsx";
+import QuickProjectSettingsModal from "./modals/QuickProjectSettingsModal.jsx";
 import { SlideOverInspectorDrawer } from "../unified/inspector/SlideOverInspectorDrawer.jsx";
 import { ZoneErrorBoundary } from "../unified/primitives/ZoneErrorBoundary.jsx";
 import { deriveFilteredPortfolioVm } from "../../../services/portfolioDashboard/portfolioDashboard.selectors.js";
-import {
-  applyLifecycleStatusToPortfolioCache,
-  applyLifecycleStatusToProjectsList,
-} from "../../../services/portfolioDashboard/portfolioLifecycleCache.js";
 import { resolvePortfolioLifecycleSummary } from "../../../services/portfolioDashboard/portfolioLifecycleSummary.js";
 
 export function ProjectsPortfolioDashboard({
@@ -22,6 +19,7 @@ export function ProjectsPortfolioDashboard({
   onTogglePin,
   onOpenProjectOverview,
   onNavigateWorkspace,
+  onOpenWorkspaceSettings = null,
   onDeleteProject,
   onAddProject,
   onAskAi,
@@ -42,16 +40,23 @@ export function ProjectsPortfolioDashboard({
 
   const [highlightedProjectId, setHighlightedProjectId] = useState(null);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [settingsProjectId, setSettingsProjectId] = useState(null);
   const [inspectedRunItem, setInspectedRunItem] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [lifecycleTab, setLifecycleTab] = useState("active");
+  const [lifecycleTab, setLifecycleTab] = useState("open");
   const [statusFilter, setStatusFilter] = useState("all");
   const [layerDeficit, setLayerDeficit] = useState("all");
   const [sortBy, setSortBy] = useState("health-desc");
 
+  const settingsProject = useMemo(
+    () => (vm?.projects || []).find((p) => p.id === settingsProjectId) || null,
+    [vm?.projects, settingsProjectId],
+  );
+
   const {
     filteredVm,
     filteredProjects,
+    kpiScopeProjects,
     lifecycleFilteredProjects,
     allLifecycleCounts,
     isFiltered,
@@ -73,26 +78,15 @@ export function ProjectsPortfolioDashboard({
     () =>
       resolvePortfolioLifecycleSummary({
         isFiltered,
-        filteredCounts: filteredVm?.lifecycleCounts,
+        filteredCounts: filteredVm?.directoryLifecycleCounts,
         allCounts: allLifecycleCounts,
       }),
-    [isFiltered, filteredVm?.lifecycleCounts, allLifecycleCounts]
+    [isFiltered, filteredVm?.directoryLifecycleCounts, allLifecycleCounts]
   );
 
-  const handleLifecycleStatusChange = useCallback(
-    (projectId, newStatus) => {
-      queryClient.setQueryData(["projectsPortfolio", "live"], (old) =>
-        applyLifecycleStatusToPortfolioCache(old, projectId, newStatus)
-      );
-      queryClient.setQueriesData({ queryKey: ["projects"] }, (old) =>
-        applyLifecycleStatusToProjectsList(old, projectId, newStatus)
-      );
-    },
-    [queryClient]
-  );
-
-  const handleLifecycleStatusCommitted = useCallback(() => {
+  const handleProjectSettingsSaved = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["projectsPortfolio"] });
+    queryClient.invalidateQueries({ queryKey: ["projects"] });
     queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] });
   }, [queryClient]);
 
@@ -115,14 +109,14 @@ export function ProjectsPortfolioDashboard({
 
   const handleResetFilters = useCallback(() => {
     setSearchQuery("");
-    setLifecycleTab("active");
+    setLifecycleTab("open");
     setStatusFilter("all");
     setLayerDeficit("all");
   }, []);
 
   const handleRemoveFilterTag = useCallback((key) => {
     if (key === "search") setSearchQuery("");
-    else if (key === "lifecycle") setLifecycleTab("active");
+    else if (key === "lifecycle") setLifecycleTab("open");
     else if (key === "status") setStatusFilter("all");
     else if (key === "layerDeficit") setLayerDeficit("all");
   }, []);
@@ -263,8 +257,7 @@ export function ProjectsPortfolioDashboard({
             onNavigateWorkspace={onNavigateWorkspace}
             onDeleteProject={onDeleteProject}
             onAskAiAboutProject={handleAskAiAboutProject}
-            onLifecycleStatusChange={handleLifecycleStatusChange}
-            onLifecycleStatusCommitted={handleLifecycleStatusCommitted}
+            onOpenProjectSettings={(proj) => setSettingsProjectId(proj?.id || null)}
             onAddProject={onAddProject}
           />
         </ZoneErrorBoundary>
@@ -277,7 +270,7 @@ export function ProjectsPortfolioDashboard({
             lifecycleScopeLabel={lifecycleSummary.donutScopeLabel}
             analytics={filteredVm?.analytics}
             attentionQueue={filteredVm?.attentionQueue}
-            projects={filteredVm?.projects}
+            projects={kpiScopeProjects}
             timeRoiAnalytics={filteredVm?.timeRoiAnalytics}
             selectedProjectId={effectiveHighlightedProjectId}
             onSelectProject={handleSelectBenchmarkProject}
@@ -298,11 +291,26 @@ export function ProjectsPortfolioDashboard({
         </ZoneErrorBoundary>
       </div>
 
-      {/* Single PDF Report Modal */}
+      {/* Quick Project Settings Modal (Hybrid Lifecycle Flow) */}
+      <QuickProjectSettingsModal
+        isOpen={Boolean(settingsProject)}
+        project={settingsProject}
+        onClose={() => setSettingsProjectId(null)}
+        onSaved={handleProjectSettingsSaved}
+        onOpenFullSettings={(projectId) => {
+          setSettingsProjectId(null);
+          onOpenWorkspaceSettings?.(projectId);
+        }}
+      />
+
+      {/* Portfolio Report Export Modal */}
       <ExportPortfolioReportModal
         isOpen={isExportModalOpen}
         onClose={() => setIsExportModalOpen(false)}
-        vm={filteredVm}
+        allVm={vm}
+        filteredVm={filteredVm}
+        isFiltered={isFiltered}
+        activeFilterTags={activeFilterTags}
       />
 
       {/* Slide-Over Run Inspector */}

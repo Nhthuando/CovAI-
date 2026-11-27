@@ -50,10 +50,15 @@ export function PortfolioBenchmarkAndRiskZone({
       aria-label="Portfolio Visual Analytics"
       className={`space-y-4 ${className}`}
     >
-      <div className="flex items-baseline justify-between">
-        <h2 className="ps-display text-base font-bold text-[var(--ps-ink)]">
-          Analytics
-        </h2>
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="flex items-baseline gap-2.5">
+          <h2 className="ps-display text-base font-bold text-[var(--ps-ink)]">
+            Analytics
+          </h2>
+          <span className="text-[11px] ps-mono text-[var(--ps-ink-muted)]">
+            Active KPI Scope (Doing)
+          </span>
+        </div>
         {selectedProjectId && (
           <button
             type="button"

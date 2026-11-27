@@ -6,6 +6,10 @@ import {
   attachSocketAuthRecovery,
   socketAuth,
 } from "../lib/authSession.js";
+import {
+  applyProjectPatchToPortfolioCache,
+  applyProjectPatchToProjectsList,
+} from "../services/portfolioDashboard/portfolioLifecycleCache.js";
 
 /**
  * Throttle helper to limit high-frequency socket events
@@ -204,47 +208,23 @@ export function usePortfolioSocket(userId) {
     // 4. Project Updated (Lifecycle status, Pinned state, etc.)
     socket.on("portfolio:project_updated", (payload) => {
       const { projectId, lifecycleStatus, isPinned } = payload || {};
+      if (!projectId) return;
 
-      queryClient.setQueryData(["projectsPortfolio", "live"], (old) => {
-        if (!old) return old;
-        const updatedProjects = (old.projects || []).map((p) => {
-          if (p.id === projectId) {
-            return {
-              ...p,
-              ...(lifecycleStatus !== undefined && {
-                lifecycleStatus,
-                isExcludedFromActiveKpis: lifecycleStatus !== "DOING",
-              }),
-              ...(isPinned !== undefined && { isPinned }),
-            };
-          }
-          return p;
-        });
-        return {
-          ...old,
-          projects: updatedProjects,
-        };
-      });
+      const patch = {
+        ...(lifecycleStatus !== undefined && { lifecycleStatus }),
+        ...(isPinned !== undefined && { isPinned }),
+      };
+
+      queryClient.setQueryData(["projectsPortfolio", "live"], (old) =>
+        applyProjectPatchToPortfolioCache(old, projectId, patch),
+      );
 
       // Synchronize with general projects cache used by Layout.jsx
-      queryClient.setQueriesData({ queryKey: ["projects"] }, (old) => {
-        if (!Array.isArray(old)) return old;
-        return old.map((p) => {
-          if (p.id === projectId) {
-            return {
-              ...p,
-              ...(lifecycleStatus !== undefined && {
-                lifecycleStatus,
-                isExcludedFromActiveKpis: lifecycleStatus !== "DOING",
-              }),
-              ...(isPinned !== undefined && { isPinned }),
-            };
-          }
-          return p;
-        });
-      });
+      queryClient.setQueriesData({ queryKey: ["projects"] }, (old) =>
+        applyProjectPatchToProjectsList(old, projectId, patch),
+      );
 
-      if (projectId && lifecycleStatus !== undefined) {
+      if (lifecycleStatus !== undefined || isPinned !== undefined) {
         window.dispatchEvent(
           new CustomEvent("covai:project-status-updated", {
             detail: { projectId, lifecycleStatus, isPinned },

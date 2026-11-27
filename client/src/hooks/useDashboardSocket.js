@@ -6,6 +6,10 @@ import {
   attachSocketAuthRecovery,
   socketAuth,
 } from "../lib/authSession.js";
+import {
+  applyProjectPatchToPortfolioCache,
+  applyProjectPatchToProjectsList,
+} from "../services/portfolioDashboard/portfolioLifecycleCache.js";
 
 /**
  * useDashboardSocket - Real-time Socket.IO telemetry for Unified Dashboard.
@@ -111,13 +115,20 @@ export function useDashboardSocket({
     socket.on("portfolio:project_updated", (payload) => {
       if (!alive) return;
       const targetPid = payload?.projectId || projectId;
-      if (payload?.lifecycleStatus !== undefined) {
-        queryClient.setQueriesData({ queryKey: ["projects"] }, (old) => {
-          if (!Array.isArray(old)) return old;
-          return old.map((p) =>
-            p.id === targetPid ? { ...p, lifecycleStatus: payload.lifecycleStatus } : p
-          );
-        });
+      const patch = {
+        ...(payload?.lifecycleStatus !== undefined && {
+          lifecycleStatus: payload.lifecycleStatus,
+        }),
+        ...(payload?.isPinned !== undefined && { isPinned: payload.isPinned }),
+      };
+
+      if (payload?.lifecycleStatus !== undefined || payload?.isPinned !== undefined) {
+        queryClient.setQueryData(["projectsPortfolio", "live"], (old) =>
+          applyProjectPatchToPortfolioCache(old, targetPid, patch),
+        );
+        queryClient.setQueriesData({ queryKey: ["projects"] }, (old) =>
+          applyProjectPatchToProjectsList(old, targetPid, patch),
+        );
         window.dispatchEvent(
           new CustomEvent("covai:project-status-updated", {
             detail: {
@@ -127,6 +138,7 @@ export function useDashboardSocket({
             },
           })
         );
+        queryClient.invalidateQueries({ queryKey: ["projectsPortfolio"] });
       }
     });
 

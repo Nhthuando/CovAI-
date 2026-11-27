@@ -4,12 +4,15 @@ export function PillarMiniProgressRow({
   label = "Unit",
   subLabel = "",
   accentColor = "var(--ud-unit)",
-  coveragePct = 0,
+  coveragePct = null,
   tooltipText = "",
   className = "",
 }) {
   const [hovered, setHovered] = useState(false);
-  const clampedPct = Math.min(100, Math.max(0, Number(coveragePct) || 0));
+  const isMeasured = coveragePct !== null && coveragePct !== undefined;
+  const clampedPct = isMeasured
+    ? Math.min(100, Math.max(0, Number(coveragePct) || 0))
+    : 0;
 
   return (
     <div
@@ -35,8 +38,12 @@ export function PillarMiniProgressRow({
         </div>
 
         <div className="flex items-center shrink-0">
-          <span className="font-bold tabular-nums text-[var(--ud-text)]">
-            {clampedPct}%
+          <span
+            className={`font-bold tabular-nums ${
+              isMeasured ? "text-[var(--ud-text)]" : "text-[var(--ud-text-muted)]"
+            }`}
+          >
+            {isMeasured ? `${clampedPct}%` : "—"}
           </span>
         </div>
       </div>
@@ -63,4 +70,3 @@ export function PillarMiniProgressRow({
 }
 
 export default PillarMiniProgressRow;
-

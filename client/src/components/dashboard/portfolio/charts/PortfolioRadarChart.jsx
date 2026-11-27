@@ -19,7 +19,8 @@ function buildPolygonPoints(values, cx, cy, maxR) {
   return values
     .map((v, idx) => {
       const angle = (Math.PI * 2 * idx) / values.length - Math.PI / 2;
-      const r = (Math.max(0, Math.min(100, v)) / 100) * maxR;
+      const numeric = v !== null && v !== undefined ? Number(v) : 0;
+      const r = (Math.max(0, Math.min(100, numeric)) / 100) * maxR;
       const pt = polarToCartesian(cx, cy, r, angle);
       return `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`;
     })
@@ -36,24 +37,30 @@ export function PortfolioRadarChart({
   const c3 = kpis.card3Scale || {};
 
   const portfolioValues = [
-    c2.avgUnitCoveragePct ?? 0,
-    c2.avgIntegrationCoveragePct ?? 0,
-    c2.avgSystemCoveragePct ?? 0,
-    c3.overallPassRatePct ?? 0,
-    c1.avgHealthScore ?? 0,
+    c2.avgUnitCoveragePct ?? null,
+    c2.avgIntegrationCoveragePct ?? null,
+    c2.avgSystemCoveragePct ?? null,
+    c3.overallPassRatePct ?? null,
+    c1.avgHealthScore ?? null,
   ];
+  const hasPortfolioData = portfolioValues.some(
+    (v) => v !== null && v !== undefined,
+  );
 
   const targetValues = [80, 80, 80, 90, 80];
 
   const projectValues = selectedProject
     ? [
-        selectedProject.pillars?.unit?.coveragePct ?? 0,
-        selectedProject.pillars?.integration?.coveragePct ?? 0,
-        selectedProject.pillars?.system?.coveragePct ?? 0,
-        selectedProject.passRatePct ?? 0,
-        selectedProject.healthScore ?? 0,
+        selectedProject.pillars?.unit?.coveragePct ?? null,
+        selectedProject.pillars?.integration?.coveragePct ?? null,
+        selectedProject.pillars?.system?.coveragePct ?? null,
+        selectedProject.passRatePct ?? null,
+        selectedProject.healthScore ?? null,
       ]
     : null;
+  const hasProjectData = Boolean(
+    projectValues && projectValues.some((v) => v !== null && v !== undefined),
+  );
 
   const size = 240;
   const cx = size / 2;
@@ -67,7 +74,6 @@ export function PortfolioRadarChart({
         className="w-full max-w-[235px] h-auto select-none overflow-visible"
         aria-label="5-Axis Quality Radar"
       >
-        {/* Concentric Pentagon Rings */}
         {[25, 50, 75, 100].map((pct) => (
           <polygon
             key={pct}
@@ -79,12 +85,18 @@ export function PortfolioRadarChart({
           />
         ))}
 
-        {/* Axis Spokes & Labels */}
         {AXES.map((axis, idx) => {
           const angle = (Math.PI * 2 * idx) / AXES.length - Math.PI / 2;
           const outer = polarToCartesian(cx, cy, maxR, angle);
           const labelPt = polarToCartesian(cx, cy, maxR + 18, angle);
           const val = portfolioValues[idx];
+          const formattedVal =
+            val !== null && val !== undefined
+              ? axis.key === "health"
+                ? `${val}/100`
+                : `${val}%`
+              : "—";
+
           return (
             <g key={axis.key}>
               <line
@@ -102,13 +114,12 @@ export function PortfolioRadarChart({
                 dominantBaseline="middle"
                 className="text-[9.5px] font-mono fill-[var(--ud-text-muted)]"
               >
-                {axis.label} ({val}%)
+                {axis.label} ({formattedVal})
               </text>
             </g>
           );
         })}
 
-        {/* 80% Target Polygon */}
         <polygon
           points={buildPolygonPoints(targetValues, cx, cy, maxR)}
           fill="none"
@@ -118,17 +129,17 @@ export function PortfolioRadarChart({
           strokeOpacity="0.6"
         />
 
-        {/* Portfolio Average Polygon */}
-        <polygon
-          points={buildPolygonPoints(portfolioValues, cx, cy, maxR)}
-          fill="var(--ud-unit)"
-          fillOpacity="0.18"
-          stroke="var(--ud-unit)"
-          strokeWidth="2"
-        />
+        {hasPortfolioData && (
+          <polygon
+            points={buildPolygonPoints(portfolioValues, cx, cy, maxR)}
+            fill="var(--ud-unit)"
+            fillOpacity="0.18"
+            stroke="var(--ud-unit)"
+            strokeWidth="2"
+          />
+        )}
 
-        {/* Highlighted Project Overlay */}
-        {projectValues && (
+        {hasProjectData && (
           <polygon
             points={buildPolygonPoints(projectValues, cx, cy, maxR)}
             fill="var(--ud-integration)"
@@ -136,6 +147,18 @@ export function PortfolioRadarChart({
             stroke="var(--ud-integration)"
             strokeWidth="2"
           />
+        )}
+
+        {!hasPortfolioData && !hasProjectData && (
+          <text
+            x={cx}
+            y={cy}
+            textAnchor="middle"
+            dominantBaseline="middle"
+            className="text-[10px] font-mono fill-[var(--ud-text-muted)]"
+          >
+            No active test data yet
+          </text>
         )}
       </svg>
 

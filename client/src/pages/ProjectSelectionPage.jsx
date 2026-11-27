@@ -12,7 +12,10 @@ import {
 import CovaiLogo from "../components/common/CovaiLogo";
 import SpotlightTourOverlay from "../components/dashboard/guidance/SpotlightTourOverlay";
 import { deleteProjectApi, invalidateFileContentCache } from "../services/project.service";
+import { updateProjectLifecycleStatusApi } from "../services/portfolio.service";
 import {
+  applyProjectPatchToPortfolioCache,
+  applyProjectPatchToProjectsList,
   removeProjectFromPortfolioCache,
   removeProjectFromProjectsList,
 } from "../services/portfolioDashboard/portfolioLifecycleCache";
@@ -91,15 +94,58 @@ export default function ProjectSelectionPage() {
     }
   });
 
-  const toggleFavorite = useCallback((projectId) => {
-    setFavorites((prev) => {
-      const next = prev.includes(projectId)
-        ? prev.filter((id) => id !== projectId)
-        : [...prev, projectId];
-      localStorage.setItem("covai_favorites", JSON.stringify(next));
-      return next;
-    });
-  }, []);
+  const toggleFavorite = useCallback(
+    async (projectId) => {
+      const target = portfolioProjects.find((p) => p.id === projectId);
+      const canManageDbPin = Boolean(target?.canManageLifecycle);
+      const wasPinned = canManageDbPin
+        ? Boolean(target?.isPinned)
+        : favorites.includes(projectId) || Boolean(target?.isPinned);
+      const nextPinned = !wasPinned;
+
+      const updateLocalFav = (shouldPin) => {
+        setFavorites((prev) => {
+          const next = shouldPin
+            ? prev.includes(projectId)
+              ? prev
+              : [...prev, projectId]
+            : prev.filter((id) => id !== projectId);
+          localStorage.setItem("covai_favorites", JSON.stringify(next));
+          return next;
+        });
+      };
+
+      updateLocalFav(nextPinned);
+      queryClient.setQueryData(["projectsPortfolio", "live"], (old) =>
+        applyProjectPatchToPortfolioCache(old, projectId, { isPinned: nextPinned }),
+      );
+      queryClient.setQueriesData({ queryKey: ["projects"] }, (old) =>
+        applyProjectPatchToProjectsList(old, projectId, { isPinned: nextPinned }),
+      );
+
+      if (!canManageDbPin) return;
+
+      try {
+        await updateProjectLifecycleStatusApi(projectId, { isPinned: nextPinned });
+        queryClient.invalidateQueries({ queryKey: ["projectsPortfolio"] });
+        queryClient.invalidateQueries({ queryKey: ["projects"] });
+      } catch (err) {
+        updateLocalFav(wasPinned);
+        queryClient.setQueryData(["projectsPortfolio", "live"], (old) =>
+          applyProjectPatchToPortfolioCache(old, projectId, { isPinned: wasPinned }),
+        );
+        queryClient.setQueriesData({ queryKey: ["projects"] }, (old) =>
+          applyProjectPatchToProjectsList(old, projectId, { isPinned: wasPinned }),
+        );
+        showToast({
+          type: "error",
+          title: "Pin update failed",
+          message: err?.message || "Could not update repository pin.",
+        });
+      }
+    },
+    [portfolioProjects, favorites, showToast],
+  );
 
   const handleLogout = () => {
     setShowLogoutConfirm(false);
@@ -312,6 +358,11 @@ export default function ProjectSelectionPage() {
             }}
             onDeleteProject={(proj) => setProjectToDelete(proj)}
             onAddProject={() => setShowImport(true)}
+            onOpenWorkspaceSettings={(projectId) =>
+              navigate(
+                `/main-editor?projectId=${projectId}&tab=settings&setting=project-general`,
+              )
+            }
             onAskAi={handleAskAiPrompt}
             onProjectsLoaded={setPortfolioProjects}
           />
