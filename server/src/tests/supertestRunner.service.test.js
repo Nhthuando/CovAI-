@@ -133,4 +133,23 @@ describe('supertestRunner.service', () => {
         expect(markerExistedDuringRun).toBe(true);
         expect(fs.existsSync(path.join(tempDir, 'tests', 'integration', 'package.json'))).toBe(false);
     });
+
+    test('injects mock AI keys and sets COVAI_SKIP_STRIPE_MOCK when tests mock stripe explicitly', async () => {
+        fs.writeFileSync(path.join(tempDir, 'package.json'), JSON.stringify({ type: 'module' }));
+        fs.mkdirSync(path.join(tempDir, 'tests', 'integration'), { recursive: true });
+        const testFile = path.join(tempDir, 'tests', 'integration', 'payments.test.js');
+        fs.writeFileSync(
+            testFile,
+            "import { jest } from '@jest/globals';\njest.unstable_mockModule('stripe', () => ({ default: jest.fn() }));\n",
+        );
+
+        dockerRunner.run = jest.fn().mockResolvedValue({ success: true, exitCode: 0, stdout: '', stderr: '' });
+
+        await runSupertest('job-stripe-mock', tempDir, null, [testFile]);
+
+        const runOptions = dockerRunner.run.mock.calls[0][0];
+        expect(runOptions.env.GEMINI_API_KEY).toBeTruthy();
+        expect(runOptions.env.GOOGLE_API_KEY).toBeTruthy();
+        expect(runOptions.env.COVAI_SKIP_STRIPE_MOCK).toBe('true');
+    });
 });

@@ -514,7 +514,7 @@ export const runIntegrationGenerationPipeline = async ({
   const aiResponse = await generateText(prompt, model || null, {
     taskType: "integration",
     temperature: 0.2,
-    maxOutputTokens: 8192,
+    maxOutputTokens: 16384,
     returnTelemetry: true,
   });
   const aiResponseText =
@@ -546,11 +546,13 @@ export const runIntegrationGenerationPipeline = async ({
     "[Integration AI] Kiểm duyệt an toàn cú pháp Babel AST...",
   ).catch(() => {});
 
-  const parseAndDeduplicateResponse = (rawResponseText) => {
+  const extractRawGeneratedCode = (rawResponseText) => {
     let extracted = "";
     try {
       let jsonStr = String(rawResponseText || "").trim();
-      const fencedJsonMatch = jsonStr.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+      const fencedJsonMatch = jsonStr.match(
+        /^```(?:json)?\s*([\s\S]*?)\s*```$/i,
+      );
       if (fencedJsonMatch && fencedJsonMatch[1]) {
         jsonStr = fencedJsonMatch[1].trim();
       } else {
@@ -592,6 +594,11 @@ export const runIntegrationGenerationPipeline = async ({
       /^```(?:javascript|js|typescript|ts)?\s*([\s\S]*?)\s*```$/i,
     );
     if (innerMatch?.[1]) extracted = innerMatch[1].trim();
+    return extracted;
+  };
+
+  const parseAndDeduplicateResponse = (rawResponseText) => {
+    let extracted = extractRawGeneratedCode(rawResponseText);
 
     if (extracted) {
       try {
@@ -612,111 +619,200 @@ export const runIntegrationGenerationPipeline = async ({
           targetFilePath,
         );
       }
+      // Deterministic safety net 1: if AI manually mocked Stripe objects (cs_* / pi_*) without a `created` Unix timestamp,
+      // inject `created` so `new Date(obj.created * 1000).toISOString()` never throws RangeError: Invalid time value.
+      if (
+        /(?:unstable_mockModule|mock)\s*\(\s*['"]stripe['"]/.test(extracted)
+      ) {
+        extracted = extracted.replace(
+          /(\{\s*id\s*:\s*(?:['"](?:cs|pi)_[^'"]*['"]|id\b(?:\s*\|\|\s*['"](?:cs|pi)_[^'"]*['"])?))(?![^{}]*\bcreated\s*:)/g,
+          "$1, created: Math.floor(Date.now() / 1000)",
+        );
+        extracted = extracted.replace(
+          /(retrieve\s*:\s*jest\.fn\(\)\.mockImplementation\(\s*(?:async\s*)?\(?\s*([a-zA-Z_$][\w$]*)\s*\)?\s*=>\s*\{)(?![\s\S]{0,120}\.trim\(\))/,
+          "$1\n              if (!$2 || !String($2).trim()) { throw new Error('Invalid id'); }",
+        );
+      }
+      // Deterministic safety net 2: in ESM tests, CommonJS setupFilesAfterEnv cannot intercept ESM `import` of `@google/generative-ai`.
+      // If the project imports `@google/generative-ai` and the generated ESM test forgot to mock it, inject a deterministic mock before the app import.
+      const projectUsesGenAi = (sourceCode || []).some((f) =>
+        /@google\/generative-ai/.test(String(f?.content || "")),
+      );
+      if (
+        projectUsesGenAi &&
+        /\bawait\s+import\s*\(/.test(extracted) &&
+        !/(?:unstable_mockModule|mock)\s*\(\s*['"]@google\/generative-ai['"]/.test(
+          extracted,
+        )
+      ) {
+        const genAiMockSnippet = [
+          `await jest.unstable_mockModule('@google/generative-ai', () => ({`,
+          `  GoogleGenerativeAI: jest.fn().mockImplementation(() => ({`,
+          `    getGenerativeModel: jest.fn().mockReturnValue({`,
+          `      generateContent: jest.fn().mockResolvedValue({ response: { text: () => JSON.stringify({ summary: 'Mock AI summary.', topics: ['Technology'] }), usageMetadata: { totalTokenCount: 30 } } }),`,
+          `      startChat: jest.fn().mockReturnValue({ sendMessage: jest.fn().mockResolvedValue({ response: { text: () => 'Mock AI chat response.', usageMetadata: { totalTokenCount: 30 } } }) }),`,
+          `    }),`,
+          `  })),`,
+          `}));`,
+          ``,
+        ].join("\n");
+        extracted = extracted.replace(
+          /^((?:const|let|var)\s+[^\n;]*?=\s*await\s+import\s*\()/m,
+          `${genAiMockSnippet}$1`,
+        );
+      }
     }
 
     validateIntegrationTestCode(extracted, normFramework.toLowerCase());
     return extracted;
   };
 
-  let cleanedCode = parseAndDeduplicateResponse(aiResponseText);
-
-const evaluateGeneratedCompleteness = (
-  code,
-  filePath,
-  endpointsToGenerate = [],
-) => {
-  const parsedRequests = extractTestRequests(code, filePath);
-  const matchEndpoint = (r) =>
-    endpointsToGenerate.find((ep) => {
-      const epMethod = String(ep.method || "GET").toUpperCase();
-      if (String(r.method || "").toUpperCase() !== epMethod) return false;
-      const epPath = (ep.fullPath || ep.path || "/").replace(/\/+$/, "") || "/";
-      const cleanReq =
-        String(r.path || "/")
-          .split("?")[0]
-          .replace(/\/+$/, "") || "/";
-      return new RegExp("^" + epPath.replace(/:[^/]+/g, "[^/]+") + "$").test(
-        cleanReq,
+  let cleanedCode;
+  try {
+    cleanedCode = parseAndDeduplicateResponse(aiResponseText);
+  } catch (initialParseErr) {
+    const isSyntaxOrEmpty =
+      /AST syntax error|Generated test code is empty/i.test(
+        initialParseErr?.message || "",
       );
-    });
-
-  const coveredByEpKey = new Map();
-  const unexpectedRequests = [];
-
-  for (const r of parsedRequests) {
-    const matchedEp = matchEndpoint(r);
-    if (!matchedEp) {
-      unexpectedRequests.push({
-        method: String(r.method || "GET").toUpperCase(),
-        path: r.path || "/",
-        testName: r.testName || "Unnamed scenario",
-      });
-      continue;
+    if (!isSyntaxOrEmpty || abortSignal?.aborted) {
+      throw initialParseErr;
     }
-    const epKey = `${String(matchedEp.method || "GET").toUpperCase()} ${matchedEp.fullPath || matchedEp.path || "/"}`;
-    const caseKey = getScenarioCaseKey({
-      title: r.testName,
-      expectedStatus: r.expectedStatus,
-      expectedStatuses: r.expectedStatuses,
+    await addJobLog(
+      jobId,
+      "WARN",
+      `[Integration AI] Phát hiện lỗi cú pháp trong mã test vừa sinh (${initialParseErr.message}). Đang yêu cầu AI tự sửa cú pháp...`,
+    ).catch(() => {});
+    const brokenCode = extractRawGeneratedCode(aiResponseText);
+    const syntaxRepairPrompt = [
+      `You are a Principal Node.js QA Engineer.`,
+      `The generated ${normFramework} integration test file below failed Babel AST parsing with:`,
+      `\`${initialParseErr.message}\``,
+      ``,
+      `Fix ONLY the JavaScript syntax error(s) so the entire file parses cleanly (ensure all blocks, parentheses, template literals, and strings are closed properly; do not drop endpoints).`,
+      `Return ONLY valid JSON inside \`\`\`json\`\`\`:`,
+      `\`\`\`json`,
+      `{`,
+      `  "content": "// Complete, syntactically valid test file..."`,
+      `}`,
+      `\`\`\``,
+      ``,
+      `### BROKEN TEST FILE:`,
+      `\`\`\`javascript`,
+      brokenCode.slice(0, 32000),
+      `\`\`\``,
+    ].join("\n");
+    const repairedResp = await generateText(syntaxRepairPrompt, model || null, {
+      taskType: "integration",
+      temperature: 0.1,
+      maxOutputTokens: 16384,
+      returnTelemetry: true,
     });
-    const set = coveredByEpKey.get(epKey) || new Set();
-    set.add(caseKey);
-    coveredByEpKey.set(epKey, set);
+    const repairedText =
+      typeof repairedResp === "object" && repairedResp?.text !== undefined
+        ? repairedResp.text
+        : repairedResp;
+    cleanedCode = parseAndDeduplicateResponse(repairedText);
   }
 
-  let coveredCasesCount = 0;
-  let totalRequiredCases = 0;
-  const missingCases = [];
+  const evaluateGeneratedCompleteness = (
+    code,
+    filePath,
+    endpointsToGenerate = [],
+  ) => {
+    const parsedRequests = extractTestRequests(code, filePath);
+    const matchEndpoint = (r) =>
+      endpointsToGenerate.find((ep) => {
+        const epMethod = String(ep.method || "GET").toUpperCase();
+        if (String(r.method || "").toUpperCase() !== epMethod) return false;
+        const epPath =
+          (ep.fullPath || ep.path || "/").replace(/\/+$/, "") || "/";
+        const cleanReq =
+          String(r.path || "/")
+            .split("?")[0]
+            .replace(/\/+$/, "") || "/";
+        return new RegExp("^" + epPath.replace(/:[^/]+/g, "[^/]+") + "$").test(
+          cleanReq,
+        );
+      });
 
-  for (const ep of endpointsToGenerate) {
-    const epMethod = String(ep.method || "GET").toUpperCase();
-    const epPath = ep.fullPath || ep.path || "/";
-    const epKey = `${epMethod} ${epPath}`;
-    const requiredCases = getEndpointRequiredCases(ep);
-    totalRequiredCases += requiredCases.length;
-    const present = coveredByEpKey.get(epKey) || new Set();
-    const missing = [];
-    for (const rc of requiredCases) {
-      if (present.has(rc.key)) {
-        coveredCasesCount++;
-      } else {
-        missing.push(rc.promptHint || rc.label || rc.key);
+    const coveredByEpKey = new Map();
+    const unexpectedRequests = [];
+
+    for (const r of parsedRequests) {
+      const matchedEp = matchEndpoint(r);
+      if (!matchedEp) {
+        unexpectedRequests.push({
+          method: String(r.method || "GET").toUpperCase(),
+          path: r.path || "/",
+          testName: r.testName || "Unnamed scenario",
+        });
+        continue;
+      }
+      const epKey = `${String(matchedEp.method || "GET").toUpperCase()} ${matchedEp.fullPath || matchedEp.path || "/"}`;
+      const caseKey = getScenarioCaseKey({
+        title: r.testName,
+        expectedStatus: r.expectedStatus,
+        expectedStatuses: r.expectedStatuses,
+      });
+      const set = coveredByEpKey.get(epKey) || new Set();
+      set.add(caseKey);
+      coveredByEpKey.set(epKey, set);
+    }
+
+    let coveredCasesCount = 0;
+    let totalRequiredCases = 0;
+    const missingCases = [];
+
+    for (const ep of endpointsToGenerate) {
+      const epMethod = String(ep.method || "GET").toUpperCase();
+      const epPath = ep.fullPath || ep.path || "/";
+      const epKey = `${epMethod} ${epPath}`;
+      const requiredCases = getEndpointRequiredCases(ep);
+      totalRequiredCases += requiredCases.length;
+      const present = coveredByEpKey.get(epKey) || new Set();
+      const missing = [];
+      for (const rc of requiredCases) {
+        if (present.has(rc.key)) {
+          coveredCasesCount++;
+        } else {
+          missing.push(rc.promptHint || rc.label || rc.key);
+        }
+      }
+      if (missing.length > 0) {
+        missingCases.push({
+          epKey,
+          method: epMethod,
+          path: epPath,
+          missingLabels: missing,
+        });
       }
     }
-    if (missing.length > 0) {
-      missingCases.push({
-        epKey,
-        method: epMethod,
-        path: epPath,
-        missingLabels: missing,
-      });
-    }
-  }
 
-  return {
-    parsedRequests,
-    coveredCasesCount,
-    totalRequiredCases,
-    missingCases,
-    unexpectedRequests,
+    return {
+      parsedRequests,
+      coveredCasesCount,
+      totalRequiredCases,
+      missingCases,
+      unexpectedRequests,
+    };
   };
-};
 
   // 4.5 Verify generated scenarios against real Jest/Supertest runner & auto-repair failures
   let verificationSummary = null;
   const checkHasRunnableJestAndSupertest = () =>
     Boolean(
       resolvedSnapshotRoot &&
-        fs.existsSync(resolvedSnapshotRoot) &&
-        ["", "server", "backend", "api"].some(
-          (sub) =>
-            fs.existsSync(
-              path.join(resolvedSnapshotRoot, sub, "node_modules", "jest"),
-            ) &&
-            fs.existsSync(
-              path.join(resolvedSnapshotRoot, sub, "node_modules", "supertest"),
-            ),
-        ),
+      fs.existsSync(resolvedSnapshotRoot) &&
+      ["", "server", "backend", "api"].some(
+        (sub) =>
+          fs.existsSync(
+            path.join(resolvedSnapshotRoot, sub, "node_modules", "jest"),
+          ) &&
+          fs.existsSync(
+            path.join(resolvedSnapshotRoot, sub, "node_modules", "supertest"),
+          ),
+      ),
     );
   let hasRunnableJestAndSupertest = checkHasRunnableJestAndSupertest();
   if (
@@ -764,11 +860,12 @@ const evaluateGeneratedCompleteness = (
     let bestCoveredCases = -1;
     let bestPassed = -1;
     let bestFailed = Number.POSITIVE_INFINITY;
+    let bestFailureSummary = null;
 
     try {
       restoreEntries =
         await prepareExpressEntriesForSupertest(resolvedSnapshotRoot);
-      const maxVerifyPasses = 4;
+      const maxVerifyPasses = 5;
 
       for (let pass = 1; pass <= maxVerifyPasses; pass++) {
         if (abortSignal?.aborted) break;
@@ -877,21 +974,86 @@ const evaluateGeneratedCompleteness = (
         }
 
         const failureDetails = [];
+        let saw500Got400 = false;
+        let sawPaymentOrStripeFailure = false;
+        let sawNotAConstructor = false;
+        let saw400Got404 = false;
         for (const fsItem of failedScenarios.slice(0, 12)) {
           const msg = Array.isArray(fsItem.failureMessages)
             ? fsItem.failureMessages.join("\n")
             : fsItem.errorMessage || "";
+          if (/Expected:\s*500[\s\S]*?Received:\s*400/i.test(msg)) {
+            saw500Got400 = true;
+          }
+          if (/is not a constructor/i.test(msg)) {
+            sawNotAConstructor = true;
+          }
+          if (
+            /(?:Expected(?: value)?:\s*404[\s\S]*?Received array:\s*\[400|Expected:\s*400[\s\S]*?Received:\s*404)/i.test(
+              msg,
+            )
+          ) {
+            saw400Got404 = true;
+          }
+          if (/payment|checkout-session|stripe/i.test(fsItem.title || "")) {
+            sawPaymentOrStripeFailure = true;
+          }
           failureDetails.push(
             `FAILED: ${fsItem.title}\n${String(msg).slice(0, 1200)}`,
           );
         }
-        const rawStderr = String(
-          runResult?.stderr || runResult?.stdout || "",
-        ).trim();
-        if (failureDetails.length === 0 && rawStderr) {
-          failureDetails.push(rawStderr.slice(-2500));
+        const rawStderr = String(runResult?.stderr || "").trim();
+        const rawStdout = String(runResult?.stdout || "").trim();
+        // Put stderr BEFORE stdout so Jest's verbose --json payload on stdout never pushes controller console.error/TypeError/RangeError off the slice.
+        const combinedLogs = [rawStderr, rawStdout].filter(Boolean).join("\n");
+        const runtimeErrLines = combinedLogs
+          .split(/\r?\n/)
+          .filter((line) =>
+            /(?:TypeError|RangeError|ReferenceError|SyntaxError|Invalid time value|is not a function|is not a constructor|console\.error|Error:)/i.test(
+              line,
+            ),
+          )
+          .slice(0, 25)
+          .join("\n");
+        if (runtimeErrLines) {
+          failureDetails.push(
+            `Extracted Runtime Exceptions:\n${runtimeErrLines}`,
+          );
+        }
+        if (saw500Got400) {
+          failureDetails.push(
+            `DIAGNOSTIC HINT (Expected 500, Received 400): Input validation rejected the request with 400 BEFORE calling the mocked service/DB! In every 500 error test using .mockRejectedValueOnce(...), send a VALID NON-EMPTY payload (e.g. non-empty 'content', valid required fields), NEVER '' or {}.`,
+          );
+        }
+        if (sawNotAConstructor) {
+          failureDetails.push(
+            `DIAGNOSTIC HINT (Singleton Service — is not a constructor): The imported service module exports a singleton INSTANCE (export default new XxxService()), NOT a class! NEVER write 'new serviceModule.default()'. Instead spy directly on the exported instance: 'jest.spyOn(serviceModule.default, "methodName").mockImplementationOnce(() => { throw new Error("Simulated failure"); })'.`,
+          );
+        }
+        if (saw400Got404) {
+          failureDetails.push(
+            `DIAGNOSTIC HINT (Expected 400, Received 404 on URL Param): Express strips raw unencoded trailing spaces in URLs like '/checkout-session/   ', causing 404 Not Found! Replace raw spaces with URL-encoded '/%20' (e.g. '/api/sandbox/payments/checkout-session/%20') so req.params receives ' ' and the controller returns 400.`,
+          );
+        }
+        if (
+          sawPaymentOrStripeFailure ||
+          /Invalid time value|sessions\.list|paymentIntents\.list/i.test(
+            combinedLogs,
+          )
+        ) {
+          failureDetails.push(
+            `DIAGNOSTIC HINT (Stripe Mock Incomplete): A Stripe-backed route threw (often RangeError on 'new Date(item.created * 1000)' or missing '.list()'). REMOVE custom jest.unstable_mockModule('stripe', ...) so CovAI's complete built-in mock handles all Stripe methods & timestamps, OR add 'created: Math.floor(Date.now() / 1000)' on every session/intent AND implement checkout.sessions.list + paymentIntents.list returning { data: [...] }.`,
+          );
+        }
+        if (failureDetails.length === 0 && combinedLogs) {
+          failureDetails.push(combinedLogs.slice(0, 2500));
         } else if (rawStderr) {
-          failureDetails.push(`Jest Output Tail:\n${rawStderr.slice(-1200)}`);
+          const stderrHead = rawStderr.slice(0, 2500);
+          const stderrTail =
+            rawStderr.length > 2500 ? rawStderr.slice(-1500) : "";
+          failureDetails.push(
+            `Jest Stderr (Head):\n${stderrHead}${stderrTail ? `\n...\nJest Stderr Tail:\n${stderrTail}` : ""}`,
+          );
         }
 
         // If a mocked module omitted a required named export, surface that file's exports explicitly for repair
@@ -904,12 +1066,26 @@ const evaluateGeneratedCompleteness = (
           const cleanMod = missingMod.replace(/^(?:\.\.?\/)+/, "");
           const modFile = (sourceCode || []).find((f) => {
             const p = String(f.path || f.filePath || "").replace(/\\/g, "/");
-            return p === cleanMod || p.endsWith(`/${cleanMod}`) || p.endsWith(cleanMod);
+            return (
+              p === cleanMod ||
+              p.endsWith(`/${cleanMod}`) ||
+              p.endsWith(cleanMod)
+            );
           });
           failureDetails.push(
             `CRITICAL MOCK FIX NEEDED: Your mock for '${missingMod}' MUST also export '${missingExport}' (plus any default/named exports in that file):${modFile?.content ? `\n// ${modFile.path || modFile.filePath}\n${String(modFile.content).slice(0, 1500)}` : ""}`,
           );
         }
+
+        const currentFailureSummary = failureDetails.join("\n---\n");
+        if (isBetterCandidate || !bestFailureSummary) {
+          bestFailureSummary = currentFailureSummary;
+        }
+        // Prevent repair regression: if this pass performed worse than bestCode, repair from bestCode instead.
+        const repairBaseCode = isBetterCandidate ? cleanedCode : bestCode;
+        const repairBaseSummary = isBetterCandidate
+          ? currentFailureSummary
+          : bestFailureSummary;
 
         await addJobLog(
           jobId,
@@ -918,8 +1094,8 @@ const evaluateGeneratedCompleteness = (
         ).catch(() => {});
 
         const repairPrompt = buildIntegrationRepairPrompt({
-          code: cleanedCode,
-          failureSummary: failureDetails.join("\n---\n"),
+          code: repairBaseCode,
+          failureSummary: repairBaseSummary,
           framework: normFramework.toLowerCase(),
           endpoints: endpointsToGenerate,
           sourceCode,
@@ -930,7 +1106,7 @@ const evaluateGeneratedCompleteness = (
         const repairResponse = await generateText(repairPrompt, model || null, {
           taskType: "integration",
           temperature: 0.15,
-          maxOutputTokens: 8192,
+          maxOutputTokens: 16384,
           returnTelemetry: true,
         });
         const repairText =
@@ -1120,15 +1296,84 @@ const evaluateGeneratedCompleteness = (
           where: { id: { in: previousIntegrationAiTestIds } },
         });
       }
-      if (staleAiTitles.length > 0 && tx.testScenario?.deleteMany) {
-        await tx.testScenario
-          .deleteMany({
-            where: {
-              title: { in: staleAiTitles },
-              testRun: { snapshotId, type: "SUPERTEST" },
-            },
+      if (tx.testScenario?.deleteMany) {
+        // Delete stale TestScenarios from older runs targeting this regenerated file (or previous AI titles)
+        // so historical runs never leave behind ghost "Duplicate" / "Not run" scenarios in the UI.
+        const normTargetFile = String(targetFilePath || "")
+          .replace(/\\/g, "/")
+          .replace(/^\/+/, "");
+        const deleteConditions = [];
+        if (staleAiTitles.length > 0) {
+          deleteConditions.push({ title: { in: staleAiTitles } });
+        }
+        if (normTargetFile) {
+          deleteConditions.push({
+            testFile: { endsWith: normTargetFile },
+            ...(existingProjectTitles.size > 0
+              ? { title: { notIn: Array.from(existingProjectTitles) } }
+              : {}),
+          });
+        }
+        if (deleteConditions.length > 0) {
+          await tx.testScenario
+            .deleteMany({
+              where: {
+                OR: deleteConditions,
+                testRun: { snapshotId, type: "SUPERTEST" },
+              },
+            })
+            .catch(() => {});
+        }
+      }
+      // Clear stale staged deletions targeting the newly generated test file so fresh scenarios are never hidden/skipped.
+      if (tx.projectStructureAnalysis?.findUnique) {
+        const analysisRow = await tx.projectStructureAnalysis
+          .findUnique({
+            where: { snapshotId },
+            select: { resultJson: true },
           })
-          .catch(() => {});
+          .catch(() => null);
+        if (analysisRow?.resultJson) {
+          try {
+            const parsedAnalysis =
+              typeof analysisRow.resultJson === "string"
+                ? JSON.parse(analysisRow.resultJson)
+                : analysisRow.resultJson;
+            if (
+              Array.isArray(parsedAnalysis?.deletedIntegrationScenarios) &&
+              parsedAnalysis.deletedIntegrationScenarios.length > 0
+            ) {
+              const normTargetFile = String(targetFilePath || "")
+                .replace(/\\/g, "/")
+                .replace(/^\/+/, "")
+                .toLowerCase();
+              const remainingDeletes =
+                parsedAnalysis.deletedIntegrationScenarios.filter((d) => {
+                  const dFile = String(d?.filePath || "")
+                    .replace(/\\/g, "/")
+                    .replace(/^\/+/, "")
+                    .toLowerCase();
+                  return (
+                    dFile &&
+                    normTargetFile &&
+                    dFile !== normTargetFile &&
+                    !dFile.endsWith(normTargetFile) &&
+                    !normTargetFile.endsWith(dFile)
+                  );
+                });
+              if (
+                remainingDeletes.length !==
+                parsedAnalysis.deletedIntegrationScenarios.length
+              ) {
+                parsedAnalysis.deletedIntegrationScenarios = remainingDeletes;
+                await tx.projectStructureAnalysis.update({
+                  where: { snapshotId },
+                  data: { resultJson: JSON.stringify(parsedAnalysis) },
+                });
+              }
+            }
+          } catch (_) {}
+        }
       }
       return tx.aiTest.create({
         data: {

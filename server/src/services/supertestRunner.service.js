@@ -185,6 +185,29 @@ export const runSupertest = async (
     path.join(resolvedRoot, "api", "node_modules"),
   ].filter((p) => fs.existsSync(p));
 
+  const hasExplicitStripeMock = normalizedFiles.some((rel) => {
+    try {
+      const abs = path.resolve(resolvedRoot, rel);
+      if (!fs.existsSync(abs)) return false;
+      const src = fs.readFileSync(abs, "utf8");
+      return /(?:unstable_mockModule|mock)\s*\(\s*['"]stripe['"]/.test(src);
+    } catch (_) {
+      return false;
+    }
+  });
+  const hasExplicitGenAiMock = normalizedFiles.some((rel) => {
+    try {
+      const abs = path.resolve(resolvedRoot, rel);
+      if (!fs.existsSync(abs)) return false;
+      const src = fs.readFileSync(abs, "utf8");
+      return /(?:unstable_mockModule|mock)\s*\(\s*['"]@google\/generative-ai['"]/.test(
+        src,
+      );
+    } catch (_) {
+      return false;
+    }
+  });
+
   const env = {
     CI: "true",
     NODE_ENV: "test",
@@ -197,6 +220,12 @@ export const runSupertest = async (
       process.env.STRIPE_SECRET_KEY || "sk_test_covai_mock_secret_key_12345",
     STRIPE_API_KEY:
       process.env.STRIPE_API_KEY || "sk_test_covai_mock_api_key_12345",
+    GEMINI_API_KEY:
+      process.env.GEMINI_API_KEY || "covai_mock_gemini_api_key_12345",
+    GOOGLE_API_KEY:
+      process.env.GOOGLE_API_KEY || "covai_mock_google_api_key_12345",
+    ...(hasExplicitStripeMock ? { COVAI_SKIP_STRIPE_MOCK: "true" } : {}),
+    ...(hasExplicitGenAiMock ? { COVAI_SKIP_GENAI_MOCK: "true" } : {}),
     ...(nodePathCandidates.length > 0
       ? { NODE_PATH: nodePathCandidates.join(path.delimiter) }
       : {}),

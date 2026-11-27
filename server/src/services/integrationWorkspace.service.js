@@ -2041,7 +2041,37 @@ const executeBuildIntegrationWorkspace = async (
 
   const testParseTime = Date.now() - startTestParse;
 
-  const activeTestScenarios = testScenarios.filter((s) => !isStagedDeletedScenario(s, s.testFile));
+  const aiTestValidTitlesByFile = new Map();
+  for (const pt of parsedTests) {
+    if (String(pt.test?.id || "").startsWith("existing_test_")) continue;
+    const normPtFile = String(cleanStoragePath(pt.test?.filePath) || pt.test?.filePath || "")
+      .replace(/\\/g, "/")
+      .replace(/^\/+/, "")
+      .toLowerCase();
+    if (!normPtFile) continue;
+    const titleSet = aiTestValidTitlesByFile.get(normPtFile) || new Set();
+    for (const r of pt.requests || []) {
+      const tn = String(r.testName || "").trim().toLowerCase();
+      if (tn) titleSet.add(tn);
+    }
+    aiTestValidTitlesByFile.set(normPtFile, titleSet);
+  }
+
+  const activeTestScenarios = testScenarios.filter((s) => {
+    if (isStagedDeletedScenario(s, s.testFile)) return false;
+    const normSFile = String(cleanStoragePath(s.testFile) || s.testFile || "")
+      .replace(/\\/g, "/")
+      .replace(/^\/+/, "")
+      .toLowerCase();
+    const validTitles = normSFile ? aiTestValidTitlesByFile.get(normSFile) : null;
+    if (validTitles && validTitles.size > 0) {
+      const sTitleLower = String(s.title || "").trim().toLowerCase();
+      if (sTitleLower && !validTitles.has(sTitleLower)) {
+        return false;
+      }
+    }
+    return true;
+  });
   const enrichedScenarios = activeTestScenarios.map((s) => {
     const sSuite = String(s.suiteName || "").trim();
     let matchingRequests = allParsedRequests.filter((pr) => {
@@ -2513,10 +2543,19 @@ const executeBuildIntegrationWorkspace = async (
           durationMs: mainEv?.durationMs || scDuration,
         };
 
+        const resolvedTestId = rest.aiTestId || rest.testId || req?.testId || null;
+        const resolvedScenarioId = rest.scenarioId || req?.scenarioId || rest.id || null;
+
         return {
           ...rest,
-          aiTestId: rest.aiTestId || rest.testId || req?.testId || null,
-          scenarioId: rest.scenarioId || req?.scenarioId || rest.id || null,
+          id:
+            rest.id ||
+            (resolvedTestId && resolvedScenarioId
+              ? `${resolvedTestId}::${resolvedScenarioId}`
+              : undefined),
+          testId: resolvedTestId,
+          aiTestId: resolvedTestId,
+          scenarioId: resolvedScenarioId,
           filePath: rest.filePath || req?.filePath || req?.testFile || null,
           name: rest.name || rest.title || req?.testName,
           method: rest.method || requestMethod,

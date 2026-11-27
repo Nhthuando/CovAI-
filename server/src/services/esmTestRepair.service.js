@@ -743,10 +743,56 @@ export const convertJestMocksAndStaticImportsToEsm = (code, { testFilePath = "te
         }
     }
 
+    // Collect all bindings produced by deferred static imports or dynamic `await import(...)` / `require(...)`
+    // declarations, plus any top-level declarations that transitively reference them (e.g.
+    // `const ctrl = ctrlModule.default`), so we NEVER hoist them above `await import(...)` and cause TDZ crashes.
+    const deferredImportedBindings = new Set();
+    for (const stmt of body) {
+        const stmtSrc = out.slice(stmt.start, stmt.end);
+        if (stmt.type === "ImportDeclaration") {
+            const spec = stmt.source?.value || "";
+            if (
+                spec !== "@jest/globals" &&
+                !(isJestFrameworkImport(spec) && !mockedSpecifiers.has(spec)) &&
+                (spec.startsWith(".") || mockedSpecifiers.has(spec) || mockedSpecifiers.size > 0 || forcePrismaMock || forceGenAiMock)
+            ) {
+                for (const s of stmt.specifiers || []) {
+                    if (s.local?.name) deferredImportedBindings.add(s.local.name);
+                }
+            }
+        } else if (stmt.type === "VariableDeclaration" && (/\bawait\s+import\b/.test(stmtSrc) || /\brequire\s*\(/.test(stmtSrc))) {
+            for (const d of stmt.declarations || []) {
+                if (d.id?.type === "Identifier" && d.id.name) {
+                    deferredImportedBindings.add(d.id.name);
+                } else if (d.id?.type === "ObjectPattern") {
+                    for (const p of d.id.properties || []) {
+                        const localName = p.value?.name || p.argument?.name;
+                        if (localName) deferredImportedBindings.add(localName);
+                    }
+                }
+            }
+        }
+    }
+    let addedDeferredDep = true;
+    while (addedDeferredDep) {
+        addedDeferredDep = false;
+        for (const [declName, refs] of topLevelDeclRefs.entries()) {
+            if (deferredImportedBindings.has(declName)) continue;
+            for (const r of refs) {
+                if (r !== declName && deferredImportedBindings.has(r)) {
+                    deferredImportedBindings.add(declName);
+                    addedDeferredDep = true;
+                    break;
+                }
+            }
+        }
+    }
+
     const frameworkImports = [];
     const hoistedMockVars = [];
     const unstableMockStmts = [];
     const deferredDynamicImports = [];
+    const dynamicImportDecls = [];
     const remainingStmts = [];
     let hasGlobalsImport = false;
     let needsJest = /\bjest\./.test(out);
@@ -795,14 +841,24 @@ export const convertJestMocksAndStaticImportsToEsm = (code, { testFilePath = "te
             continue;
         }
 
+        // Place top-level `const xModule = await import(...)` declarations right alongside deferredDynamicImports
+        // so even previously mis-ordered `const x = xModule.default` statements execute AFTER `xModule` initializes.
+        if (stmt.type === "VariableDeclaration" && !seenSuiteBlock && /\bawait\s+import\b/.test(rawStmt)) {
+            dynamicImportDecls.push(rawStmt);
+            continue;
+        }
+
         // Keep top-level helper variables and function declarations declared before describe/test blocks
-        // (or referenced inside any hoisted unstable_mockModule call) ahead of unstable_mockModule calls to avoid TDZ errors.
+        // (or referenced inside any hoisted unstable_mockModule call) ahead of unstable_mockModule calls,
+        // EXCEPT when they depend on deferred/dynamic module imports (which would trigger a TDZ ReferenceError).
         if (stmt.type === "VariableDeclaration" || stmt.type === "FunctionDeclaration") {
             const declaredNames = stmt.type === "FunctionDeclaration"
                 ? [stmt.id?.name].filter(Boolean)
                 : (stmt.declarations || []).map((d) => d.id?.name).filter(Boolean);
+            const dependsOnDeferredImport = declaredNames.some((n) => deferredImportedBindings.has(n)) ||
+                [...rawStmt.matchAll(/\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b/g)].some((m) => deferredImportedBindings.has(m[1]));
             const isReferencedByMock = declaredNames.some((n) => mockReferencedIds.has(n));
-            if (!seenSuiteBlock || isReferencedByMock) {
+            if ((!seenSuiteBlock || isReferencedByMock) && !dependsOnDeferredImport) {
                 const hasRequire = /\brequire\s*\(/.test(rawStmt);
                 const hasDynamicImport = /\bawait\s+import\b/.test(rawStmt);
                 if (!hasRequire && !hasDynamicImport) {
@@ -854,6 +910,7 @@ export const convertJestMocksAndStaticImportsToEsm = (code, { testFilePath = "te
         injectedMocks.join("\n"),
         unstableMockStmts.join("\n"),
         deferredDynamicImports.join("\n"),
+        dynamicImportDecls.join("\n"),
         remainingStmts.join("\n\n"),
     ].filter((s) => s && s.trim().length > 0);
 

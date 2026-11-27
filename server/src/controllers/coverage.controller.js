@@ -235,17 +235,20 @@ export const resolveSnapshotRootDir = (rootDir) => {
   if (!rootDir) return null;
   let candidate = rootDir;
   if (!fs.existsSync(rootDir)) {
-    if (rootDir.startsWith("/app/")) {
+    const normalized = String(rootDir).replace(/\\/g, "/");
+    if (normalized.startsWith("/app/")) {
       const hostCandidate = path.resolve(
         process.cwd(),
-        rootDir.replace(/^\/app\//, ""),
+        normalized.replace(/^\/app\//, ""),
       );
       if (fs.existsSync(hostCandidate)) candidate = hostCandidate;
     } else {
-      const storageIdx = rootDir.indexOf("storage");
-      if (storageIdx !== -1) {
-        const subPath = rootDir.slice(storageIdx).replace(/\\/g, "/");
-        const containerCandidate = path.join("/app", subPath);
+      const storageMatch = normalized.match(
+        /(?:^|\/)((?:storage|uploads)\/.+)$/i,
+      );
+      if (storageMatch) {
+        const subPath = storageMatch[1];
+        const containerCandidate = path.posix.join("/app", subPath);
         if (fs.existsSync(containerCandidate)) candidate = containerCandidate;
         else {
           const hostCandidate = path.resolve(process.cwd(), subPath);
@@ -259,6 +262,39 @@ export const resolveSnapshotRootDir = (rootDir) => {
       ? resolveProjectRoot(candidate)
       : candidate;
   return resolved || candidate;
+};
+
+const ensureSnapshotSourceOnDisk = async (snapshot, resolvedRootDir) => {
+  if (resolvedRootDir && fs.existsSync(resolvedRootDir)) {
+    return resolvedRootDir;
+  }
+  if (
+    snapshot?.source === "ZIP" &&
+    snapshot?.storagePath &&
+    snapshot?.id
+  ) {
+    try {
+      const { extractZipSnapshot } =
+        await import("../services/zipExtraction.service.js");
+      const extracted = await extractZipSnapshot(
+        snapshot.id,
+        snapshot.storagePath,
+      );
+      const restored = resolveSnapshotRootDir(extracted) || extracted;
+      if (restored && fs.existsSync(restored)) {
+        return restored;
+      }
+    } catch (restoreErr) {
+      console.warn(
+        `[CoverageController] Unable to restore ZIP snapshot ${snapshot.id} from storage:`,
+        restoreErr?.message,
+      );
+    }
+  }
+  throw new ServiceError(
+    "Project source files for this snapshot are missing on disk. Please re-import or re-sync the project.",
+    409,
+  );
 };
 
 const findOwnedSnapshot = async (snapshotId, userId) => {
@@ -423,8 +459,10 @@ export const getCoverageFrameworks = async (req, res) => {
         message: "Snapshot is not ready for analysis.",
       });
 
-    const resolvedRootDir =
-      resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir;
+    const resolvedRootDir = await ensureSnapshotSourceOnDisk(
+      snapshot,
+      resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir,
+    );
 
     if (frameworksCache.has(snapshot.id)) {
       return res.json({
@@ -488,8 +526,10 @@ export const runCoverageByType = async (req, res) => {
     invalidateCoverageCache(snapshot.id);
     if (snapshotId !== snapshot.id) invalidateCoverageCache(snapshotId);
 
-    const resolvedRootDir =
-      resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir;
+    const resolvedRootDir = await ensureSnapshotSourceOnDisk(
+      snapshot,
+      resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir,
+    );
 
     const detection = detectCoverageFrameworks(resolvedRootDir);
     let job;
@@ -2008,8 +2048,10 @@ export const runCoverage = async (req, res) => {
       });
     }
 
-    const resolvedRootDir =
-      resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir;
+    const resolvedRootDir = await ensureSnapshotSourceOnDisk(
+      snapshot,
+      resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir,
+    );
     const candidateDirs = [
       "",
       "server",
@@ -2023,7 +2065,7 @@ export const runCoverage = async (req, res) => {
     const hasPackageJson = candidateDirs.some((cand) =>
       fs.existsSync(
         cand
-          ? path.join(snapshot.rootDir, cand, "package.json")
+          ? path.join(resolvedRootDir, cand, "package.json")
           : path.join(resolvedRootDir, "package.json"),
       ),
     );
@@ -2095,6 +2137,8 @@ export const runSupertestCoverage = async (req, res) => {
         id: true,
         projectId: true,
         rootDir: true,
+        source: true,
+        storagePath: true,
         project: { select: { ownerId: true } },
       },
     });
@@ -2113,8 +2157,10 @@ export const runSupertestCoverage = async (req, res) => {
         message: "Snapshot is not ready to run tests.",
       });
 
-    const resolvedRootDir =
-      resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir;
+    const resolvedRootDir = await ensureSnapshotSourceOnDisk(
+      snapshot,
+      resolveSnapshotRootDir(snapshot.rootDir) || snapshot.rootDir,
+    );
 
     const candidateDirs = [
       "",
@@ -2129,7 +2175,7 @@ export const runSupertestCoverage = async (req, res) => {
     const hasPackageJson = candidateDirs.some((cand) =>
       fs.existsSync(
         cand
-          ? path.join(snapshot.rootDir, cand, "package.json")
+          ? path.join(resolvedRootDir, cand, "package.json")
           : path.join(resolvedRootDir, "package.json"),
       ),
     );

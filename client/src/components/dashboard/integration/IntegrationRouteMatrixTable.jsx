@@ -1675,20 +1675,6 @@ const IntegrationRouteMatrixTable = forwardRef(
 
                                           {/* Quiet Ghost Scenario Actions */}
                                           <div className="flex items-center gap-0.5 shrink-0 opacity-75 group-hover/sc:opacity-100 transition-opacity">
-                                            {onSimulateScenario && (
-                                              <button
-                                                type="button"
-                                                onClick={() =>
-                                                  onSimulateScenario(sc, ep)
-                                                }
-                                                title="Simulate request execution flow for this scenario"
-                                                className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary)]/10 transition-colors cursor-pointer"
-                                              >
-                                                <Play className="w-2.5 h-2.5" />
-                                                <span>Simulate</span>
-                                              </button>
-                                            )}
-
                                             {scFailed && onAIFixScenario && (
                                               <button
                                                 type="button"
@@ -2045,22 +2031,6 @@ const IntegrationRouteMatrixTable = forwardRef(
                       </span>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
-                      {onSimulateScenario && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onSimulateScenario(sc, {
-                              method: sc.method || "GET",
-                              path: sc.path || "/",
-                              scenarios: [sc],
-                            })
-                          }
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium bg-[var(--color-bg)] hover:bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-border)] cursor-pointer"
-                        >
-                          <Play className="w-2.5 h-2.5" />
-                          <span>Simulate</span>
-                        </button>
-                      )}
                       {onOpenEditScenario && (
                         <button
                           type="button"

@@ -194,4 +194,29 @@ test.describe('App', () => {
     expect(ast.namedExports.has("app")).toBe(true);
     expect(buildEsmPrismaMockBlock(["../../src/config/prisma.js"])).toContain("unstable_mockModule");
   });
+
+  it("never hoists variables derived from dynamic await import above the import (prevents TDZ crashes)", () => {
+    const code = `
+      import { jest, describe, it, expect } from '@jest/globals';
+      const mockService = { getArticles: jest.fn() };
+      await jest.unstable_mockModule('../../src/services/article.service.js', () => ({ default: mockService }));
+      const articleControllerModule = await import('../../src/controllers/article.controller.js');
+      const articleController = articleControllerModule.default;
+      describe('ArticleController', () => {
+        it('loads cleanly', () => expect(articleController).toBeDefined());
+      });
+    `;
+    const fixed = convertJestMocksAndStaticImportsToEsm(code, {
+      testFilePath: "server/tests/controllers/article.controller.test.js",
+      targetSourceFile: "server/src/controllers/article.controller.js",
+    });
+    const mockDeclIdx = fixed.indexOf("const mockService =");
+    const mockCallIdx = fixed.indexOf("jest.unstable_mockModule");
+    const dynImportIdx = fixed.indexOf("const articleControllerModule = await import");
+    const derivedIdx = fixed.indexOf("const articleController = articleControllerModule.default");
+    expect(mockDeclIdx).toBeGreaterThan(-1);
+    expect(mockDeclIdx).toBeLessThan(mockCallIdx);
+    expect(mockCallIdx).toBeLessThan(dynImportIdx);
+    expect(dynImportIdx).toBeLessThan(derivedIdx);
+  });
 });

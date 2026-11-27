@@ -1050,6 +1050,8 @@ process.env.REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 `
 }process.env.STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || 'sk_test_covai_mock_stripe_key_123456789';
 process.env.STRIPE_API_KEY = process.env.STRIPE_API_KEY || 'sk_test_covai_mock_stripe_key_123456789';
+process.env.GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'covai-test-gemini-mock-key-123456789';
+process.env.GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || 'covai-test-gemini-mock-key-123456789';
 
 // 2. Prevent unhandled rejections from terminating Jest runner during test teardown
 process.on('unhandledRejection', (reason) => {
@@ -1205,8 +1207,17 @@ try {
     const createClient = () => ({
       checkout: {
         sessions: {
-          create: _fn(async () => ({ id: 'cs_test_mock', url: 'https://checkout.stripe.com/mock' })),
-          retrieve: _fn(async (id) => ({ id: id || 'cs_test_mock', payment_status: 'paid', status: 'complete' })),
+          create: _fn(async () => ({ id: 'cs_test_mock', url: 'https://checkout.stripe.com/mock', status: 'open', payment_status: 'unpaid', amount_total: 500, currency: 'usd', created: Math.floor(Date.now() / 1000) })),
+          retrieve: _fn(async (id) => {
+            if (!id || /non_existent|not_found|missing|invalid/i.test(String(id))) {
+              const err = new Error('No such checkout session: ' + id);
+              err.type = 'StripeInvalidRequestError';
+              err.statusCode = 404;
+              throw err;
+            }
+            return { id: id || 'cs_test_mock', payment_status: 'paid', status: 'complete', amount_total: 500, currency: 'usd', created: Math.floor(Date.now() / 1000), payment_intent: { id: 'pi_test_mock', status: 'succeeded' } };
+          }),
+          list: _fn(async () => ({ data: [{ id: 'cs_test_mock', payment_status: 'paid', status: 'complete', amount_total: 500, currency: 'usd', created: Math.floor(Date.now() / 1000) }] })),
         }
       },
       paymentIntents: {
@@ -1216,10 +1227,19 @@ try {
             err.type = "StripeInvalidRequestError";
             throw err;
           }
-          return { id: 'pi_test_mock', client_secret: 'pi_test_secret_mock', status: 'succeeded' };
+          return { id: 'pi_test_mock', client_secret: 'pi_test_secret_mock', status: 'succeeded', amount: params?.amount || 1000, currency: params?.currency || 'usd', created: Math.floor(Date.now() / 1000) };
         }),
-        retrieve: _fn(async (id) => ({ id: id || 'pi_test_mock', status: 'succeeded' })),
-        confirm: _fn(async (id) => ({ id: id || 'pi_test_mock', status: 'succeeded' })),
+        retrieve: _fn(async (id) => {
+          if (!id || /non_existent|not_found|missing|invalid/i.test(String(id))) {
+            const err = new Error('No such payment_intent: ' + id);
+            err.type = 'StripeInvalidRequestError';
+            err.statusCode = 404;
+            throw err;
+          }
+          return { id: id || 'pi_test_mock', status: 'succeeded', amount: 1000, currency: 'usd', created: Math.floor(Date.now() / 1000) };
+        }),
+        confirm: _fn(async (id) => ({ id: id || 'pi_test_mock', status: 'succeeded', amount: 1000, currency: 'usd', created: Math.floor(Date.now() / 1000) })),
+        list: _fn(async () => ({ data: [{ id: 'pi_test_mock', status: 'succeeded', amount: 1000, currency: 'usd', created: Math.floor(Date.now() / 1000) }] })),
       },
       customers: {
         create: _fn(async (params) => ({ id: 'cus_test_mock', ...(params || {}) })),
@@ -1244,7 +1264,7 @@ try {
 
   global.__covai_stripe_mock__ = buildStripeCtor();
 
-  if (typeof jest !== 'undefined') {
+  if (typeof jest !== 'undefined' && process.env.COVAI_SKIP_STRIPE_MOCK !== 'true') {
     if (typeof jest.mock === 'function') {
       try {
         jest.mock('stripe', () => global.__covai_stripe_mock__, { virtual: true });
@@ -1257,6 +1277,57 @@ try {
           default: global.__covai_stripe_mock__,
           Stripe: global.__covai_stripe_mock__,
         }));
+      } catch (_) {}
+    }
+  }
+} catch (_) {}
+
+// Mock @google/generative-ai SDK so AI-powered routes pass deterministically offline without live API calls
+try {
+  const _gfn = (impl) => (typeof jest !== 'undefined' && typeof jest.fn === 'function')
+    ? jest.fn(impl)
+    : (impl || (() => undefined));
+  const createGenAiModel = () => ({
+    generateContent: _gfn(async () => ({
+      response: {
+        text: () => JSON.stringify({
+          summary: 'Mock AI summary for integration testing.',
+          topics: ['Technology'],
+          category: 'Technology',
+          confidence: 0.95,
+        }),
+        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 20, totalTokenCount: 30 },
+      },
+    })),
+    startChat: _gfn(() => ({
+      sendMessage: _gfn(async () => ({
+        response: {
+          text: () => 'Mock AI chat response for integration testing.',
+          usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 20, totalTokenCount: 30 },
+        },
+      })),
+      getHistory: _gfn(async () => []),
+    })),
+  });
+  const GoogleGenerativeAIMock = _gfn(function MockGoogleGenerativeAI() {
+    return {
+      getGenerativeModel: _gfn(() => createGenAiModel()),
+    };
+  });
+  global.__covai_genai_mock__ = {
+    __esModule: true,
+    GoogleGenerativeAI: GoogleGenerativeAIMock,
+    default: GoogleGenerativeAIMock,
+  };
+  if (typeof jest !== 'undefined' && process.env.COVAI_SKIP_GENAI_MOCK !== 'true') {
+    if (typeof jest.mock === 'function') {
+      try {
+        jest.mock('@google/generative-ai', () => global.__covai_genai_mock__, { virtual: true });
+      } catch (_) {}
+    }
+    if (typeof jest.unstable_mockModule === 'function') {
+      try {
+        jest.unstable_mockModule('@google/generative-ai', () => global.__covai_genai_mock__);
       } catch (_) {}
     }
   }
