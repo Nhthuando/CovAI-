@@ -91,6 +91,7 @@ export function createEvaluationRouter({ db = prisma, auth = authMiddleware, enq
     router.patch('/targets/:id', requireRun, controller.archiveTarget);
     router.post('/sources/upload', requireRun, upload, controller.uploadSource);
     router.post('/sources', requireRun, controller.createSource);
+    router.delete('/sources/:id', requireRun, controller.removeSource);
     router.post('/profiles', requireRun, controller.createProfile);
     router.patch('/profiles/:id', requireRun, controller.archiveProfile);
     router.post('/profiles/:id/versions', requireRun, controller.cloneProfileVersion);

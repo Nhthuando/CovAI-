@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CircleCheck, CircleX, FolderGit2, Globe, Settings2, Zap } from 'lucide-react';
+import { CircleCheck, CircleX, FolderGit2, Globe, Settings2, Plug } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { Badge } from '../../ui/badge';
 import { Panel, Field, JsonEditor, SecretInput, CopyCommand } from './ui';
@@ -172,7 +172,7 @@ export default function TargetSetup({ data, api, act, busy, external, navigateVi
             </div>
             <div className="flex flex-wrap gap-2">
               <Button variant="secondary" disabled={busy} onClick={() => begin(target)}><Settings2 aria-hidden="true" />Edit</Button>
-              <Button loading={busy} onClick={() => test(target.id)}><Zap aria-hidden="true" />Test connection</Button>
+              <Button loading={busy} onClick={() => test(target.id)}><Plug aria-hidden="true" />Test connection</Button>
             </div>
           </div>
           <dl className="grid overflow-hidden rounded-md border border-[var(--color-border)] text-sm sm:grid-cols-[10rem_minmax(0,1fr)]">
@@ -312,9 +312,13 @@ export default function TargetSetup({ data, api, act, busy, external, navigateVi
               </div>
             </details>}
         {(!managed || data.designAudit?.autoFillConfig?.requiresRouteAuth || config.auth.type !== 'none') && (
-          <SecretInput label={managed ? 'Route auth token (Bearer / API key)' : 'Auth token (optional)'}
+          <SecretInput label={managed || config.auth.type === 'none' ? 'Chatbot access token (optional)' : 'Auth token'}
             value={authToken} onChange={setAuthToken}
-            hint="Optional. Used for the connection test and cleared afterward." />
+            hint={managed
+              ? 'CovAI signs in with a test account automatically. Paste a token only to use a specific account.'
+              : config.auth.type === 'none'
+                ? 'Optional. Used for the connection test and cleared afterward.'
+                : 'Required while Authentication is not None: sign in to your chatbot app and paste its token. Set Authentication to None if the chat route is public. Cleared after the test.'} />
         )}
         <div className="grid gap-4 md:grid-cols-2">
           <Field label="Authentication">

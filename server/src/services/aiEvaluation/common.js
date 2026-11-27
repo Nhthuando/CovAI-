@@ -14,7 +14,8 @@ export const VERSIONS = Object.freeze({
     rules: 'rules-v2',
     mock: 'mock-v1',
     judge: 'judge-v3',
-    designAudit: 'design-audit-v1',
+    // Bump when analyzer output changes: stored audits from older versions are re-scanned.
+    designAudit: 'design-audit-v3',
 });
 
 export const SCENARIO_CATEGORIES = Object.freeze([

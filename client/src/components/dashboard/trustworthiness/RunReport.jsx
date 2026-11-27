@@ -16,7 +16,8 @@ const heroTone = {
   rose: 'border-rose-500/25',
   amber: 'border-amber-500/25',
 };
-const barTone = value => (value >= 80 ? 'bg-emerald-500/15' : value >= 50 ? 'bg-amber-500/15' : 'bg-rose-500/15');
+// Healthy rows stay neutral so color only marks what needs attention.
+const barTone = value => (value >= 80 ? 'bg-[var(--color-surface-secondary)]' : value >= 50 ? 'bg-amber-500/15' : 'bg-rose-500/15');
 
 function passRate(statuses) {
   const graded = statuses.filter(status => status === 'PASSED' || status === 'FAILED');
@@ -88,7 +89,7 @@ export default function RunReport({ run, api, act, busy, actions, notices }) {
       <section className={cn('flex flex-wrap items-center gap-x-6 gap-y-5 rounded-lg border bg-[var(--color-surface)] p-5', heroTone[verdict.tone] || 'border-[var(--color-border)]')}>
         <ProgressCircle value={score ?? 0} radius={46} strokeWidth={7} color={toneColor[verdict.tone] || 'primary'}>
           <span className="font-mono text-2xl font-semibold tabular-nums">{score != null ? numberText(score, 0) : '—'}</span>
-          <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">{scoreInfo.partial && score != null ? 'partial' : 'score'}</span>
+          <span className="text-[11px] text-[var(--color-text-muted)]">{scoreInfo.partial && score != null ? 'Partial' : 'Score'}</span>
         </ProgressCircle>
         <div className="min-w-[220px] flex-1 space-y-1.5">
           <h2 className="text-lg font-semibold tracking-tight">{verdict.title}</h2>

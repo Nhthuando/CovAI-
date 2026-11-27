@@ -215,6 +215,8 @@ export async function requestManagedLoopbackJson({
                 signal,
                 headers: {
                     Host: `127.0.0.1:${lease.port}`,
+                    // Same-origin browser header: apps that check Origin (CSRF guards) accept their own URL.
+                    Origin: `http://127.0.0.1:${lease.port}`,
                     'Content-Type': 'application/json',
                     Accept: responseFormat === 'sse' ? 'text/event-stream, application/json' : 'application/json',
                     'Accept-Encoding': 'identity',
@@ -313,7 +315,7 @@ function formatHistory(messages, format) {
     return messages.map(m => ({ role: format === 'model' ? modelRole(m.role) : m.role, content: m.content, text: m.content }));
 }
 
-export async function executeTurn(configInput, input, { credential, lease = null, transport, timeoutMs = 60000 } = {}) {
+export async function executeTurn(configInput, input, { credential, authHeaders, lease = null, transport, timeoutMs = 60000 } = {}) {
     const config = parse(targetSchema, configInput);
     const messages = Array.isArray(input.messages) ? input.messages : undefined;
     const lastUserIndex = messages?.findLastIndex(m => m?.role === 'user') ?? -1;
@@ -331,9 +333,11 @@ export async function executeTurn(configInput, input, { credential, lease = null
     let body = structuredClone(config.requestTemplate);
     for (const [pointer, binding] of Object.entries(config.bindings)) if (resolvedInput[binding] !== undefined) body = setPointer(body, pointer, resolvedInput[binding]);
     const headers = {};
+    // authHeaders: session cookies/CSRF from CovAI's automatic sign-in (Managed Project only).
+    if (authHeaders && typeof authHeaders === 'object') Object.assign(headers, authHeaders);
     if (config.auth.type !== 'none') {
-        if (!credential) fail('CREDENTIAL_REQUIRED', 'Configure an active target credential');
-        headers[config.auth.type === 'bearer' ? 'Authorization' : config.auth.header] = config.auth.type === 'bearer' ? `Bearer ${credential}` : credential;
+        if (credential) headers[config.auth.type === 'bearer' ? 'Authorization' : config.auth.header] = config.auth.type === 'bearer' ? `Bearer ${credential}` : credential;
+        else if (!authHeaders) fail('CREDENTIAL_REQUIRED', 'Configure an active target credential');
     }
     const start = performance.now();
     const activeTransport = transport || (config.executionMode === 'MANAGED_PROJECT' ? requestManagedLoopbackJson : requestPublicJson);

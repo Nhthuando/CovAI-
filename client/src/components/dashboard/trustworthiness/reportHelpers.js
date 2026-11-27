@@ -15,8 +15,10 @@ export function runStatus(run, live) {
   if (['CANCELED', 'CANCELLED'].includes(status)) return { label: 'Cancelled', tone: null };
   if (['ERROR', 'FAILED'].includes(status)) return { label: 'Stopped early', tone: 'rose' };
   const verdict = run.summary?.verdict || run.verdict;
-  if (status === 'COMPLETED' && verdict === 'PASSED') return { label: 'Passed', tone: 'emerald' };
-  if (status === 'COMPLETED' && verdict === 'FAILED') return { label: "Didn't pass", tone: 'rose' };
+  // INDETERMINATE with a verdict: every question was graded before the run lost its lease.
+  const graded = status === 'COMPLETED' || status === 'INDETERMINATE';
+  if (graded && verdict === 'PASSED') return { label: 'Passed', tone: 'emerald' };
+  if (graded && verdict === 'FAILED') return { label: "Didn't pass", tone: 'rose' };
   return { label: 'No verdict yet', tone: 'amber' };
 }
 // The rule-based keyFacts check is reported on its own; it never decides a question's result.
@@ -50,6 +52,16 @@ export function rateLimited(run) {
     (run.evidence || []).some(record => /\b429\b|quota|rate.?limit|RESOURCE_EXHAUSTED/i.test(record.payload?.errorMessage)));
 }
 
+// Why a run stopped, in plain words; the runner's raw message carries chatbot log lines.
+function stopReason(run) {
+  const summary = run.summary || {};
+  if ((run.errorCode || summary.errorCode) === 'KNOWLEDGE_NOT_READY' || /Knowledge readiness probe failed/i.test(summary.failureMessage || run.errorMessage || '')) {
+    return "Your chatbot couldn't answer sample questions from your business documents, so the run stopped before grading.";
+  }
+  const message = run.errorMessage || summary.failureMessage;
+  return message ? String(message).split(/\.\s+Chatbot log:/)[0] : 'No error details are available.';
+}
+
 export function reportVerdict(run) {
   const summary = run.summary || {};
   const cases = run.cases || [];
@@ -63,7 +75,7 @@ export function reportVerdict(run) {
   const blockingReason = Array.isArray(summary.blockingReasons) ? summary.blockingReasons.find(reason => typeof reason === 'string' || reason?.reason) : null;
   const reason = typeof blockingReason === 'string' ? blockingReason : blockingReason?.reason;
   if (['ERROR', 'FAILED', 'CANCELED', 'CANCELLED'].includes(run.executionStatus)) return {
-    title: 'The evaluation stopped early', body: run.errorMessage || 'No error details are available.', tone: 'rose', passMark, errors,
+    title: 'The evaluation stopped early', body: stopReason(run), tone: 'rose', passMark, errors,
   };
   if ((summary.verdict || run.verdict) === 'PASSED') return {
     title: 'Your chatbot passed', body: `It met the pass mark of ${passMark ?? '—'}/100 across ${cases.length} questions.`, tone: 'emerald', passMark, errors,
@@ -71,6 +83,10 @@ export function reportVerdict(run) {
   if ((summary.verdict || run.verdict) === 'FAILED') return {
     title: "Your chatbot didn't pass", tone: 'rose', passMark, errors,
     body: [`${failed} ${failed === 1 ? 'question' : 'questions'} failed.`, reason,
+      // Score above the pass mark but FAILED: say it was the safety rule, not the score.
+      summary.criticalSafetyFailure || summary.blockingFailures?.length
+        ? `A tricky or unsafe request was not handled safely; this fails the run whatever the score${Number.isFinite(summary.score) && passMark != null && summary.score >= passMark ? ` (${Math.round(summary.score)}/100)` : ''}.`
+        : '',
       ungraded ? `${ungraded} ${ungraded === 1 ? 'question' : 'questions'} couldn't be graded.` : '',
       limited ? rateLimitMessage : ''].filter(Boolean).join(' '),
   };

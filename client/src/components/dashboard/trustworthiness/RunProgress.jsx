@@ -67,7 +67,7 @@ export default function RunProgress({ run, progress, api, act, busy }) {
           <div role="progressbar" aria-label="Questions completed" aria-valuemin={0}
             aria-valuemax={total || 100} aria-valuenow={total ? Math.min(completed, total) : 0}
             className="h-2 overflow-hidden rounded-md bg-[var(--color-surface-muted)]">
-            <div className="h-full bg-sky-400 transition-all duration-500" style={{ width: `${percent}%` }} />
+            <div className="h-full bg-sky-400 transition-colors duration-500" style={{ width: `${percent}%` }} />
           </div>
           {current && <p className="truncate text-xs text-[var(--color-text-muted)]">Now: {current}</p>}
           {waitingUntil && <RateLimitCountdown key={waitingUntil} until={waitingUntil} />}

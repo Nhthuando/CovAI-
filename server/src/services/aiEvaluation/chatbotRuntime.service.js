@@ -65,7 +65,7 @@ const RESERVED_RUNTIME_ENV_NAMES = new Set([
     'HOST', 'HOSTNAME', 'DATABASE_URL', 'REDIS_URL', 'ENCRYPTION_KEY', 'JWT_SECRET',
 ]);
 
-const EMPTY_OR_REFUSAL_RE = /(?:do\s+not\s+have\s+(?:enough\s+|any\s+)?information|don't\s+have\s+(?:enough\s+|any\s+)?information|cannot\s+(?:find|answer)|not\s+(?:found\s+)?in\s+(?:the\s+)?(?:provided\s+)?(?:document|documents|context|knowledge)|no\s+(?:relevant\s+)?(?:documents?|information|context|data)\s+(?:found|available)|knowledge\s+base\s+is\s+empty|database\s+is\s+empty|i\s+don't\s+know|unable\s+to\s+find\s+relevant|không\s+(?:có|tìm\s+thấy)\s+(?:thông\s+tin|dữ\s+liệu|tài\s+liệu)|chưa\s+(?:có|được\s+nạp)\s+dữ\s+liệu|ngoài\s+phạm\s+vi\s+tài\s+liệu|tài\s+liệu\s+không\s+đề\s+cập)/i;
+const EMPTY_OR_REFUSAL_RE = /(?:(?:cannot|can't|can\s+not|unable\s+to)\s+confirm|do\s+not\s+have\s+(?:enough\s+|any\s+)?information|don't\s+have\s+(?:enough\s+|any\s+)?information|cannot\s+(?:find|answer)|not\s+(?:found\s+)?in\s+(?:the\s+)?(?:provided\s+)?(?:document|documents|context|knowledge)|no\s+(?:relevant\s+)?(?:documents?|information|context|data)\s+(?:found|available)|knowledge\s+base\s+is\s+empty|database\s+is\s+empty|i\s+don't\s+know|unable\s+to\s+find\s+relevant|không\s+(?:có|tìm\s+thấy)\s+(?:thông\s+tin|dữ\s+liệu|tài\s+liệu)|chưa\s+(?:có|được\s+nạp)\s+dữ\s+liệu|ngoài\s+phạm\s+vi\s+tài\s+liệu|tài\s+liệu\s+không\s+đề\s+cập)/i;
 
 const STOPWORDS = new Set([
     'the', 'and', 'for', 'with', 'that', 'this', 'from', 'what', 'when', 'where', 'which', 'how', 'does', 'are', 'was', 'were', 'will', 'can', 'your', 'about', 'into', 'within', 'have', 'has',
@@ -228,8 +228,20 @@ export async function startManagedChatbotRuntime({
         );
     }
 
-    const auditList = audit.summary?.launchability?.requiredLlmEnvVars || audit.autoFillConfig?.llmEnvVars || [];
-    const detectedLlmEnvVars = sanitizeDetectedLlmEnvVars([...new Set([...auditList, ...configuredLlmEnvVars])]);
+    const llmEnvVarsOf = result => sanitizeDetectedLlmEnvVars([...new Set([
+        ...(result.summary?.launchability?.requiredLlmEnvVars || []),
+        ...(result.autoFillConfig?.llmEnvVars || []),
+        ...configuredLlmEnvVars,
+    ])]);
+    let detectedLlmEnvVars = llmEnvVarsOf(audit);
+    if (!detectedLlmEnvVars.length) {
+        // The saved audit may predate an analyzer fix; scan the snapshot once more before giving up.
+        const rescanned = await runChatbotDesignAudit(db, projectId, { snapshotId: snapshot.id });
+        if (rescanned?.detected && rescanned.summary?.launchability?.ready) {
+            audit = rescanned;
+            detectedLlmEnvVars = llmEnvVarsOf(rescanned);
+        }
+    }
     if (!detectedLlmEnvVars.length) {
         fail(
             'LLM_ENV_VAR_NOT_DETECTED',
@@ -661,6 +673,7 @@ export async function probeChatbotKnowledgeReadiness({
     credential,
     lease = null,
     transport,
+    turnExecutor = executeTurn,
     secretsToRedact = [],
     timeoutMs = 20000,
     signal,
@@ -677,7 +690,7 @@ export async function probeChatbotKnowledgeReadiness({
             ...(item.context ? [{ role: 'system', content: item.context }] : []),
             { role: 'user', content: item.question },
         ];
-        const response = await executeTurn(
+        const response = await turnExecutor(
             targetConfig,
             {
                 requestId: `probe-${crypto.randomUUID()}`,
@@ -699,6 +712,15 @@ export async function probeChatbotKnowledgeReadiness({
         };
     }));
 
+    // One fixed reply to different questions (a canned fallback) means the knowledge never reached the chatbot.
+    // A reply that quotes an expected fact is real knowledge even when repeated.
+    const sameReply = probeObservations.length > 1
+        && new Set(probeObservations.map(p => normalizeForMatch(p.answerExcerpt))).size === 1
+        && !probeObservations.some(p => p.reason === 'Matched expected fact phrase directly.');
+    if (sameReply) for (const probe of probeObservations) {
+        probe.matched = false;
+        probe.reason = 'Chatbot gave the same reply to different questions.';
+    }
     const anyMatched = probeObservations.some(p => p.matched);
     if (!anyMatched) {
         throw new ServiceError(

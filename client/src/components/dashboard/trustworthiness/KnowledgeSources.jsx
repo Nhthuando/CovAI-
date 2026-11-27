@@ -1,21 +1,33 @@
 import { useRef, useState } from 'react';
-import { FileText, Plus, Upload } from 'lucide-react';
+import { Check, FileText, Plus, Trash2, Upload } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { Badge } from '../../ui/badge';
 import { Panel, Field, EmptyState } from './ui';
 import { buttonClass, inputClass } from './evaluationTheme';
 
+const docKey = doc => `${doc.kind || 'FILE'}:${doc.path}`;
+const docLabel = doc => (doc.kind === 'SEEDED_KNOWLEDGE' ? doc.name : doc.path);
+
 export default function KnowledgeSources({ data, api, act, busy }) {
   const [name, setName] = useState('');
   const [content, setContent] = useState('');
   const [description, setDescription] = useState('');
-  const [snapshotId, setSnapshotId] = useState(data.designAudit?.snapshotId || '');
+  const snapshotId = data.designAudit?.snapshotId || '';
   const [filePath, setFilePath] = useState('');
   const [adding, setAdding] = useState(false);
   const [method, setMethod] = useState('upload');
   const inputRef = useRef(null);
   const [selectedFile, setSelectedFile] = useState(null);
   const docs = data.designAudit?.summary?.candidateDocs || [];
+  const imported = new Set(data.sources.map(source => source.name));
+  // Only the suggested (and already chosen) files show by default; the rest are one click away.
+  const [showAllDocs, setShowAllDocs] = useState(false);
+  // Recommended documents start selected; `toggled` holds the user's changes, so a late audit still pre-selects.
+  const [toggled, setToggled] = useState(() => new Set());
+  const selectedDocs = new Set(docs.filter(doc => Boolean(doc.recommended) !== toggled.has(docKey(doc))).map(docKey));
+  const shortList = docs.filter(doc => doc.recommended || selectedDocs.has(docKey(doc)) || imported.has(docLabel(doc)));
+  const visibleDocs = showAllDocs || !shortList.length ? docs : shortList;
+  const hiddenCount = docs.length - visibleDocs.length;
   const openPanel = (nextMethod = 'upload') => {
     setMethod(nextMethod);
     setSelectedFile(null);
@@ -49,6 +61,13 @@ export default function KnowledgeSources({ data, api, act, busy }) {
                 {!ready && !failed && <span aria-hidden="true" className="size-1.5 animate-ping rounded-full bg-sky-400" />}
                 {ready ? 'Ready' : failed ? 'Failed' : 'Processing…'}
               </Badge>
+              {source.status !== 'PROCESSING' && (
+                <Button className={buttonClass} variant="ghost" size="sm" disabled={busy}
+                  aria-label={`Remove ${source.name}`} title="Remove from future test questions"
+                  onClick={() => act(() => api(`/sources/${source.id}`, 'DELETE'), 'Document removed. Create new test questions to use the change.')}>
+                  <Trash2 aria-hidden="true" className="size-4" />
+                </Button>
+              )}
               {failed && typeof (source.safeError || source.errorMessage) === 'string' && (
                 <p className="w-full break-words text-sm text-rose-400">{(source.safeError || source.errorMessage).slice(0, 500)}</p>
               )}
@@ -159,42 +178,77 @@ export default function KnowledgeSources({ data, api, act, busy }) {
         <Button className={buttonClass} type="submit" variant="primary" loading={busy} disabled={!selectedFile}>Upload</Button>
       </form>}
       {method === 'project' && (
-        <div className="mt-3 space-y-3">
+        <form className="mt-3 space-y-3" onSubmit={event => {
+          event.preventDefault();
+          const chosen = docs.filter(doc => selectedDocs.has(docKey(doc)) && !imported.has(docLabel(doc)));
+          const extra = filePath.trim();
+          if (!chosen.length && !extra) return;
+          const projectSnapshot = snapshotId;
+          act(async () => {
+            const results = [];
+            for (const doc of chosen) {
+              results.push(await api('/sources', 'POST', {
+                name: docLabel(doc), snapshotId: projectSnapshot, filePath: doc.path,
+                ...(doc.kind === 'SEEDED_KNOWLEDGE' ? { extract: 'SEEDED_KNOWLEDGE' } : {}),
+              }));
+            }
+            if (extra) results.push(await api('/sources', 'POST', { name: extra, snapshotId: projectSnapshot, filePath: extra }));
+            setFilePath('');
+            setAdding(false);
+            return results.at(-1);
+          }, `${chosen.length + (extra ? 1 : 0)} document(s) imported.`);
+        }}>
           {!!docs.length && (
             <div>
-              <p className="mb-2 text-sm text-[var(--color-text-secondary)]">Suggested business documents</p>
+              <p className="mb-2 text-sm text-[var(--color-text-secondary)]">
+                {docs.some(doc => doc.recommended)
+                  ? 'Pre-selected: the knowledge your chatbot actually reads. Drafts and technical docs are left out.'
+                  : 'Pick the documents your chatbot answers from.'}
+              </p>
               <div className="flex flex-wrap gap-2">
-                {docs.map(doc => (
-                  <Button key={doc.path} className={`${buttonClass} font-mono`} variant="secondary" size="sm"
-                    onClick={() => {
-                      setFilePath(doc.path);
-                      setSnapshotId(data.designAudit?.snapshotId || snapshotId);
-                    }}>
-                    {doc.path}
-                  </Button>
-                ))}
+                {visibleDocs.map(doc => {
+                  const key = docKey(doc);
+                  const done = imported.has(docLabel(doc));
+                  const checked = done || selectedDocs.has(key);
+                  return (
+                    <button key={key} type="button" aria-pressed={checked} disabled={busy || done}
+                      title={doc.draft ? 'Marked as draft in the file' : doc.coveredBySeed ? 'Your chatbot reads the seeded copy instead' : undefined}
+                      onClick={() => setToggled(previous => {
+                        const next = new Set(previous);
+                        if (next.has(key)) next.delete(key); else next.add(key);
+                        return next;
+                      })}
+                      className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors duration-150 active:scale-[0.98] disabled:cursor-default ${checked
+                        ? 'border-[var(--color-primary)]/50 bg-[var(--color-primary)]/10 text-[var(--color-text)]'
+                        : 'border-[var(--color-border)] bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] hover:border-[var(--color-text-muted)]'}`}>
+                      {checked ? <Check aria-hidden="true" className="size-3.5 text-[var(--color-primary)]" /> : <span aria-hidden="true" className="size-3.5" />}
+                      <span className={doc.kind === 'SEEDED_KNOWLEDGE' ? 'font-medium' : 'font-mono'}>{docLabel(doc)}</span>
+                      {done && <span className="text-[var(--color-text-muted)]">· Added</span>}
+                      {!done && doc.draft && <span className="text-[var(--color-text-muted)]">· Draft</span>}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
-          <form className="space-y-3" onSubmit={event => {
-            event.preventDefault();
-            act(async () => {
-              const result = await api('/sources', 'POST', { name: filePath, snapshotId, filePath });
-              setAdding(false);
-              return result;
-            }, 'Snapshot document imported.');
-          }}>
-            <Field label="Snapshot ID">
-              <input className={inputClass} required value={snapshotId}
-                onChange={event => setSnapshotId(event.target.value)} />
-            </Field>
+          {hiddenCount > 0 && (
+            <button type="button" className="text-sm text-[var(--color-text-secondary)] underline hover:text-[var(--color-text)]"
+              onClick={() => setShowAllDocs(previous => !previous)}>
+              {showAllDocs ? 'Show suggested only' : `Show all files (${hiddenCount} more)`}
+            </button>
+          )}
+          <details>
+            <summary className="cursor-pointer text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text)]">Another file</summary>
             <Field label="Relative file path">
-              <input className={`${inputClass} font-mono`} required value={filePath}
+              <input className={`${inputClass} font-mono`} value={filePath} placeholder="docs/faq.md"
                 onChange={event => setFilePath(event.target.value)} />
             </Field>
-            <Button className={buttonClass} type="submit" variant="primary" loading={busy}>Import</Button>
-          </form>
-        </div>
+          </details>
+          <Button className={buttonClass} type="submit" variant="primary" loading={busy}
+            disabled={!filePath.trim() && !docs.some(doc => selectedDocs.has(docKey(doc)) && !imported.has(docLabel(doc)))}>
+            Import selected
+          </Button>
+        </form>
       )}
         <Button className={`${buttonClass} underline`} variant="ghost" disabled={busy} onClick={() => {
           setAdding(false);

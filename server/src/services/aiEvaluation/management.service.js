@@ -24,6 +24,7 @@ import { isCriterionApplicableToTask } from './evaluator.service.js';
 import { verifySourceQuoteAgainstSources, UNVERIFIED_REFERENCE_JUDGE_INSTRUCTION, readEvaluatorFallbackConfig } from './judge.service.js';
 import { DEFAULT_PROBE_SECRET_TTL_MS, storeEphemeralSecret, destroyEphemeralSecret, readEphemeralSecret } from './ephemeralSecret.service.js';
 import { startManagedChatbotRuntime } from './chatbotRuntime.service.js';
+import { createManagedAuthSession, withAuthSession } from './targetAuthSession.service.js';
 import { readEvidencePayload, removeRunArtifacts } from './artifactStore.service.js';
 import { getRunReport } from './report.service.js';
 import { KEY_FACTS_CRITERION, checkableFacts, keyFactsApplies } from './keyFacts.js';
@@ -290,7 +291,7 @@ export async function workspace(db, projectId, userId = null) {
                 },
             },
         }),
-        db.aiEvaluationKnowledgeSource.findMany({ where: { projectId }, orderBy: { createdAt: 'desc' }, take: 100, select: { id: true, name: true, format: true, version: true, status: true, contentHash: true, provenance: true, createdAt: true } }),
+        db.aiEvaluationKnowledgeSource.findMany({ where: { projectId, status: { not: 'ARCHIVED' } }, orderBy: { createdAt: 'desc' }, take: 100, select: { id: true, name: true, format: true, version: true, status: true, contentHash: true, provenance: true, createdAt: true } }),
         db.aiEvaluationRun.findMany({ where: { projectId }, orderBy: { createdAt: 'desc' }, take: 100, select: { id: true, targetVersionId: true, profileVersionId: true, executionStatus: true, verdict: true, summary: true, jobId: true, errorCode: true, createdAt: true, finishedAt: true } }),
         getRemainingAiQuota(db, userId),
         getChatbotDesignAudit(db, projectId, { autoScan: true }),
@@ -435,9 +436,12 @@ export async function testConnection(db, projectId, id, options = {}) {
         ? options.ephemeralLlmApiKey.trim()
         : undefined;
     const credential = inlineCredential || await targetCredential(db, version, null, projectId);
-    if (!configAuthNone(version.config) && !credential) {
+    const managedTarget = version.config.executionMode === 'MANAGED_PROJECT';
+    // Managed Project: CovAI signs in on its own after the chatbot starts (see targetAuthSession).
+    if (!configAuthNone(version.config) && !credential && !managedTarget) {
         fail('CREDENTIAL_REQUIRED', 'Provide an authentication token for this connection test');
     }
+    let authSession = null;
 
     const { ephemeralCredential, ephemeralLlmApiKey, snapshotId, ...adapterOptions } = options;
     let llmKeyRef = null;
@@ -473,9 +477,13 @@ export async function testConnection(db, projectId, id, options = {}) {
                 extraEnvironment: version.config.environment || {},
                 configuredLlmEnvVars: version.config.llmEnvVars || [],
             });
+            if (!configAuthNone(version.config) && !credential) {
+                authSession = await createManagedAuthSession({ lease: runtime.loopbackLease, rootDir: runtime.workspaceRoot, apiPath: version.config.endpointPath });
+            }
         }
 
         const deadlineAt = Date.now() + 120000;
+        const turn = authSession ? withAuthSession(executeTurn, authSession) : executeTurn;
         const question = 'Connection test. Reply with OK. Do not call tools or perform any action.';
         const conversationKey = crypto.randomUUID();
         const messages = [{ role: 'user', content: question }];
@@ -484,7 +492,7 @@ export async function testConnection(db, projectId, id, options = {}) {
             if (timeoutMs <= 0) fail('TARGET_TIMEOUT', 'The connection test reached its time limit', 502);
             const signal = AbortSignal.timeout(timeoutMs);
             try {
-                return await executeTurn(config, {
+                return await turn(config, {
                     requestId: conversationKey,
                     conversationKey,
                     messages,
@@ -584,11 +592,11 @@ export async function testConnection(db, projectId, id, options = {}) {
                 const snippet = targetErrorSnippet(reply);
                 error.message += ` Reply: ${snippet.trim() ? snippet : reply.slice(0, 200)}`;
             }
-            error.message = redact(error.message, [credential, inlineLlmKey].filter(Boolean));
+            error.message = redact(error.message, [credential, inlineLlmKey, ...(authSession?.secrets || [])].filter(Boolean));
             throw error;
         }
         return {
-            answer: redact(result.answer, [credential, inlineLlmKey].filter(Boolean)).slice(0, 2000),
+            answer: redact(result.answer, [credential, inlineLlmKey, ...(authSession?.secrets || [])].filter(Boolean)).slice(0, 2000),
             latencyMs: result.latencyMs,
             evidenceAvailability: result.evidenceAvailability,
             capabilityStatus: finalConfig.mockGateway ? 'GATEWAY_INTEGRATION_NOT_YET_VERIFIED' : 'ANSWER_ONLY',
@@ -659,11 +667,28 @@ export async function uploadKnowledgeSource(db, projectId, userId, file, enqueue
     return prepareEvaluationJob(db, projectId, userId, { sourceId: source.id }, enqueue);
 }
 
+/**
+ * Removes a business document from future test questions. Every version is archived, not deleted:
+ * approved test sets and past runs keep the copy they were built from.
+ */
+export async function removeKnowledgeSource(db, projectId, sourceId) {
+    const source = must(await db.aiEvaluationKnowledgeSource.findFirst({
+        where: { id: sourceId, projectId },
+        select: { id: true, sourceKey: true, status: true },
+    }));
+    if (source.status === 'PROCESSING') fail('SOURCE_PROCESSING', 'Wait until the document finishes processing, then remove it', 409);
+    const removed = await db.aiEvaluationKnowledgeSource.updateMany({
+        where: { projectId, sourceKey: source.sourceKey, status: { not: 'PROCESSING' } },
+        data: { status: 'ARCHIVED' },
+    });
+    return { removed: removed.count };
+}
+
 export async function createKnowledgeSourceFromInput(db, projectId, body) {
-    const { name, content, snapshotId, filePath } = body || {};
+    const { name, content, snapshotId, filePath, extract } = body || {};
     if (typeof name !== 'string' || !name.trim() || name.length > 200) fail('INVALID_NAME', 'Enter a source name');
     if (snapshotId) {
-        return saveKnowledge(db, projectId, { name: name.trim(), ...await snapshotKnowledge(db, projectId, snapshotId, filePath) });
+        return saveKnowledge(db, projectId, { name: name.trim(), ...await snapshotKnowledge(db, projectId, snapshotId, filePath, { extract: extract === 'SEEDED_KNOWLEDGE' ? extract : null }) });
     }
     if (typeof content !== 'string' || !content.trim() || content.length > 200000) {
         fail('INVALID_SOURCE_SIZE', 'Enter 1 to 200,000 characters');
@@ -1003,7 +1028,7 @@ export async function createRun(db, projectId, userId, input, { enqueue = enqueu
         if (target.config.executionMode === 'MANAGED_PROJECT' && !llmKeyRef) {
             fail('LLM_API_KEY_REQUIRED', 'Enter the LLM API key in the ephemeral password field to boot the imported chatbot');
         }
-        if (!configAuthNone(target.config) && !targetTokenRef) {
+        if (!configAuthNone(target.config) && !targetTokenRef && target.config.executionMode !== 'MANAGED_PROJECT') {
             const persisted = await targetCredential(db, target, null, projectId);
             if (!persisted) fail('CREDENTIAL_REQUIRED', 'Provide an authentication token for this target');
         }

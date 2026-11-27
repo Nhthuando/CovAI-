@@ -49,7 +49,7 @@ export function Panel({ title, description, actions, children, className = '' })
 }
 
 export function SectionLabel({ children, className = '' }) {
-  return <h3 className={`text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] ${className}`}>{children}</h3>;
+  return <h3 className={`text-xs font-medium text-[var(--color-text-muted)] ${className}`}>{children}</h3>;
 }
 
 export function Field({ label, hint, children }) {

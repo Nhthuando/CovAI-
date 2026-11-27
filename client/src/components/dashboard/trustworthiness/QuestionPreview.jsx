@@ -1,4 +1,4 @@
-import { Bot, FileText, Ruler, Sparkles, TriangleAlert, User } from 'lucide-react';
+import { Bot, FileText, Ruler, Scale, TriangleAlert, User } from 'lucide-react';
 import { Badge } from '../../ui/badge';
 import { Hint } from '../../ui/tooltip';
 import { isExactFact } from './questionIcons';
@@ -58,7 +58,7 @@ export default function QuestionPreview({ item }) {
 
       <Bubble who="bot">
         <div className="space-y-3 rounded-lg border border-dashed border-[var(--color-border-strong)] p-3.5">
-          <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+          <p className="text-xs font-medium text-[var(--color-text-muted)]">
             {refusal ? 'The chatbot should' : 'A good answer'}
           </p>
           {item.expectedBehavior && <p className="text-sm leading-relaxed text-[var(--color-text-secondary)]">{item.expectedBehavior}</p>}
@@ -66,7 +66,7 @@ export default function QuestionPreview({ item }) {
             <ul className="flex flex-wrap gap-2" aria-label="Key facts">
               {facts.map(fact => {
                 const exact = isExactFact(fact);
-                const Icon = exact ? Ruler : Sparkles;
+                const Icon = exact ? Ruler : Scale;
                 return (
                   <li key={fact}>
                     <Hint text={exact ? 'Checked by rules: the number must match exactly' : 'Checked by the grading AI'}>
@@ -94,7 +94,7 @@ export default function QuestionPreview({ item }) {
               ? <Badge variant="warning"><TriangleAlert aria-hidden="true" />Not found word for word</Badge>
               : <Badge variant="success">Verified</Badge>}
           </figcaption>
-          <blockquote className="border-l-2 border-[var(--color-border-strong)] pl-4 text-sm italic leading-relaxed text-[var(--color-text-secondary)]">
+          <blockquote className="border-l-2 border-[var(--color-border-strong)] pl-4 text-sm leading-relaxed text-[var(--color-text-secondary)]">
             {highlightQuote(item.sourceQuote, facts)}
           </blockquote>
         </figure>

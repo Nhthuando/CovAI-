@@ -243,6 +243,8 @@ export const prepareAutEnvironment = async (snapshotDir, port = 4173, jobId = nu
 /**
  * Runs seed data script if defined in package.json (seed or db:seed).
  */
+const SEED_SCRIPT_NAMES = ["seed", "db:seed", "prisma:seed", "seed:dev", "database:seed", "data:seed"];
+
 export const runSeedDataIfPresent = async ({ snapshotDir, repositoryRoot=snapshotDir, jobId = null, isolatedDatabase=false, env={}, signal, dependencies={} }) => {
   const candidateDirs = ["", "server", "backend", "api", "client", "frontend"];
   let chosenDir = null;
@@ -256,7 +258,11 @@ export const runSeedDataIfPresent = async ({ snapshotDir, repositoryRoot=snapsho
     try {
       const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
       const scripts = pkg.scripts || {};
-      const script = typeof scripts.seed === "string" ? "seed" : typeof scripts["db:seed"] === "string" ? "db:seed" : typeof pkg.prisma?.seed==='string'?'prisma db seed':null;
+      // Common seed script names first, then prisma's own seed config. Names such as
+      // "prisma:seed" or "seed:dev" are as common as "seed" (Kanto uses prisma:seed).
+      const named = SEED_SCRIPT_NAMES.find(name => typeof scripts[name] === "string")
+        || Object.keys(scripts).find(name => /^(?:[\w-]+:)?seed(?::[\w-]+)?$/i.test(name) && !/test|prod|reset|undo|drop|clean/i.test(name));
+      const script = named || (typeof pkg.prisma?.seed==='string'?'prisma db seed':null);
       if (script) {
         chosenDir = targetDir;
         seedScript = script;

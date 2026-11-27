@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { extractSeededKnowledge } from './seededKnowledge.js';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import AdmZip from 'adm-zip';
@@ -181,7 +182,7 @@ export async function extractKnowledge(buffer, name) {
     return { format, content, contentHash: hash(content) };
 }
 
-export async function snapshotKnowledge(db, projectId, snapshotId, filePath) {
+export async function snapshotKnowledge(db, projectId, snapshotId, filePath, { extract = null } = {}) {
     const snapshot = await db.projectSnapshot.findFirst({
         where: { id: snapshotId, projectId },
         select: { id: true, projectId: true, source: true, rootDir: true, storagePath: true },
@@ -192,6 +193,12 @@ export async function snapshotKnowledge(db, projectId, snapshotId, filePath) {
     }
     const filename = resolveSnapshotFile(snapshot, filePath);
     if ((await fs.stat(filename)).size > 10 * 1024 * 1024) fail('SOURCE_TOO_LARGE', 'Source limit is 10 MB');
+    if (extract === 'SEEDED_KNOWLEDGE') {
+        // The knowledge a seed script writes into the chatbot database, not the script itself.
+        const text = extractSeededKnowledge(await fs.readFile(filename, 'utf8'), filePath);
+        if (!text) fail('NO_SEEDED_KNOWLEDGE', 'This file does not seed any chatbot knowledge', 422);
+        return { ...await extractKnowledge(Buffer.from(text, 'utf8'), 'seeded-knowledge.md'), provenance: { type: 'SNAPSHOT', snapshotId, filePath, extract } };
+    }
     return { ...await extractKnowledge(await fs.readFile(filename), filePath), provenance: { type: 'SNAPSHOT', snapshotId, filePath } };
 }
 

@@ -90,7 +90,7 @@ function ProfileCalibration({ projectId, profileId, api, act, busy, navigateView
                 <span className="font-mono text-xs tabular-nums text-[var(--color-text-muted)]">{done + 1} / {total}</span>
               </div>
               <div className="h-1 overflow-hidden rounded-md bg-[var(--color-surface-muted)]" aria-hidden="true">
-                <div className="h-full bg-[var(--color-primary)] transition-all duration-300" style={{ width: `${total ? (done / total) * 100 : 0}%` }} />
+                <div className="h-full bg-[var(--color-primary)] transition-colors duration-300" style={{ width: `${total ? (done / total) * 100 : 0}%` }} />
               </div>
               <h3 className="text-base font-semibold tracking-tight">{item.title}</h3>
             </div>
@@ -99,7 +99,7 @@ function ProfileCalibration({ projectId, profileId, api, act, busy, navigateView
               {item.expected != null && (
                 <figure className="space-y-2">
                   <figcaption className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]"><FileText className="size-3.5" aria-hidden="true" />From your documents</figcaption>
-                  <blockquote className="whitespace-pre-wrap break-words border-l-2 border-[var(--color-border-strong)] pl-4 text-sm italic leading-relaxed text-[var(--color-text-secondary)]">
+                  <blockquote className="whitespace-pre-wrap break-words border-l-2 border-[var(--color-border-strong)] pl-4 text-sm leading-relaxed text-[var(--color-text-secondary)]">
                     {typeof item.expected === 'string' ? item.expected : JSON.stringify(item.expected, null, 2)}
                   </blockquote>
                 </figure>
@@ -188,7 +188,7 @@ function CalibrationStats({ stats }) {
             <span className="font-mono tabular-nums">{reviewed}<span className="text-[var(--color-text-muted)]">/{MINIMUM}</span></span>
           </div>
           <div className="h-1.5 overflow-hidden rounded-md bg-[var(--color-surface-muted)]" aria-hidden="true">
-            <div className="h-full bg-[var(--color-primary)] transition-all duration-300" style={{ width: `${Math.min(100, (reviewed / MINIMUM) * 100)}%` }} />
+            <div className="h-full bg-[var(--color-primary)] transition-colors duration-300" style={{ width: `${Math.min(100, (reviewed / MINIMUM) * 100)}%` }} />
           </div>
           <p className="text-xs text-[var(--color-text-muted)]">Grade at least {MINIMUM} answers to see how often you and the AI agree.</p>
         </div>

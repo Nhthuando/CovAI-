@@ -299,7 +299,7 @@ export default function TrustworthinessWorkspace({ projectId }) {
           {step && (
             <div className="space-y-6">
               <header className="space-y-1">
-                <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">Step <span className="font-mono tabular-nums">{step.number}</span> of <span className="font-mono tabular-nums">4</span></p>
+                <p className="text-xs font-medium text-[var(--color-text-muted)]">Step <span className="font-mono tabular-nums">{step.number}</span> of <span className="font-mono tabular-nums">4</span></p>
                 <h2 className="text-xl font-semibold tracking-tight">{step.title}</h2>
                 <p className="text-sm text-[var(--color-text-muted)]">{step.description}</p>
               </header>

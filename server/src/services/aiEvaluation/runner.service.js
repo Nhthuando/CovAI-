@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { getAgentManifest } from '../../agents/registry.js';
 import prisma from '../../config/prisma.js';
 import { executeTurn } from './httpJson.adapter.js';
+import { createManagedAuthSession, withAuthSession } from './targetAuthSession.service.js';
 import { classifyTargetFailure, createTargetPacer } from './targetRateLimit.js';
 import { targetCredential, runFor } from './management.service.js';
 import { closeGateway } from './gateway.service.js';
@@ -351,17 +352,23 @@ export async function processEvaluation(jobId, {
                 db.job.findUnique({ where: { id: jobId }, select: { status: true } }),
             ]);
             if (!live || live.executionStatus !== 'RUNNING' || live.leaseToken !== leaseToken || job?.status === 'CANCELED') controller.abort();
-            if (!cleanupPromise && !controller.signal.aborted && Date.now() - lastLeaseRenewal >= LEASE_RENEW_MS) {
-                lastLeaseRenewal = Date.now();
-                const renewed = await withRunWriteLock(() => db.aiEvaluationRun.updateMany({
+            if (!controller.signal.aborted && Date.now() - lastLeaseRenewal >= LEASE_RENEW_MS) {
+                // Renew outside the result write queue: slow serializable writes on a remote database
+                // must not let the lease lapse while results are still being saved. The leaseToken guard
+                // keeps this single-row update safe to run beside them. Renewal also continues during
+                // shutdown, so stopping the chatbot cannot outlast the lease before the run is finalized.
+                const renewed = await db.aiEvaluationRun.updateMany({
                     where: { id: found.id, executionStatus: 'RUNNING', leaseToken },
                     data: { leaseUntil: new Date(Date.now() + LEASE_TTL_MS) },
-                }));
-                if (renewed.count === 0) controller.abort();
+                });
+                lastLeaseRenewal = Date.now();
+                if (renewed.count === 0 && !cleanupPromise) controller.abort();
             }
         } catch (error) {
             console.error('[Evaluation] Heartbeat failed:', redact(String(error?.message || error), runSecrets));
-            controller.abort();
+            // One slow or failed database round trip is not a lost run: give up only when the lease
+            // could not be renewed for most of its lifetime.
+            if (Date.now() - lastLeaseRenewal > LEASE_TTL_MS - LEASE_RENEW_MS) controller.abort();
         } finally {
             heartbeatBusy = false;
         }
@@ -374,8 +381,8 @@ export async function processEvaluation(jobId, {
     let extraSummary = null;
     let bootProgress = null;
     let cleanupPromise;
+    // The heartbeat keeps the lease alive until the run is finalized; the outer finally stops it.
     const cleanup = () => cleanupPromise ??= (async () => {
-        clearInterval(heartbeat);
         if (bootProgress) {
             try {
                 emitEvaluationEvent('evaluation:progress', {
@@ -405,6 +412,7 @@ export async function processEvaluation(jobId, {
 
         await db.job.updateMany({ where: { id: jobId, status: 'QUEUED' }, data: { status: 'RUNNING', startedAt: new Date() } });
 
+        let probeExecutor = executeTurn;
         const bootStartedAt = performance.now();
         if (run.targetVersion.config.executionMode === 'MANAGED_PROJECT') {
             bootProgress = { projectId: run.projectId, userId: ownerJob?.userId };
@@ -429,6 +437,20 @@ export async function processEvaluation(jobId, {
                 signal: controller.signal,
                 onBeforeWorkspaceCleanup,
             });
+            if (run.targetVersion.config.auth?.type && run.targetVersion.config.auth.type !== 'none' && !credential) {
+                // No token from the user: sign in with a throwaway test account in the isolated chatbot.
+                const authSession = await createManagedAuthSession({
+                    lease: managedRuntime.loopbackLease,
+                    rootDir: managedRuntime.workspaceRoot,
+                    apiPath: run.targetVersion.config.endpointPath,
+                    signal: controller.signal,
+                    secretSink: runSecrets,
+                    log: message => db.jobLog.create({ data: { jobId, level: 'INFO', message: `[ChatbotAuth] ${message}` }, select: { id: true } })
+                        .catch(error => console.error('[Evaluation] Auth log warning:', error?.message || 'unknown')),
+                });
+                turnExecutor = withAuthSession(turnExecutor, authSession);
+                probeExecutor = withAuthSession(executeTurn, authSession);
+            }
             await withRunWriteLock(() => db.aiEvaluationRun.update({
                 where: { id: run.id },
                 data: {
@@ -478,6 +500,7 @@ export async function processEvaluation(jobId, {
                 credential,
                 lease: managedRuntime?.loopbackLease || null,
                 transport,
+                turnExecutor: probeExecutor,
                 secretsToRedact: runSecrets,
                 timeoutMs: definition.limits.requestMs,
                 signal: controller.signal,

@@ -276,9 +276,12 @@ function trackedReference(p, parameters, active = new Set()) {
     }
 }
 
+const VALIDATED_BODY_KEYS = new Set(['validatedBody', 'parsedBody', 'sanitizedBody', 'cleanBody', 'validatedData']);
+
 function trackedProperty(reference, key) {
     if (reference?.kind === 'body' && key && !builtIns.has(key)) return { kind: 'field', field: key };
-    if (key === 'body' || (key === 'data' && reference?.kind === 'parseResult')) return { kind: 'body' };
+    // req.validatedBody and similar: the body after a validation middleware (zod/joi) replaced it.
+    if (key === 'body' || VALIDATED_BODY_KEYS.has(key) || (key === 'data' && reference?.kind === 'parseResult')) return { kind: 'body' };
     if (key === 'req' && reference?.kind === 'request') return { kind: 'request' };
     return null;
 }

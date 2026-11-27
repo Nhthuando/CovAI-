@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
-  Zap,
+  Gauge,
   Clock,
   ShieldCheck,
   ChevronDown,
-  Sparkles,
+  Coins,
   RefreshCw,
   Layers,
 } from "lucide-react";
@@ -112,7 +112,7 @@ export default function GlobalAiTokenPill() {
         title="View AI Token Usage & Daily Quota"
         aria-label="AI Token Quota Hub"
       >
-        <Zap
+        <Gauge
           size={12}
           className={
             isCritical
@@ -146,7 +146,7 @@ export default function GlobalAiTokenPill() {
           <div className="flex items-center justify-between pb-3 border-b border-[var(--color-border)]">
             <div className="flex items-center gap-2">
               <div className="p-1 rounded bg-[var(--color-primary)]/10 text-[var(--color-primary)]">
-                <Sparkles size={14} />
+                <Gauge size={14} />
               </div>
               <div>
                 <h4 className="font-bold text-sm text-[var(--color-text)] leading-tight">
@@ -202,8 +202,8 @@ export default function GlobalAiTokenPill() {
           <div className="py-3 space-y-2 border-b border-[var(--ps-line)]">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-[var(--ps-ink-secondary)] text-[11px]">
-                <Zap size={13} className="text-[var(--ps-amber)]" />
-                <span>Total Tokens Consumed</span>
+                <Coins size={13} className="text-[var(--color-text-muted)]" />
+                <span>Tokens used</span>
               </div>
               <span className="text-base font-bold ps-mono text-[var(--ps-ink)]">
                 {(quota.totalTokens || 0).toLocaleString()}

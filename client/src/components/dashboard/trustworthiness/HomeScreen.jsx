@@ -66,7 +66,9 @@ export default function HomeScreen({ data, capabilities, navigateView }) {
     && quota.remaining != null && quota.limit != null
     ? `Uses about ${estimate.min}–${estimate.max} AI requests · ${quota.remaining} of ${quota.limit} left today` : null;
   const result = [...(data.runs || [])]
-    .filter(run => ['COMPLETED', 'ERROR', 'FAILED'].includes(run.executionStatus))
+    // An interrupted run whose questions were all graded still has a real verdict worth showing.
+    .filter(run => ['COMPLETED', 'ERROR', 'FAILED'].includes(run.executionStatus)
+      || (run.executionStatus === 'INDETERMINATE' && ['PASSED', 'FAILED'].includes(run.summary?.verdict)))
     .sort((a, b) => (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0))[0];
   const failed = result && ['ERROR', 'FAILED'].includes(result.executionStatus);
   const verdict = result?.summary?.verdict || result?.verdict;

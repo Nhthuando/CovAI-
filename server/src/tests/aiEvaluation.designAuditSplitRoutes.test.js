@@ -118,3 +118,79 @@ Client({ key: process.env.CUSTOM_CREDENTIAL });`],
     expect(audit.autoFillConfig.llmEnvVars).toContain('CUSTOM_CREDENTIAL');
     expect(audit.summary.launchability.requiredLlmEnvVars).toContain('CUSTOM_CREDENTIAL');
 });
+
+test('Kanto-style factory router: optional auth stays open, validatedBody fields and the mounted path are used', async () => {
+    const dir = fixture({
+        'server.js': `const express = require('express');
+const { createChatRouter } = require('./src/chat.routes');
+const app = express();
+app.use('/api/v1/support', createChatRouter({ authMiddleware }));
+app.listen(process.env.PORT || 4000);`,
+        'src/chat.routes.js': `const express = require('express');
+const { askModel } = require('./llm');
+function createChatRouter({ authMiddleware }) {
+  const router = express.Router();
+  router.post('/messages', authMiddleware.requireOriginOnly, authMiddleware.optionalAuth, async (req, res) => {
+    const result = await askModel(req.validatedBody.message);
+    return res.status(200).json({ data: result });
+  });
+  return router;
+}
+module.exports = { createChatRouter };`,
+        'src/llm.js': `const apiKey = process.env.GEMINI_API_KEY;
+async function askModel(message) {
+  const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/x:generateContent?key=' + apiKey, { method: 'POST', body: JSON.stringify({ contents: [{ parts: [{ text: message }] }] }) });
+  return { answer: (await response.json()).text };
+}
+module.exports = { askModel };`,
+    }, { express: '*' });
+    const audit = await analyzeChatbotWorkspace(dir);
+    expect(audit.autoFillConfig.endpointPath).toBe('/api/v1/support/messages');
+    expect(audit.autoFillConfig.requiresRouteAuth).toBe(false);
+    expect(audit.autoFillConfig.bindings).toEqual({ '/message': 'latestUserMessage' });
+    expect(audit.autoFillConfig.llmEnvVars).toContain('GEMINI_API_KEY');
+});
+
+test('pre-selects knowledge the chatbot reads: seeded text wins over draft files, technical docs stay unselected', async () => {
+    const dir = fixture({
+        'server.js': `const express = require('express');
+const app = express();
+app.post('/api/chat', async (req, res) => res.json({ answer: await require('./llm').ask(req.body.message) }));
+app.listen(process.env.PORT || 3000);`,
+        'llm.js': `const OpenAI = require('openai'); const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+module.exports = { ask: async message => (await client.responses.create({ model: 'x', input: message })).output_text };`,
+        'prisma/seed.js': `// Aligned with docs/api/contract.md
+const KNOWLEDGE_DOCS = [
+  { title: 'Shipping Policy', sourcePath: 'docs/knowledge/shipping.md', chunks: [
+    { section: 'Rates', content: 'Standard shipping is free for every order inside the test market in demo mode.' },
+    { section: 'Changes', content: 'Shipping addresses cannot be edited after the order is created; cancel and reorder.' },
+  ] },
+  { title: 'Returns', chunks: [{ section: 'Refunds', content: 'Paid orders are refunded by store support after you send the order reference by email.' }] },
+];
+async function main() { for (const doc of KNOWLEDGE_DOCS) await prisma.knowledgeDocument.create({ data: doc }); }
+main();`,
+        'docs/knowledge/shipping.md': '# Shipping\n\n- Status: DRAFT — requires approval\n\nOld text.',
+        'docs/knowledge/terms.md': '# Terms\n\n- Status: DRAFT\n',
+        'docs/api/contract.md': '# API contract\n',
+    });
+    const audit = await analyzeChatbotWorkspace(dir);
+    const docs = Object.fromEntries(audit.summary.candidateDocs.map(doc => [doc.kind || doc.path, doc]));
+    expect(docs.SEEDED_KNOWLEDGE).toEqual(expect.objectContaining({ path: 'prisma/seed.js', recommended: true }));
+    expect(docs['docs/knowledge/shipping.md']).toEqual(expect.objectContaining({ draft: true, coveredBySeed: true, recommended: false }));
+    expect(docs['docs/knowledge/terms.md'].recommended).toBe(false);
+    expect(docs['docs/api/contract.md']).toEqual(expect.objectContaining({ usedByChatbot: false, recommended: false }));
+});
+
+test('without usage evidence, non-draft knowledge folders are recommended', async () => {
+    const dir = fixture({
+        'server.js': `const express = require('express'); const OpenAI = require('openai');
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY }); const app = express();
+app.post('/api/chat', async (req, res) => res.json({ answer: (await client.responses.create({ model: 'x', input: req.body.message })).output_text }));
+app.listen(3000);`,
+        'knowledge/faq.md': '# FAQ\n\nOpening hours are 9 to 5.',
+        'docs/architecture.md': '# Architecture\n',
+    });
+    const audit = await analyzeChatbotWorkspace(dir);
+    const recommended = audit.summary.candidateDocs.filter(doc => doc.recommended).map(doc => doc.path);
+    expect(recommended).toEqual(['knowledge/faq.md']);
+});

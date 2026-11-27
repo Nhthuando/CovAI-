@@ -119,7 +119,7 @@ export default function ScenarioEditor({ item, draft, actionEnabled, onChange })
         </p>
       )}
       <details className="group border-t border-[var(--color-border)] pt-5">
-        <summary className={`cursor-pointer list-none rounded-md text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] hover:text-[var(--color-text)] ${interactive}`}>
+        <summary className={`cursor-pointer list-none rounded-md text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] ${interactive}`}>
           Advanced (JSON)
         </summary>
         <div className="mt-4">

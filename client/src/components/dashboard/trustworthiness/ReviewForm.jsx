@@ -42,7 +42,7 @@ export default function ReviewForm({ criterionId, api, act, busy, onSaved, onSki
           {blindChoices.map(({ value, label, icon: Icon, active }) => (
             <button key={value} type="button" aria-pressed={verdict === value} disabled={busy}
               onClick={() => { setVerdict(value); setScore(value === 'PASSED' ? '100' : '0'); }}
-              className={cn('flex h-14 cursor-pointer items-center justify-center gap-2 rounded-lg border text-sm font-medium transition-all duration-150 outline-none active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]/50 disabled:opacity-50',
+              className={cn('flex h-14 cursor-pointer items-center justify-center gap-2 rounded-lg border text-sm font-medium transition-colors duration-150 outline-none active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-[var(--color-focus)]/50 disabled:opacity-50',
                 verdict === value ? active : 'border-[var(--color-border)] bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text)]')}>
               <Icon className="size-4" aria-hidden="true" />{label}
             </button>

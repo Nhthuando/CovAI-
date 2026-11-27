@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CheckCheck, FileText, List, Plus, Save, Settings2, Sparkles, TriangleAlert } from 'lucide-react';
+import { CheckCheck, FileText, List, Plus, Save, Settings2, TriangleAlert, PenLine } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { Badge } from '../../ui/badge';
 import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../../ui/sheet';
@@ -142,7 +142,7 @@ function ProfileVersionEditor({
         const result = await api(`/profile-versions/${version.id}/propose`, 'POST', {});
         setPreparationId(result.jobId);
       }, 'Writing questions… they will appear below.')}>
-      <Sparkles aria-hidden="true" />Write questions with AI
+      <PenLine aria-hidden="true" />Write questions with AI
     </Button>
     {(missingDocuments || !definition.judge.generationConsent) && (
       <p className="text-xs text-[var(--color-text-secondary)]">
@@ -177,7 +177,7 @@ function ProfileVersionEditor({
 
       <div className="flex flex-wrap items-stretch overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
         <div className="grid min-w-0 flex-1 grid-cols-2 divide-x divide-[var(--color-border)] md:grid-cols-4">
-          <StatTile label="Questions"><span className="font-mono tabular-nums">{cases.length || definition.scenarioCount}</span>{!cases.length && <span className="text-[var(--color-text-muted)]"> planned</span>}</StatTile>
+          <StatTile label="Questions"><span className="font-mono tabular-nums">{cases.length || definition.scenarioCount}</span>{!cases.length && <span className="text-[var(--color-text-muted)]"> to generate</span>}</StatTile>
           <StatTile label="Each asked"><span className="font-mono tabular-nums">{definition.repetitions}×</span></StatTile>
           <StatTile label="Written by">{modelLabel(definition.judge.generatorModel)}</StatTile>
           <StatTile label="Graded by">{modelLabel(definition.judge.model)}</StatTile>
@@ -190,7 +190,7 @@ function ProfileVersionEditor({
       </div>
 
       {!cases.length && !generating && (
-        <EmptyState icon={Sparkles} title="No questions yet"
+        <EmptyState icon={List} title="No questions yet"
           description={onlyChatbotProfiles
             ? 'AI reads your chatbot profile and writes questions about its role, safety and memory. You can check and edit every question before approving.'
             : 'AI reads your documents and writes test questions. You can check and edit every question before approving.'}
@@ -264,7 +264,7 @@ function ProfileVersionEditor({
               </span>
               <span className="min-w-0 flex-1 truncate">{preparationPhaseLabels[preparationProgress.phase] || 'Writing questions…'}</span>
               <span className="h-1.5 w-24 overflow-hidden rounded-md bg-sky-500/20" aria-hidden="true">
-                <span className="block h-full bg-sky-400 transition-all duration-300" style={{ width: `${preparationProgress.progress ?? 0}%` }} />
+                <span className="block h-full bg-sky-400 transition-colors duration-300" style={{ width: `${preparationProgress.progress ?? 0}%` }} />
               </span>
               <span className="font-mono tabular-nums">{preparationProgress.progress ?? 0}%</span>
             </div>
@@ -407,7 +407,7 @@ function ProfileVersionEditor({
                     </CheckboxRow>
                   ))}
                   <details className="pt-2">
-                    <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Mock tools (JSON)</summary>
+                    <summary className="cursor-pointer text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Mock tools (JSON)</summary>
                     <div className="mt-3">
                       <JsonEditor label="Mock tools" value={definition.tools}
                         onChange={tools => setDefinition({ ...definition, tools })} />

@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
@@ -7,6 +8,7 @@ import { extractValidEndpoints } from '../apiEndpointParser.service.js';
 import { referencedEnvironment, requiredStartupEnvironment } from '../fullSystemEnvironment.service.js';
 import { snapshotWorkspaceRoot, normalizeDiskPath } from '../../utils/snapshotWorkspace.js';
 import { DEFAULT_EVALUATION_CONFIG, fail, hash, VERSIONS } from './common.js';
+import { SEED_SCRIPT_PATH, extractSeededKnowledge } from './seededKnowledge.js';
 import { inferChatContract, resolveFunction, resolveModuleFunction, resolveRelativeSource, resolveValue } from './chatContractInference.js';
 
 const traverse = _traverse.default || _traverse;
@@ -64,6 +66,13 @@ const HARDCODED_KEY_PATTERNS = [
 
 const GROUNDING_REFUSAL_RE = /(?:only\s+(?:use|answer|rely)|based\s+(?:solely\s+|strictly\s+|only\s+)?on|provided\s+(?:context|document|knowledge|information)|do\s+not\s+(?:invent|make\s+up|hallucinate|fabricate|guess|assume)|if\s+.*\bnot\b.*(?:know|in\s+the\s+context|found|provided)|refuse|out[\s-]of[\s-]scope|cannot\s+answer|chỉ\s+(?:dựa\s+trên|sử\s+dụng|trả\s+lời\s+theo)|tài\s+liệu\s+(?:được\s+)?cung\s+cấp|không\s+(?:được\s+)?(?:bịa|tự\s+ý\s+suy\s+diễn|đoán)|từ\s+chối|ngoài\s+phạm\s+vi|không\s+(?:có|tìm\s+thấy)\s+thông\s+tin)/i;
 
+// optionalAuth/maybeAuth only read a session when present; the route stays open to guests.
+const OPTIONAL_AUTH_MIDDLEWARE = /optional|maybe|soft|attach|populate|identify|lenient/i;
+// Judged on the called function (authMiddleware.requireOriginOnly -> requireOriginOnly), not its module name.
+const isRequiredAuthMiddleware = name => {
+    const called = String(name || '').split('.').at(-1);
+    return !OPTIONAL_AUTH_MIDDLEWARE.test(called) && /(?:auth|token|jwt|protect|guard|session|signed)/i.test(called);
+};
 const CHAT_ROUTE_HINT_RE = /(?:^|\/)(?:chat|chatbot|bot|ask|assistant|completions|converse|message|messages|qa|rag|ai)(?:\/|$|-|_)/i;
 const QUESTION_FIELDS = ['message', 'question', 'prompt', 'query', 'input', 'text', 'userMessage', 'user_message', 'userInput', 'msg', 'content', 'q', 'chatInput', 'userQuery', 'user_input', 'userPrompt', 'ask'];
 const LEGACY_QUESTION_FIELDS = QUESTION_FIELDS.slice(0, 13);
@@ -263,6 +272,93 @@ function isResponseSendOrJsonCall(calleeNode) {
     return false;
 }
 
+// Saved audits are re-scanned whenever the analyzer code changes, not only when someone bumps VERSIONS.
+const ANALYZER_VERSION = (() => {
+    const files = ['./designAudit.service.js', './seededKnowledge.js', './chatContractInference.js', '../apiEndpointParser.service.js'];
+    try {
+        const digest = crypto.createHash('sha256');
+        for (const file of files) digest.update(fsSync.readFileSync(new URL(file, import.meta.url)));
+        return `${VERSIONS.designAudit}+${digest.digest('hex').slice(0, 12)}`;
+    } catch (error) {
+        console.error('[DesignAudit] Could not fingerprint analyzer code:', error?.message || error);
+        return VERSIONS.designAudit;
+    }
+})();
+
+const KNOWLEDGE_PATH = /(?:^|\/)(?:[\w-]*knowledge[\w-]*|kb|faqs?|polic(?:y|ies)|help-?center|support-docs?)(?:\/|$)|(?:faq|polic(?:y|ies))[\w-]*\.(?:md|txt|pdf|docx)$/i;
+const DRAFT_HEADER = /\bstatus\s*[:=]\s*\**\s*draft\b|\bretrieval eligibility\s*:\s*excluded\b|\bnot (?:yet )?approved\b|^#.*\bdraft\b/im;
+// A folder named as a path piece in code: 'knowledge', "knowledge/", `/knowledge`.
+const folderMentions = folder => ["'", '"', '`', '/'].flatMap(open => ["'", '"', '`', '/'].map(close => `${open}${folder}${close}`));
+
+/**
+ * Flags the documents a chatbot really reads, so the UI can pre-select them:
+ * - usedByChatbot: source code names the file (seed/ingest scripts: 'docs/ai-knowledge/faq.md')
+ *   or names its folder next to a file-reading call (readdir('knowledge'));
+ * - draft: the document says it is a draft or excluded from retrieval;
+ * - recommended: used and not a draft. Without usage evidence, knowledge/FAQ/policy files are recommended.
+ */
+async function markChatbotKnowledgeDocs(workspaceRoot, docs, sourceFiles) {
+    const readsFiles = /readdir|readFile|createReadStream|glob|loadDocuments|DirectoryLoader|TextLoader|open\(/;
+    // Knowledge written straight into the database by seed/ingest scripts becomes its own document.
+    const seeded = [];
+    for (const file of sourceFiles) {
+        if (!file.content || !SEED_SCRIPT_PATH.test(file.path)) continue;
+        const text = extractSeededKnowledge(file.content, file.path);
+        if (text) seeded.push({ file, text });
+    }
+    const quotedIn = (code, suffix) => ["'", '"', '`'].some(quote => code.includes(`${suffix}${quote}`));
+    for (const doc of docs) {
+        const segments = doc.path.split('/');
+        const suffixes = segments.length > 1 ? [doc.path, segments.slice(-2).join('/')] : [doc.path];
+        const folder = segments.length > 1 ? segments.at(-2) : null;
+        // Only quoted paths count: comments such as "aligned with docs/api/x.md" are not reads.
+        const basename = segments.at(-1);
+        const distinctiveName = !/^(?:readme|index|changelog|license|contributing|agents?|claude)\.\w+$/i.test(basename);
+        const users = sourceFiles.filter(({ content: code = '' }) => suffixes.some(suffix => quotedIn(code, suffix))
+            // path.join(DATA_DIR, "project-knowledge.md"): the bare file name, quoted, beside a file read.
+            || (distinctiveName && ["'", '"', '`'].some(quote => code.includes(`${quote}${basename}${quote}`)) && readsFiles.test(code))
+            // Folder reads only for knowledge-like folders; 'api' or 'security' appear in code for other reasons.
+            || (folder && /knowledge|^kb$|faq|polic|help|support|corpus|articles?$/i.test(folder)
+                && folderMentions(folder).some(mention => code.includes(mention)) && readsFiles.test(code)));
+        doc.usedByChatbot = users.length > 0;
+        // A path named only by a seed script that carries its own text: the seeded copy is what the chatbot reads.
+        doc.coveredBySeed = doc.usedByChatbot && users.every(user => seeded.some(entry => entry.file === user));
+        doc.draft = false;
+        if (['md', 'txt'].includes(doc.format) && doc.sizeBytes <= 512 * 1024) {
+            try {
+                const handle = await fs.open(path.join(workspaceRoot, doc.path), 'r');
+                try {
+                    const { buffer, bytesRead } = await handle.read(Buffer.alloc(1500), 0, 1500, 0);
+                    doc.draft = DRAFT_HEADER.test(buffer.subarray(0, bytesRead).toString('utf8'));
+                } finally {
+                    await handle.close();
+                }
+            } catch (err) {
+                console.warn(`[DesignAudit] Could not read document header ${doc.path}: ${safeWarnMessage(err)}`);
+            }
+        }
+    }
+    const anyUsed = seeded.length > 0 || docs.some(doc => doc.usedByChatbot && !doc.draft);
+    for (const doc of docs) {
+        // System prompts are instructions, not business facts: the "No documents" profile reads them.
+        doc.recommended = !doc.draft && !doc.coveredBySeed && !/prompt/i.test(doc.path.split('/').at(-1))
+            && (anyUsed ? doc.usedByChatbot : KNOWLEDGE_PATH.test(doc.path));
+    }
+    for (const { file, text } of seeded) {
+        docs.push({
+            path: file.path,
+            name: `Knowledge seeded by ${file.path}`,
+            format: 'seed',
+            kind: 'SEEDED_KNOWLEDGE',
+            sizeBytes: Buffer.byteLength(text),
+            priority: 'HIGH',
+            usedByChatbot: true,
+            draft: false,
+            recommended: true,
+        });
+    }
+}
+
 async function scanWorkspaceTree(workspaceRoot, { maxTotalBytes = MAX_AUDIT_SCAN_BYTES } = {}) {
     const jsFiles = [];
     const packageManifests = [];
@@ -382,7 +478,9 @@ async function scanWorkspaceTree(workspaceRoot, { maxTotalBytes = MAX_AUDIT_SCAN
     };
 
     await walk(workspaceRoot);
-    candidateDocs.sort((a, b) => (a.priority === b.priority ? a.path.localeCompare(b.path) : a.priority === 'HIGH' ? -1 : 1));
+    await markChatbotKnowledgeDocs(workspaceRoot, candidateDocs, [...jsFiles, ...pythonSourceFiles]);
+    const rank = doc => (doc.recommended ? 0 : doc.usedByChatbot ? 1 : doc.priority === 'HIGH' ? 2 : 3);
+    candidateDocs.sort((a, b) => rank(a) - rank(b) || a.path.localeCompare(b.path));
     return {
         jsFiles,
         packageManifests,
@@ -650,7 +748,7 @@ function detectDirectExpressRoutes(jsFiles, aiCallingFiles, routeContracts) {
                 if (![...endpointPaths].some(endpoint => CHAT_ROUTE_HINT_RE.test(endpoint)) && !isAiFile && !followsAiCall(contract)) return;
 
                 const argNames = p.node.arguments.slice(1).map(arg => extractExpressionHint(arg)).filter(Boolean);
-                const hasAuthMiddleware = argNames.some(name => /(?:auth|token|jwt|protect|guard|session)/i.test(name));
+                const hasAuthMiddleware = argNames.some(isRequiredAuthMiddleware);
                 const hasRateLimitMiddleware = argNames.some(name => /(?:limit|rate|throttle)/i.test(name));
                 for (const endpointPath of endpointPaths) {
                     if (contract) routeContracts.set(`POST:${endpointPath}`, contract);
@@ -1181,7 +1279,7 @@ export async function analyzeChatbotWorkspace(workspaceRoot, options = {}) {
             designScore: null,
             systemPromptTexts: [],
             summary: {
-                analyzerVersion: VERSIONS.designAudit,
+                analyzerVersion: ANALYZER_VERSION,
                 ecosystem: pythonSourceFiles.length && !jsFiles.length ? 'python' : 'node',
                 sdks: [],
                 endpoints: [],
@@ -1251,7 +1349,7 @@ export async function analyzeChatbotWorkspace(workspaceRoot, options = {}) {
             endpointPath: ep.path || ep.endpoint || '/api/chat',
             sourceFile: ep.routeFile || ep.controllerFile || null,
             line: ep.line || 1,
-            requiresRouteAuth: Array.isArray(ep.middlewares) && ep.middlewares.some(m => m.type === 'AUTHENTICATION' || /auth|jwt|token|protect/i.test(m.name || '')),
+            requiresRouteAuth: Array.isArray(ep.middlewares) && ep.middlewares.some(m => isRequiredAuthMiddleware(m.name)),
             hasRateLimitMiddleware: Array.isArray(ep.middlewares) && ep.middlewares.some(m => /rate|limit|throttle/i.test(m.name || '')),
         }));
 
@@ -1436,22 +1534,29 @@ export async function analyzeChatbotWorkspace(workspaceRoot, options = {}) {
 
     let primaryEndpoint = null;
     let bestScore = -Infinity;
+    // One route can appear with and without its mount prefix (/messages, /api/v1/support/messages):
+    // they share the handler contract, and the longest (fully mounted) path wins a tie.
+    const sameRoute = (a, b) => a.method === b.method && (a.endpointPath.endsWith(b.endpointPath) || b.endpointPath.endsWith(a.endpointPath));
+    const contractFor = endpoint => routeContracts.get(contractKey(endpoint))
+        || allChatEndpoints.filter(other => other !== endpoint && sameRoute(endpoint, other)).map(other => routeContracts.get(contractKey(other))).find(Boolean);
     for (const endpoint of allChatEndpoints) {
         if (endpoint.method !== 'POST') continue;
-        const candidate = routeContracts.get(contractKey(endpoint));
+        const candidate = contractFor(endpoint);
         const lastSegment = endpoint.endpointPath.split('/').filter(Boolean).at(-1) || '';
         const score = (candidate && (candidate.fields.has('messages') || QUESTION_FIELDS.some(field => candidate.fields.has(field))) ? 8 : 0)
             + (candidate?.responsePointer ? 4 : 0)
             + (CHAT_ROUTE_HINT_RE.test(lastSegment) ? 2 : 0)
             - (/[:*]/.test(endpoint.endpointPath) ? 6 : 0)
             - (/history|session|delete|clear|feedback|upload|title|rename|webhook|login|register|payment|checkout|intent/i.test(lastSegment) ? 4 : 0);
-        if (score > bestScore) {
+        const longerSameRoute = score === bestScore && primaryEndpoint && sameRoute(endpoint, primaryEndpoint)
+            && endpoint.endpointPath.length > primaryEndpoint.endpointPath.length;
+        if (score > bestScore || longerSameRoute) {
             bestScore = score;
             primaryEndpoint = endpoint;
         }
     }
     primaryEndpoint ||= allChatEndpoints[0] || null;
-    const contract = primaryEndpoint ? routeContracts.get(contractKey(primaryEndpoint)) : null;
+    const contract = primaryEndpoint ? contractFor(primaryEndpoint) : null;
     const selectedLatest = QUESTION_FIELDS.find(field => contract?.fields.has(field));
     let conversationMode = 'messages';
     let bindings = { '/messages': 'messages' };
@@ -1515,7 +1620,7 @@ export async function analyzeChatbotWorkspace(workspaceRoot, options = {}) {
         designScore,
         systemPromptTexts,
         summary: {
-            analyzerVersion: VERSIONS.designAudit,
+            analyzerVersion: ANALYZER_VERSION,
             ecosystem: hasOnlyPython ? 'python' : pythonManifests.length ? 'mixed' : 'node',
             pythonParserLimitation: pythonManifests.length || pythonSourceFiles.length
                 ? 'apiEndpointParser currently parses Express/Node.js JS/TS routes; full Python FastAPI/Flask AST route parsing is scheduled for Phase 2.'
@@ -1684,6 +1789,14 @@ export async function getChatbotDesignAudit(db, projectId, { snapshotId, autoSca
             updatedAt: true,
         },
     });
+    if (existing && existing.summaryJson?.analyzerVersion !== ANALYZER_VERSION) {
+        // Saved by an older analyzer (e.g. missed LLM key variables or optional auth): scan again.
+        try {
+            return await runChatbotDesignAudit(db, projectId, { snapshotId: snapshot.id });
+        } catch (error) {
+            console.error(`[DesignAudit] Re-scan of outdated audit failed for project ${projectId}:`, error?.message || error);
+        }
+    }
     if (existing) return formatPersistedAudit(existing);
     if (!autoScan) {
         return {

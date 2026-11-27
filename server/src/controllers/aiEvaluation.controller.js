@@ -43,6 +43,7 @@ export function createEvaluationController({ db = prisma, enqueue = service.enqu
         archiveTarget: json(req => service.archiveTarget(db, req.params.projectId, req.params.id, req.body?.archived)),
         listSources: json(async req => (await service.workspace(db, req.params.projectId, req.user.id)).sources),
         getSource: json(req => service.getKnowledgeSource(db, req.params.projectId, req.params.id)),
+        removeSource: json(req => service.removeKnowledgeSource(db, req.params.projectId, req.params.id)),
         uploadSource: json(req => service.uploadKnowledgeSource(db, req.params.projectId, req.user.id, req.file, enqueue), 202),
         createSource: json(req => service.createKnowledgeSourceFromInput(db, req.params.projectId, req.body), 201),
         createProfileSource: json(req => createProjectProfileSource(db, req.params.projectId, {

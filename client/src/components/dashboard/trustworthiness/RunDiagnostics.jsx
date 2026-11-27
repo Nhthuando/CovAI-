@@ -200,7 +200,7 @@ function ResultDetail({ entry, run, api, act, busy }) {
         {definition.sourceQuote && (
           <section className="space-y-3">
             <SectionLabel className="flex items-center gap-2"><FileText className="size-3.5" aria-hidden="true" />From your documents</SectionLabel>
-            <blockquote className="whitespace-pre-wrap break-words border-l-2 border-[var(--color-border-strong)] pl-4 text-sm italic leading-relaxed text-[var(--color-text-secondary)]">{definition.sourceQuote}</blockquote>
+            <blockquote className="whitespace-pre-wrap break-words border-l-2 border-[var(--color-border-strong)] pl-4 text-sm leading-relaxed text-[var(--color-text-secondary)]">{definition.sourceQuote}</blockquote>
             {definition.referenceUnverified && <Badge variant="warning">Quote not found word for word</Badge>}
           </section>
         )}
