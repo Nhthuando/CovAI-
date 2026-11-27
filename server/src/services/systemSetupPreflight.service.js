@@ -174,7 +174,10 @@ export const inspectSystemSetup = async ({rootDir,workspaceRevision=0,dependenci
     }
     const inferred=source.packages.length ? inferFullSystemPlan(source,{allowSchemaDraft:true}) : null;
     const candidate=configured || (inferred && systemSetupConfig.safeParse(inferred).success ? inferred : null);
-    if (!configured && !candidate && source.packages.length) issues.push({code:'SETUP_REQUIRED',message:'CovAI could not determine one unambiguous startup setup. Review the detected packages and supply the configuration, or generate a setup draft.'});
+    const runnable = source.packages.some(pkg => ['dev','start','serve','preview'].some(key => typeof pkg.scripts?.[key] === 'string') || pkg.entryFile);
+    if (!configured && !candidate && source.packages.length) issues.push(runnable
+        ? {code:'SETUP_REQUIRED',message:'CovAI could not determine one unambiguous startup setup. Review the detected packages and supply the configuration, or generate a setup draft.'}
+        : {code:'SETUP_REQUIRED',message:'This project has no runnable app: no package.json has a dev, start, serve or preview script. System tests open the app in a browser; for a library, use Unit tests instead.'});
     if (!source.packages.length) issues.push({code:'UNSUPPORTED_STACK',message:'No supported Node.js application package was found. This runner needs a compatible package.json and startup scripts; other languages require an additional runtime adapter.'});
     if (candidate) {
         for (const [kind,directory] of [['Frontend',candidate.frontend.directory],['Backend',candidate.backend.directory]]) {

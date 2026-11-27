@@ -1,4 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { Skeleton } from "../../common/Skeleton.jsx";
+import { Badge } from "../../ui/badge.jsx";
+import { Button } from "../../ui/button.jsx";
+import { Card } from "../../ui/card.jsx";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../ui/dropdown-menu.jsx";
+import { Hint } from "../../ui/tooltip.jsx";
 import {
   loadMatrixSelection,
   saveMatrixSelection,
@@ -10,14 +16,13 @@ import {
   Search,
   ChevronRight,
   ChevronDown,
-  FileCode2,
   Play,
   Plus,
+  Ellipsis,
+  ScanSearch,
   Edit3,
   Code2,
   Trash2,
-  Wand2,
-  Sparkles,
   CheckCircle2,
   XCircle,
   Clock,
@@ -27,6 +32,8 @@ import {
   AlertTriangle,
   RefreshCw,
   Camera,
+  FilePlus2,
+  Wrench,
 } from "lucide-react";
 import {
   getSystemGroupCaseCoverage,
@@ -49,7 +56,27 @@ function normalizeStatus(status = "") {
   return "NOT_RUN";
 }
 
+// One short neutral tag per scenario instead of several long badges.
+const CASE_TAGS = { HAPPY: "Happy", EDGE: "Edge", AUTH: "Auth", ERROR: "Error" };
+function caseTag(sc) {
+  const key = String(sc.caseKey || "").toUpperCase();
+  if (CASE_TAGS[key]) return CASE_TAGS[key];
+  const label = String(sc.caseLabel || "").toLowerCase();
+  if (label.startsWith("happy")) return "Happy";
+  if (label.startsWith("edge")) return "Edge";
+  if (label.includes("auth")) return "Auth";
+  if (label.startsWith("error")) return "Error";
+  return null;
+}
+
+function formatDuration(ms) {
+  const value = Number(ms);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return value < 1000 ? `${Math.round(value)} ms` : `${(value / 1000).toFixed(1)} s`;
+}
+
 function getGroupStatus(group) {
+  if (group.fullStackCompatible === false) return "FRONTEND_ONLY";
   if (group.hasDraftOnly && !(group.scenarios || []).length) return "DRAFT";
   const scenarios = group.scenarios || [];
   if (scenarios.some((sc) => normalizeStatus(sc.status) === "FAIL")) return "FAIL";
@@ -62,21 +89,24 @@ function getGroupStatus(group) {
 }
 
 const STATUS_BADGE = {
-  PASS: { label: "Covered", dot: "bg-emerald-400", text: "text-emerald-400" },
-  PARTIAL: { label: "Partial", dot: "bg-amber-400", text: "text-amber-400" },
-  FAIL: { label: "Failed", dot: "bg-rose-400", text: "text-rose-400" },
-  FLAKY: { label: "Flaky", dot: "bg-amber-400", text: "text-amber-400" },
-  DRAFT: { label: "Draft Ready", dot: "bg-sky-400", text: "text-sky-400" },
-  UNCOVERED: { label: "Uncovered", dot: "bg-[var(--color-text-muted)]", text: "text-[var(--color-text-muted)]" },
+  PASS: { label: "Covered", variant: "success" },
+  PARTIAL: { label: "Partial", variant: "warning" },
+  FAIL: { label: "Failed", variant: "danger" },
+  FLAKY: { label: "Flaky", variant: "warning" },
+  DRAFT: { label: "Draft", variant: "info" },
+  FRONTEND_ONLY: { label: "Frontend only", variant: "secondary" },
+  UNCOVERED: { label: "Uncovered", variant: "secondary" },
 };
+
+const MOCKED_API_HINT = "Frontend-only test: it mocks API calls, so it can't run in Full Stack mode. Generate Full Stack tests instead.";
+
+const rowLayout = "grid grid-cols-[1rem_minmax(0,1fr)_7rem_6rem_2.5rem_6rem] items-center gap-3 px-4";
 
 export default function SystemSpecMatrixTable({
   snapshotId = null,
   specGroups = [],
-  framework = "playwright",
-  latestDraft = null,
+  loading = false,
   syncingCatalog = false,
-  applyingDraft = false,
   runningTarget = null,
   fixingTarget = null,
   deletingTarget = null,
@@ -84,9 +114,7 @@ export default function SystemSpecMatrixTable({
   canEditTests = true,
   canUseAi = true,
   onSyncCatalog,
-  onOpenGenerator,
   onGenerateSelected,
-  onApplyDraft,
   onRunSelectedFiles,
   onRunSelectedScenarios,
   onRunSpecFile,
@@ -197,6 +225,7 @@ export default function SystemSpecMatrixTable({
 
   const toggleSelectFile = (filePath) => {
     const targetGroup = enrichedGroups.find((g) => g.filePath === filePath);
+    if (targetGroup?.fullStackCompatible === false) return;
     const next = toggleParentSelection({
       parentKey: filePath,
       childKeys: (targetGroup?.annotatedScenarios || []).map((sc) =>
@@ -209,13 +238,13 @@ export default function SystemSpecMatrixTable({
     setSelectedScenarioKeys(next.children);
   };
 
-  const allVisibleSelected =
-    filteredGroups.length > 0 &&
-    filteredGroups.every((g) => g.filePath && selectedFiles.has(g.filePath));
+  const selectableGroups = filteredGroups.filter((group) => group.filePath && group.fullStackCompatible !== false);
+  const allVisibleSelected = selectableGroups.length > 0 &&
+    selectableGroups.every((group) => selectedFiles.has(group.filePath));
 
   const toggleSelectAllFiles = () => {
     const next = toggleAllParentsSelection({
-      items: filteredGroups.map((group) => ({
+      items: selectableGroups.map((group) => ({
         parentKey: group.filePath,
         childKeys: (group.annotatedScenarios || []).map((sc) =>
           scenarioSelectionKey(sc, group),
@@ -230,6 +259,7 @@ export default function SystemSpecMatrixTable({
   };
 
   const toggleSelectScenario = (sc, group) => {
+    if (group.fullStackCompatible === false) return;
     const next = toggleChildSelection({
       childKey: scenarioSelectionKey(sc, group),
       parentKey: group?.filePath || null,
@@ -243,11 +273,14 @@ export default function SystemSpecMatrixTable({
     setSelectedScenarioKeys(next.children);
   };
 
-  const selectedFileList = useMemo(() => Array.from(selectedFiles), [selectedFiles]);
+  const selectedFileList = useMemo(() => enrichedGroups
+    .filter((group) => group.fullStackCompatible !== false && selectedFiles.has(group.filePath))
+    .map((group) => group.filePath), [enrichedGroups, selectedFiles]);
 
   const selectedScenarioObjects = useMemo(() => {
     const out = [];
     for (const group of enrichedGroups) {
+      if (group.fullStackCompatible === false) continue;
       const parentSelected = Boolean(group.filePath && selectedFiles.has(group.filePath));
       for (const sc of group.annotatedScenarios || []) {
         if (parentSelected || selectedScenarioKeys.has(scenarioSelectionKey(sc, group))) {
@@ -258,37 +291,42 @@ export default function SystemSpecMatrixTable({
     return out;
   }, [enrichedGroups, selectedFiles, selectedScenarioKeys]);
 
-  const hasPendingDraft =
-    latestDraft &&
-    !latestDraft.applied &&
-    !latestDraft.appliedAt &&
-    !latestDraft.stale &&
-    ["GENERATED", "REVIEWED", "PENDING", "DRAFT"].includes(
-      String(latestDraft.state || latestDraft.status || "DRAFT").toUpperCase(),
-    );
-
-  const runnerBadge = String(framework || "playwright").toLowerCase() === "cypress" ? "CY" : "PW";
+  const hasSelection = selectedFileList.length > 0 || selectedScenarioObjects.length > 0;
+  const stagedActions = pendingOpsCount > 0 && onApplyPendingChanges && (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button
+        size="sm"
+        onClick={onApplyPendingChanges}
+        loading={isApplyingPending}
+        title="Write temporary UI edits, additions, and deletions to spec files"
+      >
+        {!isApplyingPending && <Check />}
+        {isApplyingPending ? "Applying…" : `Apply changes (${pendingOpsCount})`}
+      </Button>
+      {onDiscardPendingChanges && !isApplyingPending && (
+        <Button size="sm" variant="outline" onClick={onDiscardPendingChanges}>Discard</Button>
+      )}
+    </div>
+  );
+  const expandLabel = allExpanded ? "Collapse all" : "Expand all";
 
   return (
-    <div className="space-y-3">
-      {/* Filter & Global Controls Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-2.5 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg px-3.5 py-2.5">
-        <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[260px]">
-          <div className="relative flex-1 min-w-[220px] max-w-md">
-            <Search
-              size={13}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]"
-            />
+    <div className="flex min-w-0 flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-1 basis-[28rem] flex-wrap items-center gap-2">
+          <div className="relative min-w-0 flex-1 basis-40">
+            <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
             <input
-              type="text"
+              type="search"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Filter by spec file, feature, or scenario..."
-              className="w-full pl-8 pr-3 py-1.5 rounded-md bg-[var(--color-bg)] border border-[var(--color-border)] text-xs text-[var(--color-text)] placeholder-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)]"
+              aria-label="Search specs, features, or scenarios"
+              placeholder="Search specs, features, or scenarios…"
+              className="h-8 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] pr-2 pl-8 text-sm text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-muted)] focus-visible:border-[var(--color-primary)]"
             />
           </div>
 
-          <div className="flex items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-0.5 text-[11px]">
+          <div className="flex flex-wrap items-center rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5 text-xs" role="group" aria-label="Filter specs by status">
             {[
               { id: "ALL", label: "All" },
               { id: "PASS", label: "Pass" },
@@ -300,11 +338,8 @@ export default function SystemSpecMatrixTable({
                 key={pill.id}
                 type="button"
                 onClick={() => setStatusFilter(pill.id)}
-                className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
-                  statusFilter === pill.id
-                    ? "bg-[var(--color-surface-secondary)] text-[var(--color-text)] font-semibold"
-                    : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                }`}
+                aria-pressed={statusFilter === pill.id}
+                className="cursor-pointer rounded px-2 py-1 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)] aria-pressed:bg-[var(--color-surface-secondary)] aria-pressed:font-semibold aria-pressed:text-[var(--color-text)]"
               >
                 {pill.label}
               </button>
@@ -312,567 +347,372 @@ export default function SystemSpecMatrixTable({
           </div>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          {!hasSelection && stagedActions}
           {onSyncCatalog && (
-            <button
-              type="button"
-              onClick={onSyncCatalog}
-              disabled={syncingCatalog}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium cursor-pointer transition-colors disabled:opacity-50"
-              title="Scan disk for spec files and sync System Test scenario catalog"
-            >
-              <RefreshCw size={12} className={syncingCatalog ? "animate-spin" : ""} />
-              <span>Scan Specs</span>
-            </button>
+            <Hint text="Scan specs">
+              <span className="inline-flex">
+                <Button size="icon-sm" variant="outline" onClick={onSyncCatalog} disabled={syncingCatalog} aria-label="Scan specs">
+                  {syncingCatalog ? <RefreshCw className="animate-spin" /> : <ScanSearch />}
+                </Button>
+              </span>
+            </Hint>
           )}
-
           {canEditTests && onOpenAddTest && (
-            <button
-              type="button"
-              onClick={() => onOpenAddTest(null)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium cursor-pointer transition-colors"
-            >
-              <Plus size={12} />
-              <span>New Scenario</span>
-            </button>
+            <Hint text="New scenario">
+              <Button size="icon-sm" variant="outline" onClick={() => onOpenAddTest(null)} aria-label="New scenario">
+                <Plus />
+              </Button>
+            </Hint>
           )}
-
-          {canUseAi && onOpenGenerator && (
-            <button
-              type="button"
-              onClick={onOpenGenerator}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium cursor-pointer transition-colors"
-            >
-              <Sparkles size={12} className="text-[var(--color-primary)]" />
-              <span>Generate All</span>
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={toggleExpandAll}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium cursor-pointer transition-colors"
-          >
-            <ChevronsUpDown size={12} />
-            <span>{allExpanded ? "Collapse all" : "Expand all"}</span>
-          </button>
+          <Hint text={expandLabel}>
+            <Button size="icon-sm" variant="outline" onClick={toggleExpandAll} aria-label={expandLabel}>
+              <ChevronsUpDown />
+            </Button>
+          </Hint>
         </div>
       </div>
 
-      {/* Batch Selection / Pending Draft Action Bar */}
-      {(selectedFileList.length > 0 || selectedScenarioObjects.length > 0 || hasPendingDraft) && (
-        <div className="flex flex-wrap items-center justify-between gap-2.5 px-4 py-2 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-xs">
-          <div className="flex items-center gap-2 text-[var(--color-text-secondary)] font-mono tabular-nums">
-            <span>
-              {selectedFileList.length > 0
-                ? `${selectedFileList.length} spec(s) selected`
-                : selectedScenarioObjects.length > 0
-                  ? `${selectedScenarioObjects.length} scenario(s) selected`
-                  : "Pending AI Draft available"}
-            </span>
-          </div>
+      {hasSelection && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm">
+          <span className="text-[var(--color-text-secondary)]">
+            {selectedFileList.length > 0
+              ? `${selectedFileList.length} ${selectedFileList.length === 1 ? "spec" : "specs"} selected`
+              : `${selectedScenarioObjects.length} ${selectedScenarioObjects.length === 1 ? "scenario" : "scenarios"} selected`}
+          </span>
 
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex flex-wrap items-center gap-2">
             {canUseAi && selectedFileList.length > 0 && onGenerateSelected && (
-              <button
-                type="button"
-                onClick={() => onGenerateSelected(selectedFileList)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text)] font-medium cursor-pointer transition-colors"
-              >
-                <Sparkles size={12} className="text-[var(--color-primary)]" />
-                <span>Generate Selected ({selectedFileList.length})</span>
-              </button>
+              <Button size="sm" variant="outline" onClick={() => onGenerateSelected(selectedFileList)}>
+                <FilePlus2 />
+                Generate selected ({selectedFileList.length})
+              </Button>
             )}
-
-            {pendingOpsCount > 0 && onApplyPendingChanges && (
-              <div className="inline-flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={onApplyPendingChanges}
-                  disabled={isApplyingPending}
-                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white font-semibold cursor-pointer transition-colors disabled:opacity-50"
-                  title="Write temporary UI edits, additions, and deletions to spec files"
-                >
-                  {isApplyingPending ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-                  <span>{isApplyingPending ? "Applying..." : `Apply Changes (${pendingOpsCount})`}</span>
-                </button>
-                {onDiscardPendingChanges && !isApplyingPending && (
-                  <button
-                    type="button"
-                    onClick={onDiscardPendingChanges}
-                    className="px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[11px] font-medium text-[var(--color-text-muted)] cursor-pointer"
-                  >
-                    Discard
-                  </button>
-                )}
-              </div>
-            )}
-
-            {hasPendingDraft && onApplyDraft && (
-              <button
-                type="button"
-                onClick={() => onApplyDraft(latestDraft)}
-                disabled={applyingDraft}
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-semibold cursor-pointer transition-colors disabled:opacity-50"
-              >
-                {applyingDraft ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-                <span>Apply AI Draft ({latestDraft.files?.length || 1} file)</span>
-              </button>
-            )}
-
+            {stagedActions}
             {canRunTests && selectedFileList.length > 0 && onRunSelectedFiles && (
-              <button
-                type="button"
-                onClick={() => onRunSelectedFiles(selectedFileList)}
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] font-semibold cursor-pointer transition-colors"
-              >
-                <Play size={11} fill="currentColor" />
-                <span>Run Selected Specs ({selectedFileList.length})</span>
-              </button>
+              <Button size="sm" onClick={() => onRunSelectedFiles(selectedFileList)}>
+                <Play />
+                Run selected specs ({selectedFileList.length})
+              </Button>
             )}
-
             {canRunTests && selectedScenarioObjects.length > 0 && onRunSelectedScenarios && (
-              <button
-                type="button"
-                onClick={() => onRunSelectedScenarios(selectedScenarioObjects)}
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] font-semibold cursor-pointer transition-colors"
-              >
-                <Play size={11} fill="currentColor" />
-                <span>Run Scenarios ({selectedScenarioObjects.length})</span>
-              </button>
+              <Button size="sm" onClick={() => onRunSelectedScenarios(selectedScenarioObjects)}>
+                <Play />
+                Run selected scenarios ({selectedScenarioObjects.length})
+              </Button>
             )}
-
-            {(selectedFileList.length > 0 || selectedScenarioObjects.length > 0) && (
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedFiles(new Set());
-                  setSelectedScenarioKeys(new Set());
-                }}
-                className="px-2 py-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
-              >
-                Clear
-              </button>
-            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setSelectedFiles(new Set());
+                setSelectedScenarioKeys(new Set());
+              }}
+            >
+              Clear
+            </Button>
           </div>
         </div>
       )}
 
-      {/* Matrix Table Container */}
-      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-        {/* Table Column Header */}
-        <div className="grid grid-cols-12 items-center gap-2 px-3.5 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)]/50 text-[11px] font-medium text-[var(--color-text-muted)]">
-          <div className="col-span-6 flex items-center gap-2.5">
-            <input
-              type="checkbox"
-              checked={allVisibleSelected}
-              onChange={toggleSelectAllFiles}
-              className="rounded border-[var(--color-border)] bg-[var(--color-bg)] cursor-pointer"
-              aria-label="Select all visible spec files"
-            />
-            <span>Spec File / Feature Flow</span>
-          </div>
-          <div className="col-span-2 hidden sm:block">Coverage Cases</div>
-          <div className="col-span-1 hidden md:block">Status</div>
-          <div className="col-span-1 hidden sm:block text-right">Scenarios</div>
-          <div className="col-span-6 sm:col-span-2 text-right">Actions</div>
+      <Card className="gap-0 overflow-x-auto py-0" aria-busy={loading}>
+        <div className={`${rowLayout} min-w-[600px] border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)]/50 py-2 text-xs font-medium text-[var(--color-text-muted)]`}>
+          <input
+            type="checkbox"
+            checked={allVisibleSelected}
+            disabled={selectableGroups.length === 0}
+            onChange={toggleSelectAllFiles}
+            className="size-4 cursor-pointer rounded accent-[var(--color-primary)]"
+            aria-label="Select all visible spec files"
+          />
+          <span>Spec file</span>
+          <span>Cases</span>
+          <span>Status</span>
+          <span className="text-right">Tests</span>
+          <span className="sr-only">Actions</span>
         </div>
 
-        {/* Empty State */}
-        {filteredGroups.length === 0 ? (
-          <div className="px-6 py-12 text-center space-y-3">
-            <p className="text-sm font-medium text-[var(--color-text-secondary)]">
-              {specGroups.length === 0
-                ? "No system test specs found yet."
-                : "No spec files match your current search or filter."}
-            </p>
-            <p className="text-xs text-[var(--color-text-muted)] max-w-md mx-auto">
-              {specGroups.length === 0
-                ? "Click Generate All to let AI inspect your application routes & UI flows and synthesize Playwright / Cypress E2E specs, or click + New Scenario to write one manually."
-                : "Try clearing your filter query or status toggle."}
-            </p>
+        {loading && specGroups.length === 0 ? (
+          <div className="min-w-[600px] divide-y divide-[var(--color-border)]" aria-hidden="true">
+            {Array.from({ length: 4 }, (_, index) => (
+              <div key={index} className={`${rowLayout} min-h-12`}>
+                <Skeleton className="size-4" />
+                <Skeleton className="h-4 w-3/4 max-w-56" />
+                <Skeleton className="h-2 w-16" />
+                <Skeleton className="h-5 w-16" />
+                <Skeleton className="ml-auto h-4 w-5" />
+                <Skeleton className="ml-auto h-6 w-20" />
+              </div>
+            ))}
           </div>
+        ) : filteredGroups.length === 0 ? (
+          !loading && (
+            <p className="px-4 py-10 text-sm text-[var(--color-text-muted)]">
+              {specGroups.length === 0 ? "No system test specs found." : "No specs match your search or filter."}
+            </p>
+          )
         ) : (
-          <div className="divide-y divide-[var(--color-border)]">
+          <div className="min-w-[600px] divide-y divide-[var(--color-border)]">
             {filteredGroups.map((group) => {
               const isExpanded = expandedKeys.has(group.key);
-              const isFileSelected = group.filePath && selectedFiles.has(group.filePath);
+              const isFrontendOnly = group.fullStackCompatible === false;
+              const isFileSelected = !isFrontendOnly && group.filePath && selectedFiles.has(group.filePath);
               const badge = STATUS_BADGE[group.groupStatus] || STATUS_BADGE.UNCOVERED;
               const isRunningGroup = runningTarget === group.filePath;
-              const passedInGroup = (group.annotatedScenarios || []).filter(
-                (sc) => normalizeStatus(sc.status) === "PASS",
-              ).length;
+              const { coveredCount, totalRequired, coverageRatio } = group.caseCov;
+              const coverageColor = coverageRatio >= 0.8
+                ? "bg-emerald-500"
+                : coverageRatio >= 0.4 ? "bg-amber-500" : "bg-[var(--color-danger)]";
+              const featureName = group.featureName?.trim();
+              const canAddScenario = canEditTests && onOpenAddTest;
 
               return (
                 <div key={group.key} className="bg-[var(--color-surface)]">
-                  {/* Group Header Row */}
                   <div
                     onClick={() => toggleExpand(group.key)}
-                    className="grid grid-cols-12 items-center gap-2 px-3.5 py-2.5 hover:bg-[var(--color-surface-secondary)]/40 transition-colors cursor-pointer"
+                    className={`${rowLayout} min-h-12 cursor-pointer py-1.5 transition-colors hover:bg-[var(--color-surface-secondary)]/50`}
                   >
-                    <div className="col-span-6 flex items-center gap-2 min-w-0">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(isFileSelected)}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={() => group.filePath && toggleSelectFile(group.filePath)}
-                        className="rounded border-[var(--color-border)] bg-[var(--color-bg)] cursor-pointer shrink-0"
-                        aria-label={`Select ${group.filePath}`}
-                      />
-                      <span className="text-[var(--color-text-muted)] shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(isFileSelected)}
+                      disabled={isFrontendOnly}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => group.filePath && toggleSelectFile(group.filePath)}
+                      className="size-4 cursor-pointer rounded accent-[var(--color-primary)]"
+                      aria-label={`Select ${group.filePath}`}
+                    />
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="shrink-0 text-[var(--color-text-muted)]" aria-hidden="true">
                         {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                       </span>
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-sky-500/10 text-sky-400 border border-sky-500/25 shrink-0">
-                        {runnerBadge}
-                      </span>
                       <div className="min-w-0">
-                        <div className="text-xs font-mono text-[var(--color-text)] truncate">
-                          {group.filePath}
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className="truncate font-mono text-sm" title={group.filePath}>{group.filePath}</span>
+                          {isFrontendOnly && (
+                            <Hint text={MOCKED_API_HINT}>
+                              <span className="shrink-0" tabIndex={0}><Badge variant="secondary">Mocked API</Badge></span>
+                            </Hint>
+                          )}
                         </div>
-                        <div className="text-[11px] text-[var(--color-text-muted)] truncate">
-                          {group.featureName || "E2E Spec Flow"}
-                          {group.routes?.length ? ` · ${group.routes.slice(0, 2).join(", ")}` : ""}
-                        </div>
+                        {featureName && featureName !== "E2E Spec Flow" && (
+                          <div className="truncate text-xs text-[var(--color-text-muted)]" title={featureName}>{featureName}</div>
+                        )}
                       </div>
                     </div>
 
-                    {/* Case coverage ratio */}
-                    <div className="col-span-2 hidden sm:flex items-center gap-1.5 font-mono text-[11px] tabular-nums">
-                      <span
-                        className={
-                          group.caseCov.coverageRatio >= 1
-                            ? "text-emerald-400"
-                            : group.caseCov.coveredCount > 0
-                              ? "text-amber-400"
-                              : "text-[var(--color-text-muted)]"
-                        }
-                      >
-                        {group.caseCov.coveredCount}/{group.caseCov.totalRequired} cases
-                      </span>
+                    <div className="flex items-center gap-2 text-xs tabular-nums text-[var(--color-text-secondary)]">
+                      <div className="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-[var(--color-surface-secondary)]" aria-hidden="true">
+                        <div className={`h-full rounded-full ${coverageColor}`} style={{ width: `${Math.min(1, coverageRatio) * 100}%` }} />
+                      </div>
+                      <span>{coveredCount}/{totalRequired}</span>
                     </div>
-
-                    {/* Status */}
-                    <div className="col-span-1 hidden md:flex items-center gap-1.5 text-xs">
-                      <span className={`w-1.5 h-1.5 rounded-full ${badge.dot}`} />
-                      <span className={`text-[11px] font-medium ${badge.text}`}>{badge.label}</span>
-                    </div>
-
-                    {/* Scenarios Count */}
-                    <div className="col-span-1 hidden sm:block text-right font-mono tabular-nums text-[11px] text-[var(--color-text-secondary)]">
+                    <Badge variant={badge.variant} className="text-[var(--color-text)]">{badge.label}</Badge>
+                    <div className="text-right text-sm tabular-nums text-[var(--color-text-secondary)]">
                       {group.annotatedScenarios.length}
-                      {passedInGroup > 0 ? ` (${passedInGroup}✓)` : ""}
                     </div>
 
-                    {/* Group Row Actions (NO Generate button here, matches Integration request #3) */}
-                    <div
-                      className="col-span-6 sm:col-span-2 flex items-center justify-end gap-1.5"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {canEditTests && onOpenAddTest && (
-                        <button
-                          type="button"
-                          onClick={() => onOpenAddTest(group)}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)] hover:bg-[var(--color-surface-secondary)] text-[11px] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer transition-colors"
-                          title="Add new E2E scenario to this spec file"
-                        >
-                          <Plus size={11} />
-                          <span>Add</span>
-                        </button>
-                      )}
-
-                      {onOpenSpecFile && (
-                        <button
-                          type="button"
-                          onClick={() => onOpenSpecFile(group.filePath)}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)] hover:bg-[var(--color-surface-secondary)] text-[11px] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer transition-colors"
-                          title="Open spec file in IDE editor"
-                        >
-                          <Code2 size={11} />
-                        </button>
-                      )}
-
+                    <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                       {canRunTests && onRunSpecFile && (
-                        <button
-                          type="button"
-                          onClick={() => onRunSpecFile(group)}
-                          disabled={isRunningGroup}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[11px] font-medium text-[var(--color-text)] cursor-pointer transition-colors disabled:opacity-50"
-                          title="Run this spec file"
-                        >
-                          {isRunningGroup ? (
-                            <Loader2 size={11} className="animate-spin" />
-                          ) : (
-                            <Play size={10} fill="currentColor" />
-                          )}
-                          <span>Run</span>
-                        </button>
+                        <Hint text={isFrontendOnly ? MOCKED_API_HINT : undefined}>
+                          <span className="inline-flex" tabIndex={isFrontendOnly ? 0 : undefined}>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="gap-1 px-2 [&_svg]:size-3"
+                              onClick={() => onRunSpecFile(group)}
+                              disabled={isFrontendOnly || isRunningGroup}
+                              title={isFrontendOnly ? undefined : "Run this spec file"}
+                            >
+                              {isRunningGroup ? <Loader2 className="animate-spin" /> : <Play />}
+                              Run
+                            </Button>
+                          </span>
+                        </Hint>
+                      )}
+                      {(canAddScenario || onOpenSpecFile) && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button size="icon-sm" variant="ghost" aria-label={`Actions for ${group.filePath}`}>
+                              <Ellipsis />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            {canAddScenario && (
+                              <DropdownMenuItem onSelect={() => onOpenAddTest(group)}>Add scenario</DropdownMenuItem>
+                            )}
+                            {onOpenSpecFile && (
+                              <DropdownMenuItem onSelect={() => onOpenSpecFile(group.filePath)}>Open code</DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       )}
                     </div>
                   </div>
 
-                  {/* Expanded Spec Body */}
+                  {/* Expanded Spec Body: one quiet line per scenario, secondary actions in a menu */}
                   {isExpanded && (
-                    <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)]/60 px-4 py-3 space-y-2.5">
-                      {/* Required Cases Strip */}
-                      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[11px]">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-[var(--color-text-muted)]">
-                            Cases ({group.caseCov.coveredCount}/{group.caseCov.totalRequired}):
-                          </span>
-                          {group.caseCov.cases.map((reqCase) => (
-                            <span
-                              key={reqCase.key}
-                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-medium ${
-                                reqCase.covered
-                                  ? reqCase.failed
-                                    ? "bg-rose-500/10 text-rose-400 border-rose-500/25"
-                                    : "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
-                                  : "bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] border-[var(--color-border)]"
-                              }`}
-                            >
-                              {reqCase.covered ? <Check size={10} /> : <span>○</span>}
-                              <span>{reqCase.label}</span>
-                            </span>
-                          ))}
-                        </div>
-                        <span className="font-mono tabular-nums text-[var(--color-text-muted)]">
-                          {group.annotatedScenarios.length} scenario(s)
-                        </span>
-                      </div>
-
-                      {/* Scenario List */}
+                    <div className="border-t border-[var(--color-border)] bg-[var(--color-bg)]/40 px-4 py-3">
                       {group.annotatedScenarios.length === 0 ? (
-                        <div className="px-4 py-4 rounded-md border border-dashed border-[var(--color-border)] text-center text-xs text-[var(--color-text-muted)]">
-                          No scenarios parsed yet for this spec. Click{" "}
-                          <button
-                            type="button"
-                            onClick={() => onOpenAddTest?.(group)}
-                            className="text-[var(--color-primary)] underline cursor-pointer"
-                          >
-                            + Add
-                          </button>{" "}
-                          or select the checkbox and click Generate Selected.
+                        <div className="rounded-md border border-dashed border-[var(--color-border)] px-4 py-5 text-center text-sm text-[var(--color-text-muted)]">
+                          No tests in this spec yet.{" "}
+                          {canAddScenario && (
+                            <button
+                              type="button"
+                              onClick={() => onOpenAddTest?.(group)}
+                              className="cursor-pointer text-[var(--color-primary)] hover:underline"
+                            >
+                              Add a scenario
+                            </button>
+                          )}
                         </div>
                       ) : (
-                        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
+                        <ul className="divide-y divide-[var(--color-border)] overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]">
                           {group.annotatedScenarios.map((sc, idx) => {
                             const st = normalizeStatus(sc.status);
                             const selKey = scenarioSelectionKey(sc, group);
-                            const isChecked = Boolean(isFileSelected) || selectedScenarioKeys.has(selKey);
-                            const isFixingThis =
-                              fixingTarget === selKey || fixingTarget === sc.id;
-                            const isDeletingThis =
-                              deletingTarget === selKey || deletingTarget === sc.id;
-                            const cleanFailSummary =
-                              sc.failureSummary ||
-                              summarizeSystemFailure(sc.failureMessages || "");
+                            const isChecked = !isFrontendOnly && (Boolean(isFileSelected) || selectedScenarioKeys.has(selKey));
+                            const isFixingThis = fixingTarget === selKey || fixingTarget === sc.id;
+                            const isDeletingThis = deletingTarget === selKey || deletingTarget === sc.id;
+                            const failed = st === "FAIL" || st === "FLAKY";
+                            const cleanFailSummary = failed
+                              ? sc.failureSummary || summarizeSystemFailure(sc.failureMessages || "")
+                              : "";
                             const rawTechnicalLog = Array.isArray(sc.failureMessages)
                               ? sc.failureMessages.join("\n\n")
                               : String(sc.failureMessages || "");
                             const hasEvidence =
-                              sc.evidence?.hasScreenshot ||
-                              sc.evidence?.hasDomSnapshot ||
-                              Boolean(sc.failureBreakpoint);
+                              sc.evidence?.hasScreenshot || sc.evidence?.hasDomSnapshot || Boolean(sc.failureBreakpoint);
+                            const tag = caseTag(sc);
+                            const duration = formatDuration(sc.durationMs);
+                            const title = sc.title || sc.testName;
+                            const hasMenu =
+                              (canEditTests && (onOpenEditScenario || onDeleteScenario)) ||
+                              onOpenSpecFile ||
+                              (hasEvidence && onInspectScenario);
 
                             return (
-                              <div
+                              <li
                                 key={`${selKey}-${idx}`}
-                                className={`px-3.5 py-2.5 transition-colors ${
-                                  st === "FAIL"
-                                    ? "bg-rose-500/[0.03]"
-                                    : st === "FLAKY"
-                                      ? "bg-amber-500/[0.03]"
-                                      : ""
+                                className={`group/row px-3 py-2 transition-colors duration-150 hover:bg-[var(--color-surface-secondary)]/60 ${
+                                  st === "FAIL" ? "bg-rose-500/[0.04]" : ""
                                 }`}
                               >
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <div className="flex items-start gap-2.5 min-w-0 flex-1">
-                                    <input
-                                      type="checkbox"
-                                      checked={isChecked}
-                                      onChange={() => toggleSelectScenario(sc, group)}
-                                      className="mt-0.5 rounded border-[var(--color-border)] bg-[var(--color-bg)] cursor-pointer shrink-0"
-                                      aria-label={`Select scenario ${sc.title}`}
-                                    />
-
-                                    <span className="mt-0.5 shrink-0">
-                                      {st === "PASS" ? (
-                                        <CheckCircle2 size={14} className="text-emerald-400" />
-                                      ) : st === "FAIL" ? (
-                                        <XCircle size={14} className="text-rose-400" />
-                                      ) : st === "FLAKY" ? (
-                                        <AlertTriangle size={14} className="text-amber-400" />
-                                      ) : (
-                                        <Clock size={14} className="text-[var(--color-text-muted)]" />
-                                      )}
+                                <div className="flex items-center gap-3">
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    disabled={isFrontendOnly}
+                                    onChange={() => toggleSelectScenario(sc, group)}
+                                    className="shrink-0 cursor-pointer rounded border-[var(--color-border)] bg-[var(--color-bg)]"
+                                    aria-label={`Select scenario ${title}`}
+                                  />
+                                  <span className="shrink-0" aria-label={st === "NOT_RUN" ? "Not run" : st.toLowerCase()}>
+                                    {st === "PASS" ? (
+                                      <CheckCircle2 size={16} className="text-emerald-500" />
+                                    ) : st === "FAIL" ? (
+                                      <XCircle size={16} className="text-rose-500" />
+                                    ) : st === "FLAKY" ? (
+                                      <AlertTriangle size={16} className="text-amber-500" />
+                                    ) : (
+                                      <Clock size={16} className="text-[var(--color-text-muted)]" />
+                                    )}
+                                  </span>
+                                  <span className="min-w-0 flex-1 truncate text-sm text-[var(--color-text)]" title={title}>
+                                    {title}
+                                  </span>
+                                  {tag && (
+                                    <span className="hidden shrink-0 rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-xs text-[var(--color-text-muted)] sm:inline">
+                                      {tag}
                                     </span>
-
-                                    <div className="min-w-0 flex-1 space-y-1">
-                                      <div className="text-xs font-medium text-[var(--color-text)] break-words">
-                                        {sc.title || sc.testName}
-                                      </div>
-
-                                      <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-mono">
-                                        {sc.isCoveredForCase && (
-                                          <span
-                                            title={`Assigned to cover required case "${sc.caseLabel}".`}
-                                            className={`px-1.5 py-0.5 rounded border font-medium ${
-                                              sc.badgeType === "PRIMARY_FAIL"
-                                                ? "bg-rose-500/10 text-rose-400 border-rose-500/25"
-                                                : "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
-                                            }`}
-                                          >
-                                            {sc.badgeType === "PRIMARY_FAIL"
-                                              ? `! Case: ${sc.caseLabel}`
-                                              : `✓ Case: ${sc.caseLabel}`}
-                                          </span>
-                                        )}
-                                        {sc.isDuplicateCase && (
-                                          <span
-                                            className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/25"
-                                            title={`Another scenario already covers "${sc.caseLabel}" — safe to review or delete if redundant.`}
-                                          >
-                                            Duplicate · {sc.caseLabel}
-                                          </span>
-                                        )}
-                                        {!sc.isCoveredForCase && !sc.isDuplicateCase && (
-                                          <span
-                                            title="Supplementary scenario outside this spec's required cases."
-                                            className="px-1.5 py-0.5 rounded border border-dashed border-[var(--color-border)] bg-transparent text-[var(--color-text-muted)]"
-                                          >
-                                            {sc.badgeLabel || `Optional · ${sc.caseLabel}`}
-                                          </span>
-                                        )}
-
-                                        <span className="px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text-secondary)]">
-                                          {sc.origin === "AI_DRAFT"
-                                            ? "AI_DRAFT"
-                                            : sc.origin === "AI_GENERATED"
-                                              ? "AI_GENERATED"
-                                              : sc.origin || "PROJECT_EXISTING"}
-                                        </span>
-
-                                        {sc.durationMs != null && Number(sc.durationMs) > 0 && (
-                                          <span className="text-[var(--color-text-muted)] tabular-nums">
-                                            {sc.durationMs}ms
-                                          </span>
-                                        )}
-
-                                        {sc.executionDetails?.apiCalls?.length > 0 && (
-                                          <span className="text-[var(--color-text-muted)] tabular-nums">
-                                            {sc.executionDetails.apiCalls.length} API calls
-                                          </span>
-                                        )}
-                                      </div>
-
-                                      {/* Clean Concise Failure Summary + Collapsible Technical Details */}
-                                      {(st === "FAIL" || st === "FLAKY") && cleanFailSummary && (
-                                        <div className="mt-1.5 rounded border border-rose-500/25 bg-rose-500/5 px-2.5 py-1.5 text-xs space-y-1">
-                                          <p className="text-rose-300 font-medium leading-snug">
-                                            {cleanFailSummary}
-                                          </p>
-                                          {rawTechnicalLog && (
-                                            <details className="text-[11px] text-[var(--color-text-muted)]">
-                                              <summary className="cursor-pointer hover:text-[var(--color-text-secondary)] select-none">
-                                                Technical details
-                                              </summary>
-                                              <pre className="mt-1.5 max-h-40 overflow-auto rounded bg-[var(--color-bg)] p-2 font-mono text-[10px] text-[var(--color-text-secondary)] whitespace-pre-wrap break-words border border-[var(--color-border)]">
-                                                {rawTechnicalLog}
-                                              </pre>
-                                            </details>
-                                          )}
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  {/* Scenario Row Actions */}
-                                  <div className="flex items-center gap-1.5 shrink-0">
-                                    {(st === "FAIL" || st === "FLAKY") &&
-                                      canUseAi &&
-                                      onAIFixScenario && (
-                                        <button
-                                          type="button"
-                                          onClick={() => onAIFixScenario(sc, group)}
-                                          disabled={isFixingThis}
-                                          className="inline-flex items-center gap-1 px-2 py-1 rounded border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-[11px] font-semibold cursor-pointer transition-colors disabled:opacity-50"
-                                          title="Ask AI to diagnose and repair this failing E2E scenario"
+                                  )}
+                                  {duration && (
+                                    <span className="hidden w-14 shrink-0 text-right font-mono text-xs tabular-nums text-[var(--color-text-muted)] md:inline">
+                                      {duration}
+                                    </span>
+                                  )}
+                                  <div className="flex shrink-0 items-center gap-1">
+                                    {failed && canUseAi && onAIFixScenario && (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-7 gap-1 px-2 text-xs [&_svg]:size-3"
+                                        onClick={() => onAIFixScenario(sc, group)}
+                                        disabled={isFixingThis}
+                                        title="Ask AI to diagnose and repair this failing scenario"
+                                      >
+                                        {isFixingThis ? <Loader2 className="animate-spin" /> : <Wrench />}
+                                        AI fix
+                                      </Button>
+                                    )}
+                                    {canRunTests && onRunScenario && !isFrontendOnly && (
+                                      <Hint text="Run this test">
+                                        <Button
+                                          size="icon-sm"
+                                          variant="ghost"
+                                          aria-label={`Run ${title}`}
+                                          onClick={() => onRunScenario(sc, group)}
                                         >
-                                          {isFixingThis ? (
-                                            <Loader2 size={11} className="animate-spin" />
-                                          ) : (
-                                            <Wand2 size={11} />
+                                          <Play />
+                                        </Button>
+                                      </Hint>
+                                    )}
+                                    {hasMenu && (
+                                      <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                          <Button size="icon-sm" variant="ghost" aria-label={`More actions for ${title}`}>
+                                            {isDeletingThis ? <Loader2 className="animate-spin" /> : <Ellipsis />}
+                                          </Button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent align="end">
+                                          {hasEvidence && onInspectScenario && (
+                                            <DropdownMenuItem onSelect={() => onInspectScenario(sc)}>
+                                              <Camera size={14} /> View evidence
+                                            </DropdownMenuItem>
                                           )}
-                                          <span>AI Fix</span>
-                                        </button>
-                                      )}
-
-                                    {hasEvidence && onInspectScenario && (
-                                      <button
-                                        type="button"
-                                        onClick={() => onInspectScenario(sc)}
-                                        className="inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)] hover:bg-[var(--color-surface-secondary)] text-[11px] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer transition-colors"
-                                        title="View screenshot, DOM snapshot, or failure breakpoint"
-                                      >
-                                        <Camera size={11} />
-                                        <span>Evidence</span>
-                                      </button>
-                                    )}
-
-                                    {canEditTests && onOpenEditScenario && (
-                                      <button
-                                        type="button"
-                                        onClick={() => onOpenEditScenario(sc, group)}
-                                        className="inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)] hover:bg-[var(--color-surface-secondary)] text-[11px] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer transition-colors"
-                                      >
-                                        <Edit3 size={11} />
-                                        <span>Edit</span>
-                                      </button>
-                                    )}
-
-                                    {onOpenSpecFile && (
-                                      <button
-                                        type="button"
-                                        onClick={() => onOpenSpecFile(sc.testFile || group.filePath, sc)}
-                                        className="inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)] hover:bg-[var(--color-surface-secondary)] text-[11px] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer transition-colors"
-                                        title="Open spec file in IDE"
-                                      >
-                                        <Code2 size={11} />
-                                      </button>
-                                    )}
-
-                                    {canRunTests && onRunScenario && (
-                                      <button
-                                        type="button"
-                                        onClick={() => onRunScenario(sc, group)}
-                                        className="inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[11px] text-[var(--color-text)] cursor-pointer transition-colors"
-                                        title="Run this scenario"
-                                      >
-                                        <Play size={10} fill="currentColor" />
-                                      </button>
-                                    )}
-
-                                    {canEditTests && onDeleteScenario && (
-                                      <button
-                                        type="button"
-                                        onClick={() => onDeleteScenario(sc, group)}
-                                        disabled={isDeletingThis}
-                                        className="inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)] hover:bg-rose-500/15 hover:border-rose-500/30 text-[11px] text-[var(--color-text-muted)] hover:text-rose-400 cursor-pointer transition-colors disabled:opacity-50"
-                                        title="Delete scenario block from spec file"
-                                      >
-                                        {isDeletingThis ? (
-                                          <Loader2 size={11} className="animate-spin" />
-                                        ) : (
-                                          <Trash2 size={11} />
-                                        )}
-                                      </button>
+                                          {canEditTests && onOpenEditScenario && (
+                                            <DropdownMenuItem onSelect={() => onOpenEditScenario(sc, group)}>
+                                              <Edit3 size={14} /> Edit
+                                            </DropdownMenuItem>
+                                          )}
+                                          {onOpenSpecFile && (
+                                            <DropdownMenuItem onSelect={() => onOpenSpecFile(sc.testFile || group.filePath, sc)}>
+                                              <Code2 size={14} /> Open code
+                                            </DropdownMenuItem>
+                                          )}
+                                          {canEditTests && onDeleteScenario && (
+                                            <DropdownMenuItem
+                                              disabled={isDeletingThis}
+                                              onSelect={() => onDeleteScenario(sc, group)}
+                                              className="text-rose-500 focus:text-rose-500"
+                                            >
+                                              <Trash2 size={14} /> Delete
+                                            </DropdownMenuItem>
+                                          )}
+                                        </DropdownMenuContent>
+                                      </DropdownMenu>
                                     )}
                                   </div>
                                 </div>
-                              </div>
+
+                                {failed && cleanFailSummary && (
+                                  <div className="ml-[3.25rem] mt-1.5 space-y-1 text-sm">
+                                    <p className="leading-snug text-rose-600 dark:text-rose-300">{cleanFailSummary}</p>
+                                    {rawTechnicalLog && (
+                                      <details className="text-xs text-[var(--color-text-muted)]">
+                                        <summary className="cursor-pointer select-none hover:text-[var(--color-text-secondary)]">
+                                          Technical details
+                                        </summary>
+                                        <pre className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-2 font-mono text-xs text-[var(--color-text-secondary)]">
+                                          {rawTechnicalLog}
+                                        </pre>
+                                      </details>
+                                    )}
+                                  </div>
+                                )}
+                              </li>
                             );
                           })}
-                        </div>
+                        </ul>
                       )}
                     </div>
                   )}
@@ -881,7 +721,7 @@ export default function SystemSpecMatrixTable({
             })}
           </div>
         )}
-      </div>
+      </Card>
     </div>
   );
 }

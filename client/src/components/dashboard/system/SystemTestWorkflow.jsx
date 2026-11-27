@@ -707,7 +707,7 @@ function ModernScenarioRow({
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <span
-                  className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold uppercase tracking-wide border ${tagBadge}`}
+                  className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium border ${tagBadge}`}
                 >
                   {tag}
                 </span>
@@ -755,7 +755,7 @@ function ModernScenarioRow({
             <button
               type="button"
               onClick={onEdit}
-              className="group/item flex items-center justify-between gap-2 p-1 rounded-md border border-transparent hover:border-[var(--color-border)] hover:bg-[var(--color-surface)]/70 transition-all cursor-pointer"
+              className="group/item flex items-center justify-between gap-2 p-1 rounded-md border border-transparent hover:border-[var(--color-border)] hover:bg-[var(--color-surface)]/70 transition-colors cursor-pointer"
               title="Click to edit expected outcome"
             >
               <div className="flex flex-wrap items-center gap-1.5 min-w-0">
@@ -769,7 +769,7 @@ function ModernScenarioRow({
                     </span>
                   ))
                 ) : (
-                  <span className="text-xs text-[var(--color-text-muted)] italic">
+                  <span className="text-xs text-[var(--color-text-muted)]">
                     Expected outcome needs review
                   </span>
                 )}
@@ -877,7 +877,7 @@ function ScenarioInspectorView({
       <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[var(--color-border)]">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
-            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold uppercase border ${tagBadge}`}>
+            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-medium border ${tagBadge}`}>
               {tag}
             </span>
             <h3 className="text-sm font-semibold text-[var(--color-text)]">{cleanTitle}</h3>
@@ -955,7 +955,7 @@ function ScenarioInspectorView({
                 </div>
               ))
             ) : (
-              <p className="text-xs text-[var(--color-text-muted)] italic py-2">
+              <p className="text-xs text-[var(--color-text-muted)] py-2">
                 No discrete test steps detected in scenario definition.
               </p>
             )}
@@ -1006,7 +1006,7 @@ function ScenarioInspectorView({
                   </div>
                 ))
               ) : (
-                <p className="text-xs text-[var(--color-text-muted)] italic">No expected outcome confirmed yet.</p>
+                <p className="text-xs text-[var(--color-text-muted)]">No expected outcome confirmed yet.</p>
               )}
             </div>
           </div>
@@ -1028,7 +1028,7 @@ function ScenarioInspectorView({
                   </div>
                 ))
               ) : (
-                <div className="p-2.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] italic">
+                <div className="p-2.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-xs text-[var(--color-text-muted)]">
                   No supported assertion details are available. Inspect the test file before confirming Expected.
                 </div>
               )}

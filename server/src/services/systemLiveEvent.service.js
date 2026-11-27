@@ -12,13 +12,13 @@ const sanitize = payload => ({
     status: string(payload.status, 30), durationMs: Number.isFinite(payload.durationMs) ? Math.max(0, Math.min(payload.durationMs, 600000)) : null,
 });
 
-export const recordSystemLiveFrame = ({ assessmentId, snapshotId, runIndex = 1, frame }) => {
+export const recordSystemLiveFrame = ({ assessmentId, snapshotId, runIndex = 1, frame, url }) => {
     if (!assessmentId || typeof frame !== 'string' || !frame) return;
     if (latestLiveFrames.size > 40 && !latestLiveFrames.has(assessmentId)) {
         const oldestKey = latestLiveFrames.keys().next().value;
         if (oldestKey) latestLiveFrames.delete(oldestKey);
     }
-    latestLiveFrames.set(assessmentId, { snapshotId, assessmentId, runIndex, frame, updatedAt: Date.now() });
+    latestLiveFrames.set(assessmentId, { snapshotId, assessmentId, runIndex, frame, url, updatedAt: Date.now() });
 };
 
 export const getLatestSystemLiveFrame = assessmentId => {
@@ -28,24 +28,34 @@ export const getLatestSystemLiveFrame = assessmentId => {
         latestLiveFrames.delete(assessmentId);
         return null;
     }
-    return entry.frame;
+    return entry;
 };
 
 export const createSystemEventPublisher = async ({ client, assessmentId, snapshotId, userId, io = global.io }) => {
     const latest = await client.systemRunEvent.findFirst({ where: { assessmentId }, orderBy: { sequence: 'desc' }, select: { sequence: true } });
     let sequence = latest?.sequence || 0;
-    return async ({ runIndex, scenarioKey = null, type, payload = {} }) => {
+    // Events reach viewers at once so the step log keeps pace with the live browser
+    // frames; database writes follow in order without holding the event stream.
+    let persisted = Promise.resolve();
+    const publish = async ({ runIndex, scenarioKey = null, type, payload = {} }) => {
         if (!allowed.has(type)) throw new ServiceError('Unsupported system run event', 400);
         sequence += 1;
         const operation = currentProjectOperation();
-        const record = await client.systemRunEvent.create({ data: { assessmentId, sequence, runIndex, scenarioKey, type, payloadJson: sanitize(payload) } });
+        const data = { assessmentId, sequence, runIndex, scenarioKey, type, payloadJson: sanitize(payload) };
+        const record = { ...data, createdAt: new Date() };
         const message = { snapshotId, assessmentId, ...record };
         io?.to?.(`user:${userId}`)?.emit?.('system-run:event', message);
         if (operation) {
             void deliverScopedProjectTransport({ projectId: operation.projectId, event: 'system-run:event', payload: message });
         }
+        persisted = persisted.then(() => client.systemRunEvent.create({ data })).catch(error => {
+            console.error(`[systemLiveEvent] Failed to save event ${data.sequence} for assessment ${assessmentId}:`, error.message);
+        });
         return record;
     };
+    // Waits until every published event is stored, so replay after the run is complete.
+    publish.flush = () => persisted;
+    return publish;
 };
 
 export const replaySystemEvents = async ({ client, assessmentId, after = 0, limit = 100 }) => {

@@ -57,7 +57,7 @@ export default function SystemTestMetricsCards({ summary, coverageTiers }) {
 
         <div className="space-y-2">
           <div className="flex items-baseline justify-between gap-2 font-mono tabular-nums">
-            <span className="text-2xl font-bold tracking-tight text-[var(--color-text)]">
+            <span className="text-2xl font-medium text-[var(--color-text)]">
               {passRate === null ? "—" : `${passRate}%`}
             </span>
             <span className="text-[11px] text-[var(--color-text-muted)]">
@@ -66,7 +66,7 @@ export default function SystemTestMetricsCards({ summary, coverageTiers }) {
           </div>
           <div className="w-full h-1 rounded-md bg-[var(--color-surface-secondary)] overflow-hidden">
             <div
-              className={`h-full transition-all duration-300 ${
+              className={`h-full transition-colors duration-300 ${
                 passRate !== null && passRate >= 90 ? "bg-emerald-500/65" : "bg-[var(--color-primary)]/75"
               }`}
               style={{ width: `${passRate ?? 0}%` }}
@@ -91,7 +91,7 @@ export default function SystemTestMetricsCards({ summary, coverageTiers }) {
         </div>
 
         <div className="space-y-1">
-          <div className="text-2xl font-bold tracking-tight font-mono tabular-nums">{total}</div>
+          <div className="text-2xl font-medium font-mono tabular-nums">{total}</div>
           <div className="flex gap-x-2 overflow-x-auto whitespace-nowrap text-[11px] text-[var(--color-text-muted)]">
             <span><span className="font-mono tabular-nums">{passed}</span> passed</span>
             <span><span className="font-mono tabular-nums">{failed}</span> failed</span>
@@ -114,14 +114,14 @@ export default function SystemTestMetricsCards({ summary, coverageTiers }) {
           <div className="flex gap-3 overflow-x-auto">
             {measuredTiers.map(([name, tier]) => (
               <div key={name} className="shrink-0 space-y-1">
-                <div className="text-2xl font-bold tracking-tight font-mono tabular-nums">{tier.counters.lines.pct}%</div>
+                <div className="text-2xl font-medium font-mono tabular-nums">{tier.counters.lines.pct}%</div>
                 <div className="text-[11px] text-[var(--color-text-muted)]">{name}</div>
               </div>
             ))}
           </div>
         ) : (
           <div className="space-y-1">
-            <div className="text-2xl font-bold tracking-tight font-mono tabular-nums">—</div>
+            <div className="text-2xl font-medium font-mono tabular-nums">—</div>
             <div className="text-[11px] text-[var(--color-text-muted)]">Pending</div>
           </div>
         )}
@@ -137,7 +137,7 @@ export default function SystemTestMetricsCards({ summary, coverageTiers }) {
         </div>
 
         <div className="flex items-baseline gap-2">
-          <span className="text-2xl font-bold tracking-tight text-[var(--color-text)] font-mono tabular-nums">
+          <span className="text-2xl font-medium text-[var(--color-text)] font-mono tabular-nums">
             {summary?.hasRun ? formatDuration(durationMs) : "—"}
           </span>
         </div>

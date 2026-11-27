@@ -1171,7 +1171,7 @@ function SystemTestDashboardWorkspace({
 
           <div className="w-full bg-[var(--color-surface-secondary)] h-1 rounded-sm overflow-hidden">
             <div
-              className="bg-[var(--color-primary)]/80 h-full transition-all duration-300"
+              className="bg-[var(--color-primary)]/80 h-full transition-colors duration-300"
               style={{ width: `${jobProgress.progress}%` }}
             />
           </div>

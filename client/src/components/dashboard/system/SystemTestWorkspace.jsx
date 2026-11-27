@@ -1,20 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
-import {
-  Activity,
-  BarChart3,
-  Clock,
-  Globe,
-  Loader2,
-  Monitor,
-  Play,
-  RefreshCw,
-  SlidersHorizontal,
-  Sparkles,
-  CheckCircle2,
-  XCircle,
-  AlertTriangle,
-} from "lucide-react";
+import { History, Loader2, Monitor, Play, RefreshCw, Settings2, FilePlus2 } from "lucide-react";
+import { Badge } from "../../ui/badge.jsx";
+import { Button } from "../../ui/button.jsx";
+import { Hint } from "../../ui/tooltip.jsx";
 import { useProjectAccess } from "../../../hooks/useProjectAccess";
 import { useChatTestContext } from "../../../hooks/useChatTestContext";
 import useSystemTestWorkspace from "../../../hooks/useSystemTestWorkspace.js";
@@ -28,9 +17,11 @@ import {
   getSystemTestFrameworks,
   getSystemTestScenarios,
   getSystemTestSummary,
+  getSystemTestPlans,
   runSystemTest,
   systemEvidenceRequest,
   getSystemGenerationStatus,
+  fillMissingSystemTests,
   cancelSystemGeneration,
   addSystemTestCaseApi,
   updateSystemTestCaseApi,
@@ -54,18 +45,24 @@ import SystemTestLiveRun from "./SystemTestLiveRun.jsx";
 import SystemReportEmbed from "./SystemReportEmbed.jsx";
 import SystemTestCaseEditorModal from "./SystemTestCaseEditorModal.jsx";
 import SystemTestGeneratorModal from "./SystemTestGeneratorModal.jsx";
-import GenerationProgressStrip from "./GenerationProgressStrip.jsx";
-import { ExternalServicesBanner } from "./ExternalTestKeyNotices.jsx";
+import SystemKpiCards from "./SystemKpiCards.jsx";
+import SystemNoticeSlot, { SystemNoticeToast } from "./SystemNoticeSlot.jsx";
 import SystemTestBreakpointModal from "./SystemTestBreakpointModal.jsx";
 import SystemTestSetupDialog from "./SystemTestSetupDialog.jsx";
 import SystemTestReportView from "./SystemTestReportView.jsx";
 import SystemTestVersionHistory from "./SystemTestVersionHistory.jsx";
-import SystemTestErrorNotice from "./SystemTestErrorNotice.jsx";
 import { systemTestEntryState } from "./systemTestEntryModel.js";
 import { getSystemGroupCaseCoverage } from "./systemCaseCoverage.js";
 import ConfirmDialog from "../../common/ConfirmDialog.jsx";
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
+const NO_FULL_STACK_TESTS = "No Full Stack tests yet — your existing specs mock the API.";
+
+function getFrameworkSpecFiles(discovery, framework) {
+  return (discovery?.frameworks || [])
+    .filter((entry) => !framework || !entry.name || entry.name.toLowerCase().includes(framework))
+    .flatMap((entry) => entry.testFiles || entry.files || []);
+}
 
 function normalizeSpecPath(filePath = "") {
   return String(filePath || "")
@@ -115,16 +112,19 @@ export default function SystemTestWorkspace({
   const [catalogData, setCatalogData] = useState(null);
   const [featuresData, setFeaturesData] = useState(null);
   const [latestDraft, setLatestDraft] = useState(null);
+  const [testPlans, setTestPlans] = useState([]);
   const [setupReport, setSetupReport] = useState(null);
 
   const [activeJobId, setActiveJobId] = useState(null);
   const [activeAssessmentId, setActiveAssessmentId] = useState(null);
+  const [completedJob, setCompletedJob] = useState(null);
   const [runningTests, setRunningTests] = useState(false);
   const [runningTarget, setRunningTarget] = useState(null);
   const [jobProgress, setJobProgress] = useState(null);
 
   const [syncingCatalog, setSyncingCatalog] = useState(false);
   const [applyingDraft, setApplyingDraft] = useState(false);
+  const [fillingDraft, setFillingDraft] = useState(false);
   const [fixingTarget, setFixingTarget] = useState(null);
   const [deletingTarget, setDeletingTarget] = useState(null);
   const [pendingSystemOps, setPendingSystemOps] = useState(() =>
@@ -341,11 +341,12 @@ export default function SystemTestWorkspace({
       }
       try {
         const filters = { runner: activeFramework };
-        const [sumRes, catRes, featRes, draftRes, setupRes] = await Promise.all([
+        const [sumRes, catRes, featRes, draftRes, plansRes, setupRes] = await Promise.all([
           getSystemTestSummary(snapshotId, filters).catch(() => null),
           systemEvidenceRequest(snapshotId, "catalog").catch(() => null),
           systemEvidenceRequest(snapshotId, "catalog/features").catch(() => null),
           systemEvidenceRequest(snapshotId, "generation-drafts/latest").catch(() => null),
+          getSystemTestPlans(snapshotId).catch(() => []),
           systemEvidenceRequest(snapshotId, "setup").catch(() => null),
         ]);
         if (ignore) return;
@@ -355,6 +356,7 @@ export default function SystemTestWorkspace({
         setCatalogData(catRes || null);
         setFeaturesData(featRes || null);
         setLatestDraft(draftRes || null);
+        setTestPlans(plansRes || []);
         setSetupReport(setupRes || null);
 
         if (sum?.hasRun && sum?.testRunId) {
@@ -398,6 +400,7 @@ export default function SystemTestWorkspace({
       const status = String(payload.status || "").toUpperCase();
       if (["FAILED", "CANCELED", "CANCELLED", "SUCCESS", "COMPLETED"].includes(status)) {
         activeJobRef.current = null;
+        setCompletedJob({ jobId: payload.jobId, snapshotId, status, testStatus: payload.result?.testRun?.status });
         setRunningTests(false);
         setRunningTarget(null);
         setJobProgress(null);
@@ -423,9 +426,11 @@ export default function SystemTestWorkspace({
         progress: payload.progress ?? prev?.progress ?? 0,
         stage: payload.stage || prev?.stage || "Running",
         message: payload.message || prev?.message || "Executing E2E tests...",
+        executing: prev?.executing || /\bexecuting\b/i.test(payload.stage || "") ||
+          (payload.stage === "Measuring system tests" && /\bexecuting\b/i.test(payload.message || "")),
       }));
     },
-    [activeAssessmentId, selectAssessment, refreshData],
+    [activeAssessmentId, selectAssessment, refreshData, snapshotId],
   );
 
   useEffect(() => {
@@ -500,6 +505,11 @@ export default function SystemTestWorkspace({
   // Build unified Spec File / Feature groups from Executed Run + Disk Frameworks + Catalog + Unapplied Draft
   const specGroups = useMemo(() => {
     const byFile = new Map();
+    const plansByFile = new Map();
+    for (const { filePath, testPlan } of testPlans) {
+      const normalizedPath = normalizeSpecPath(filePath);
+      if (!plansByFile.has(normalizedPath)) plansByFile.set(normalizedPath, testPlan);
+    }
 
     const ensureGroup = (rawPath, meta = {}) => {
       const filePath = normalizeSpecPath(rawPath);
@@ -508,6 +518,7 @@ export default function SystemTestWorkspace({
         byFile.set(filePath, {
           key: filePath,
           filePath,
+          testPlan: plansByFile.get(filePath),
           featureName: meta.featureName || "",
           routes: new Set(meta.routes || []),
           scenarios: [],
@@ -518,17 +529,17 @@ export default function SystemTestWorkspace({
       }
       const g = byFile.get(filePath);
       if (meta.featureName && !g.featureName) g.featureName = meta.featureName;
+      if (g.fullStackCompatible === undefined && typeof meta.fullStackCompatible === "boolean") {
+        g.fullStackCompatible = meta.fullStackCompatible;
+      }
       for (const r of meta.routes || []) g.routes.add(r);
       return g;
     };
 
     // 1. Seed discovered files from frameworks endpoint
-    const fwList = frameworksData?.frameworks || [];
-    for (const fw of fwList) {
-      if (activeFramework && fw.name && !fw.name.toLowerCase().includes(activeFramework)) continue;
-      for (const f of fw.files || []) {
-        ensureGroup(typeof f === "string" ? f : f.filePath || f.path || "");
-      }
+    for (const f of getFrameworkSpecFiles(frameworksData, activeFramework)) {
+      if (typeof f === "string") ensureGroup(f);
+      else ensureGroup(f.filePath || f.path, f);
     }
 
     const inferSpecOrigin = (filePath = "", fallback = "PROJECT_EXISTING") => {
@@ -561,6 +572,7 @@ export default function SystemTestWorkspace({
       const g = ensureGroup(cs.filePath || cs.testFile, {
         featureName: cs.featureName || cs.feature || "",
         routes: cs.route ? [cs.route] : [],
+        fullStackCompatible: cs.fullStackCompatible,
       });
       if (!g) continue;
       const title = cs.title || cs.name || cs.testName;
@@ -612,11 +624,13 @@ export default function SystemTestWorkspace({
       if (!g) continue;
       g.hasDraft = true;
       if (!hadExisting) g.hasDraftOnly = true;
-      const draftTitles =
+      const draftScenarios =
         Array.isArray(df.scenarios) && df.scenarios.length > 0
-          ? df.scenarios.map((s) => s.title || s.name).filter(Boolean)
-          : extractDraftTitlesFromCode(df.content || "");
-      for (const t of draftTitles) {
+          ? df.scenarios
+          : extractDraftTitlesFromCode(df.content || "").map((title) => ({ title }));
+      for (const scenario of draftScenarios) {
+        const t = scenario.title || scenario.name;
+        if (!t) continue;
         const kt = t.trim().toLowerCase();
         if (!g.seenTitles.has(kt)) {
           g.seenTitles.add(kt);
@@ -626,6 +640,8 @@ export default function SystemTestWorkspace({
             testFile: g.filePath,
             status: "NOT_RUN",
             origin: "AI_DRAFT",
+            ...(scenario.caseKey !== undefined && { caseKey: scenario.caseKey }),
+            ...(scenario.planItemId !== undefined && { planItemId: scenario.planItemId }),
           });
         }
       }
@@ -696,6 +712,7 @@ export default function SystemTestWorkspace({
       const stub = {
         key: nf,
         filePath: nf,
+        testPlan: plansByFile.get(nf),
         featureName: "",
         routes: [],
         scenarios,
@@ -709,7 +726,11 @@ export default function SystemTestWorkspace({
     }
 
     return resultGroups;
-  }, [frameworksData, activeFramework, executedTestFiles, catalogData, featuresData, latestDraft, pendingSystemOps]);
+  }, [frameworksData, activeFramework, executedTestFiles, catalogData, featuresData, latestDraft, testPlans, pendingSystemOps]);
+
+  const specCompatibility = useMemo(() => new Map(
+    specGroups.map(({ filePath, fullStackCompatible }) => [filePath, fullStackCompatible]),
+  ), [specGroups]);
 
   // Unified telemetry counters
   const telemetry = useMemo(() => {
@@ -809,7 +830,7 @@ export default function SystemTestWorkspace({
 
   // Execute System Tests (Full Suite, Selected Specs, or Specific Scenarios) without Confirm Expected blocker
   const handleRunTests = useCallback(
-    async ({ selectedFiles = null, selectedTitles = null, onlyFile = null, targetLabel = null } = {}) => {
+    async ({ selectedFiles = null, selectedTitles = null, onlyFile = null, targetLabel = null, watch } = {}) => {
       if (!projectAccess.can("tests.run") || !snapshotId) return;
       if (runRequestRef.current || activeJobRef.current) return;
 
@@ -818,13 +839,32 @@ export default function SystemTestWorkspace({
       setNotice(null);
 
       try {
+        let compatibility = specCompatibility;
         if (pendingOpsCount > 0) {
           const ok = await flushPendingSystemOps({ reload: false });
           if (!ok) {
             runRequestRef.current = false;
             return;
           }
+          const { data: discovery } = await getSystemTestFrameworks(projectId, snapshotId);
+          setFrameworksData(discovery);
+          compatibility = new Map(getFrameworkSpecFiles(discovery, activeFramework).map((file) => [
+            normalizeSpecPath(typeof file === "string" ? file : file.filePath || file.path),
+            file.fullStackCompatible,
+          ]));
         }
+        const requestedFiles = selectedFiles?.length ? selectedFiles : onlyFile ? [onlyFile] : null;
+        const effectiveSelectedFiles = requestedFiles
+          ? requestedFiles.filter((file) => {
+            const compatible = compatibility.get(normalizeSpecPath(file));
+            return pendingOpsCount > 0 ? compatible === true : compatible !== false;
+          })
+          : Array.from(compatibility).filter(([, compatible]) => compatible === true).map(([file]) => file);
+        if (effectiveSelectedFiles.length === 0) {
+          setError(NO_FULL_STACK_TESTS);
+          return;
+        }
+
         // Preflight environment check (reuses setup dialog when app runtime/DB config missing)
         const setup = await systemEvidenceRequest(snapshotId, "setup").catch(() => null);
         if (setup) {
@@ -832,7 +872,7 @@ export default function SystemTestWorkspace({
           if (!setup.ready) {
             runRequestRef.current = false;
             if (setup.issues?.some((issue) => issue.code === "ENVIRONMENT_REQUIRED")) {
-              pendingRunRef.current = { selectedFiles, selectedTitles, onlyFile, targetLabel };
+              pendingRunRef.current = { selectedFiles, selectedTitles, onlyFile, targetLabel, watch };
               setSetupOpen(true);
             } else {
               setError(setup.issues?.map((i) => i.message).join(" ") || "System test setup incomplete.");
@@ -850,19 +890,24 @@ export default function SystemTestWorkspace({
           message: selectedTitles?.length
             ? `Queuing ${selectedTitles.length} selected scenario(s)...`
             : selectedFiles?.length
-              ? `Queuing ${selectedFiles.length} selected spec file(s)...`
+              ? `Queuing ${effectiveSelectedFiles.length} selected spec file(s)...`
               : "Queuing full-stack system test execution...",
         });
 
         let responseData = null;
+        // Runs started outside Live Run (e.g. Run Full Suite) follow the Live Run speed choice.
+        let runWatch = watch;
+        if (runWatch === undefined) {
+          try {
+            runWatch = localStorage.getItem("covai.liveRun.speed") !== "fast";
+          } catch (storageError) {
+            console.error("[SystemTestWorkspace] Live Run speed unavailable:", storageError);
+            runWatch = true;
+          }
+        }
 
         // Prefer /assessments for Playwright (full suite, selected specs, or individual live test case)
         // so live screenshots, Chromium frames, step logs, and Istanbul code coverage stream cleanly.
-        const effectiveSelectedFiles = selectedFiles?.length
-          ? selectedFiles
-          : onlyFile
-            ? [onlyFile]
-            : undefined;
         if (activeFramework === "playwright") {
           try {
             const capabilities = await systemEvidenceRequest(snapshotId, "capabilities").catch(() => null);
@@ -875,7 +920,8 @@ export default function SystemTestWorkspace({
                   executionMode,
                   allowGenerate: false,
                   headed: headedMode,
-                  ...(effectiveSelectedFiles ? { selectedFiles: effectiveSelectedFiles } : {}),
+                  watch: runWatch,
+                  selectedFiles: effectiveSelectedFiles,
                   ...(selectedTitles?.length ? { selectedTitles } : {}),
                   ...(selectedTitles?.length || onlyFile ? { repeatRuns: 1 } : {}),
                 },
@@ -890,34 +936,15 @@ export default function SystemTestWorkspace({
         }
 
         if (!responseData) {
-          let runRes;
-          try {
-            runRes = await runSystemTest(snapshotId, {
-              framework: activeFramework,
-              executionMode,
-              testFile: onlyFile || undefined,
-              selectedFiles: selectedFiles?.length ? selectedFiles : undefined,
-              selectedTitles: selectedTitles?.length ? selectedTitles : undefined,
-              headed: headedMode,
-            });
-          } catch (runErr) {
-            const runMsg = runErr?.response?.data?.message || runErr?.message || "";
-            if (
-              executionMode === "full" &&
-              /real backend|API mocks|Frontend mode/i.test(runMsg)
-            ) {
-              runRes = await runSystemTest(snapshotId, {
-                framework: activeFramework,
-                executionMode: "frontend",
-                testFile: onlyFile || undefined,
-                selectedFiles: selectedFiles?.length ? selectedFiles : undefined,
-                selectedTitles: selectedTitles?.length ? selectedTitles : undefined,
-                headed: headedMode,
-              });
-            } else {
-              throw runErr;
-            }
-          }
+          const runRes = await runSystemTest(snapshotId, {
+            framework: activeFramework,
+            executionMode,
+            testFile: effectiveSelectedFiles.includes(onlyFile) ? onlyFile : undefined,
+            selectedFiles: effectiveSelectedFiles,
+            selectedTitles: selectedTitles?.length ? selectedTitles : undefined,
+            headed: headedMode,
+            watch: runWatch,
+          });
           responseData = runRes?.data || runRes;
         }
 
@@ -928,9 +955,8 @@ export default function SystemTestWorkspace({
 
         activeJobRef.current = jid;
         setActiveJobId(jid);
-        if (responseData?.assessmentId || responseData?.id) {
-          setActiveAssessmentId(responseData.assessmentId || responseData.id);
-        }
+        setCompletedJob(null);
+        setActiveAssessmentId(responseData.assessmentId || responseData.id || null);
         setRefreshKey((k) => k + 1);
       } catch (err) {
         setRunningTests(false);
@@ -948,7 +974,7 @@ export default function SystemTestWorkspace({
         runRequestRef.current = false;
       }
     },
-    [projectAccess, snapshotId, activeFramework, executionMode, headedMode],
+    [projectAccess, projectId, snapshotId, activeFramework, executionMode, headedMode, specCompatibility, pendingOpsCount],
   );
 
   // Sync spec catalog from disk
@@ -989,6 +1015,23 @@ export default function SystemTestWorkspace({
       setError(err.response?.data?.message || err.message || "Failed to apply generated draft.");
     } finally {
       setApplyingDraft(false);
+    }
+  };
+
+  const handleFillMissing = async (draft) => {
+    setFillingDraft(true);
+    setError(null);
+    try {
+      setGenerationTask(await fillMissingSystemTests(snapshotId, draft.aiTestId));
+    } catch (err) {
+      const response = err.response?.data;
+      if (response?.code === "GENERATION_IN_PROGRESS" && response.data) {
+        setGenerationTask(response.data);
+      } else {
+        setError(response?.message || err.message || "Failed to generate missing tests.");
+      }
+    } finally {
+      setFillingDraft(false);
     }
   };
 
@@ -1090,6 +1133,19 @@ export default function SystemTestWorkspace({
     error: discoveryError,
     activeJob: runningTests || !!activeJobId,
   });
+  const draftScenarioCount = useMemo(() => {
+    if (!latestDraft) return 0;
+    const files = Array.isArray(latestDraft.files) && latestDraft.files.length ? latestDraft.files : [latestDraft];
+    return latestDraft.scenarioCount ?? latestDraft.scenariosCount ?? files.reduce((count, file) => (
+      count + (file.scenarios?.length || extractDraftTitlesFromCode(file.content || file.code || "").length)
+    ), 0);
+  }, [latestDraft]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), 5000);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   if (showPrintableReport && workspace.assessment) {
     return (
@@ -1101,331 +1157,162 @@ export default function SystemTestWorkspace({
     );
   }
 
-  if (entryState === "loading" && specGroups.length === 0) {
-    return (
-      <div className="w-full h-full min-h-[360px] flex flex-col items-center justify-center p-10 text-center space-y-3 bg-[var(--color-bg)] text-[var(--color-text)]">
-        <Loader2 size={28} className="animate-spin text-[var(--color-primary)]" />
-        <p className="text-sm font-semibold">
-          {snapshotPreparing ? "Preparing imported snapshot..." : "Loading System Test Cockpit..."}
-        </p>
-        <p className="text-xs text-[var(--color-text-secondary)]">
-          Inspecting Playwright / Cypress specs and application telemetry.
-        </p>
-      </div>
-    );
-  }
+  const workspaceLoading = loading || snapshotPreparing || entryState === "loading";
 
   return (
-    <div className="flex flex-col h-full min-h-0 bg-[var(--color-bg)] text-[var(--color-text)] font-sans select-text overflow-hidden">
-      {/* ── 1. SLEEK INDUSTRIAL COCKPIT HEADER ── */}
-      <header className="shrink-0 bg-[var(--color-surface)] border-b border-[var(--color-border)] z-20 relative">
-        {loading && (
-          <div className="absolute top-0 left-0 right-0 h-0.5 bg-[var(--color-surface-secondary)] overflow-hidden">
-            <div className="h-full bg-[var(--color-primary)] animate-pulse w-full" />
-          </div>
-        )}
-
-        <div className="px-5 py-3 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <div className="w-7 h-7 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] flex items-center justify-center">
-              <Globe size={15} />
-            </div>
-            <h1 className="text-sm font-semibold text-[var(--color-text)] tracking-tight m-0">
-              System Test Coverage
-            </h1>
-
-            {/* Runner Switcher */}
-            <div
-              data-guide="sys-framework"
-              className="inline-flex items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-0.5 text-[11px] font-mono"
-            >
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-[var(--color-bg)] font-sans text-[var(--color-text)] select-text">
+      <header className="z-20 min-w-0 shrink-0 bg-[var(--color-bg)] px-4 pt-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="m-0 text-lg font-semibold tracking-tight">System Tests</h1>
+            <div data-guide="sys-framework" className="inline-flex rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5 text-xs">
               {["playwright", "cypress"].map((fw) => (
                 <button
                   key={fw}
                   type="button"
                   onClick={() => setActiveFramework(fw)}
-                  className={`px-2 py-0.5 rounded uppercase transition-colors cursor-pointer ${
-                    activeFramework === fw
-                      ? "bg-[var(--color-surface-secondary)] text-[var(--color-text)] font-semibold"
-                      : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                  }`}
+                  aria-pressed={activeFramework === fw}
+                  className="cursor-pointer rounded px-2 py-1 capitalize text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)] aria-pressed:bg-[var(--color-surface-secondary)] aria-pressed:font-semibold aria-pressed:text-[var(--color-text)]"
                 >
-                  {fw}
+                  {fw === "playwright" ? "Playwright" : "Cypress"}
                 </button>
               ))}
             </div>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              type="button"
-              data-guide="sys-setup"
-              onClick={() => setSetupOpen(true)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors cursor-pointer"
-              title="Inspect runtime server URL, start command and test setup"
-            >
-              <SlidersHorizontal size={13} className="text-[var(--color-text-muted)]" />
-              <span>Test Setup</span>
-              {setupReport?.issues?.length > 0 && (
-                <span className="px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-400 font-mono text-[10px]">
-                  {setupReport.issues.length}
-                </span>
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={refreshData}
-              disabled={loading || runningTests}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
-            >
-              <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-              <span>Refresh</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setHeadedMode((v) => !v)}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs font-medium transition-colors cursor-pointer ${
-                headedMode
-                  ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] border-[var(--color-primary)]/30"
-                  : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border-[var(--color-border)]"
-              }`}
-              title="Show visible Chromium window while running Playwright on desktop"
-            >
-              <Monitor size={12} />
-              <span className="hidden lg:inline">Headed</span>
-            </button>
-
-            <button
-              type="button"
-              data-guide="sys-run"
-              onClick={() => handleRunTests()}
-              disabled={!projectAccess.can("tests.run") || runningTests}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold transition-colors active:scale-[0.98] cursor-pointer disabled:opacity-50"
-              title="Run full-stack E2E system test suite"
-            >
-              {runningTests ? (
-                <Loader2 size={12} className="animate-spin" />
-              ) : (
-                <Play size={12} fill="currentColor" />
-              )}
-              <span>{runningTests ? "Running E2E..." : "Run Coverage"}</span>
-            </button>
-
-            <button
-              type="button"
-              data-guide="sys-history"
-              onClick={() => setHistoryOpen(true)}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] border border-[var(--color-border)] text-xs font-medium transition-colors cursor-pointer"
-              title="System test suite version history (v1 / v2) and restore"
-            >
-              <Clock size={13} />
-              <span className="hidden md:inline">History</span>
-            </button>
-          </div>
-        </div>
-
-        {/* ── 2. UNIFIED TELEMETRY STRIP ── */}
-        <div
-          data-guide="sys-telemetry"
-          className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-bg)]/60"
-        >
-          <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-[var(--color-border)] overflow-hidden">
-            {/* Primary Anchor: Measured Code Coverage & E2E Scenario Verification */}
-            <div className="lg:col-span-5 px-4 py-3 flex flex-col justify-between gap-2">
-              <div className="flex items-center justify-between text-xs font-medium text-[var(--color-text-secondary)]">
-                <span>{telemetry.hasCodeCoverage ? "System code coverage" : "E2E scenario verification"}</span>
-                <span className="font-mono tabular-nums text-[var(--color-text-muted)] text-[11px]">
-                  {telemetry.hasCodeCoverage
-                    ? `S ${telemetry.codeStmtsPct.toFixed(0)}% · B ${telemetry.codeBranchesPct.toFixed(0)}% · F ${telemetry.codeFuncsPct.toFixed(0)}% · ${telemetry.passedScenarios}/${telemetry.totalScenarios} E2E`
-                    : `${telemetry.passedScenarios}/${telemetry.totalScenarios} passed · ${(telemetry.durationMs / 1000).toFixed(1)}s`}
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between gap-3">
-                <div className="flex items-baseline gap-2 font-mono tabular-nums">
-                  <span className="text-2xl font-bold tracking-tight text-[var(--color-text)]">
-                    {telemetry.hasCodeCoverage ? `${telemetry.codeLinesPct.toFixed(1)}%` : `${telemetry.passRate}%`}
-                  </span>
-                  <span className="text-xs text-[var(--color-text-muted)]">
-                    {telemetry.hasCodeCoverage ? "lines" : "verified"}
-                  </span>
-                </div>
-                <div className="flex-1 max-w-[160px] bg-[var(--color-surface-secondary)] h-1.5 rounded-sm overflow-hidden">
-                  <div
-                    className={`h-full transition-all duration-300 ${
-                      (telemetry.hasCodeCoverage ? telemetry.codeLinesPct : telemetry.passRate) >= 80
-                        ? "bg-emerald-500"
-                        : (telemetry.hasCodeCoverage ? telemetry.codeLinesPct : telemetry.passRate) >= 50
-                          ? "bg-amber-500"
-                          : "bg-[var(--color-primary)]"
-                    }`}
-                    style={{ width: `${Math.min(100, Math.max(0, telemetry.hasCodeCoverage ? telemetry.codeLinesPct : telemetry.passRate))}%` }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Specs & Required Cases */}
-            <div className="lg:col-span-4 px-4 py-3 flex flex-col justify-between gap-1">
-              <div className="flex items-center justify-between text-xs font-medium text-[var(--color-text-secondary)]">
-                <span>Specs &amp; E2E cases</span>
-                <span className="font-mono tabular-nums text-[11px] text-[var(--color-text-muted)]">
-                  {telemetry.totalSpecs} spec files
-                </span>
-              </div>
-              <div className="flex items-baseline gap-1.5 font-mono tabular-nums">
-                <span className="text-xl font-bold text-[var(--color-text)]">
-                  {telemetry.coveredCases}/{telemetry.totalCases}
-                </span>
-                <span className="text-[11px] text-[var(--color-text-muted)]">cases covered</span>
-              </div>
-            </div>
-
-            {/* Health */}
-            <div className="lg:col-span-3 px-4 py-3 flex flex-col justify-between gap-1">
-              <div className="flex items-center justify-between text-xs font-medium text-[var(--color-text-secondary)]">
-                <span>Suite Health</span>
-                <span className="font-mono text-[10px] uppercase text-[var(--color-text-muted)]">
-                  full-stack
-                </span>
-              </div>
-              <div className="flex items-center gap-2 font-mono text-xs">
-                {!telemetry.hasRun ? (
-                  <span className="text-[var(--color-text-muted)]">• Not run yet</span>
-                ) : telemetry.failedScenarios > 0 ? (
-                  <span className="inline-flex items-center gap-1.5 text-rose-400 font-semibold tabular-nums">
-                    <XCircle size={13} />
-                    <span>{telemetry.failedScenarios} failed</span>
-                  </span>
-                ) : telemetry.flakyScenarios > 0 ? (
-                  <span className="inline-flex items-center gap-1.5 text-amber-400 font-semibold tabular-nums">
-                    <AlertTriangle size={13} />
-                    <span>{telemetry.flakyScenarios} flaky</span>
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 text-emerald-400 font-semibold">
-                    <CheckCircle2 size={13} />
-                    <span>All Passing</span>
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* ── 3. NAVIGATION TABS (3 Tabs matching A1) ── */}
-        <div className="px-5 border-t border-[var(--color-border)] flex items-center justify-between gap-3">
-          <nav data-guide="sys-tabs" className="flex items-center gap-1 -mb-px">
-            <button
-              type="button"
-              onClick={() => setActiveTab("matrix")}
-              className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors flex items-center gap-2 cursor-pointer ${
-                activeTab === "matrix"
-                  ? "border-[var(--color-primary)] text-[var(--color-text)] font-semibold"
-                  : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              }`}
-            >
-              <Sparkles size={13} />
-              <span>Flows &amp; Specs Matrix</span>
-              <span className="px-1.5 py-0.2 rounded bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] font-mono text-[10px] tabular-nums">
-                {specGroups.length}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" data-guide="sys-run" onClick={() => handleRunTests()} disabled={!projectAccess.can("tests.run") || runningTests || (!frameworksData && workspaceLoading)}>
+              {runningTests ? <Loader2 className="animate-spin" /> : <Play />}
+              {runningTests ? "Running…" : "Run tests"}
+            </Button>
+            {projectAccess.can("ai.use") && (
+              <Button size="sm" variant="outline" onClick={openGenerator}>
+                <FilePlus2 />
+                Generate tests
+              </Button>
+            )}
+            <Hint text="Refresh">
+              <span className="inline-flex">
+                <Button size="icon-sm" variant="ghost" aria-label="Refresh" onClick={refreshData} disabled={loading || runningTests}>
+                  <RefreshCw className={loading ? "animate-spin" : ""} />
+                </Button>
               </span>
-            </button>
+            </Hint>
+            <Hint text="Headed browser">
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label="Headed browser"
+                aria-pressed={headedMode}
+                className="aria-pressed:bg-[var(--color-primary)]/10 aria-pressed:text-[var(--color-primary)]"
+                onClick={() => setHeadedMode((v) => !v)}
+              >
+                <Monitor />
+              </Button>
+            </Hint>
+            <Hint text="History">
+              <Button size="icon-sm" variant="ghost" data-guide="sys-history" aria-label="History" onClick={() => setHistoryOpen(true)}>
+                <History />
+              </Button>
+            </Hint>
+            <Hint text="Test setup">
+              <Button size="icon-sm" variant="ghost" className="relative" data-guide="sys-setup" aria-label="Test setup" onClick={() => setSetupOpen(true)}>
+                <Settings2 />
+                {setupReport?.issues?.length > 0 && (
+                  <span className="absolute top-1 right-1 size-1.5 rounded-full bg-[var(--color-danger)]" aria-hidden="true" />
+                )}
+              </Button>
+            </Hint>
+          </div>
+        </div>
 
-            <button
-              type="button"
-              onClick={() => setActiveTab("live")}
-              className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors flex items-center gap-2 cursor-pointer ${
-                activeTab === "live"
-                  ? "border-[var(--color-primary)] text-[var(--color-text)] font-semibold"
-                  : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              }`}
-            >
-              <Activity size={13} />
-              <span>Live Run</span>
-              {runningTests && (
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
-                </span>
-              )}
-            </button>
+      </header>
 
-            <button
-              type="button"
-              onClick={() => setActiveTab("report")}
-              className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors flex items-center gap-2 cursor-pointer ${
-                activeTab === "report"
-                  ? "border-[var(--color-primary)] text-[var(--color-text)] font-semibold"
-                  : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              }`}
-            >
-              <BarChart3 size={13} />
-              <span>Executive Report</span>
-              {telemetry.failedScenarios > 0 && (
-                <span className="px-1.5 py-0.2 rounded bg-rose-500/15 text-rose-400 font-mono text-[10px] tabular-nums">
-                  {telemetry.failedScenarios} failed
-                </span>
-              )}
-            </button>
+      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+      <div className="space-y-4 px-4 py-4">
+        <div data-guide="sys-telemetry">
+          <SystemKpiCards telemetry={telemetry} summary={summaryData} executionMode={executionMode} loading={workspaceLoading} />
+        </div>
+
+        <div className="sticky top-0 z-10 flex min-w-0 flex-wrap items-center justify-between gap-x-3 bg-[var(--color-bg)]">
+          <nav data-guide="sys-tabs" aria-label="System test views" className="flex flex-wrap items-center gap-1">
+            {[
+              { id: "matrix", label: "Matrix", badge: <Badge>{specGroups.length}</Badge> },
+              {
+                id: "live",
+                label: "Live Run",
+                badge: runningTests && <span className="size-2 animate-pulse rounded-full bg-emerald-500" aria-label="Tests running" />,
+              },
+              {
+                id: "report",
+                label: "Report",
+                badge: telemetry.failedScenarios > 0 && (
+                  <Badge variant="danger" className="text-[var(--color-danger)]">{telemetry.failedScenarios} failed</Badge>
+                ),
+              },
+            ].map(({ id, label, badge }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setActiveTab(id)}
+                aria-pressed={activeTab === id}
+                className="flex cursor-pointer items-center gap-2 border-b-2 border-transparent px-2.5 py-1.5 text-sm font-medium text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)] aria-pressed:border-[var(--color-primary)] aria-pressed:text-[var(--color-text)]"
+              >
+                {label}
+                {badge}
+              </button>
+            ))}
           </nav>
-
           {jobProgress && (
-            <div className="text-[11px] font-mono text-[var(--color-text-secondary)] flex items-center gap-2 py-1">
-              <Loader2 size={11} className="animate-spin text-[var(--color-primary)]" />
-              <span className="truncate max-w-[320px]">
+            <div className="flex min-w-0 max-w-full items-center gap-2 py-1 text-xs text-[var(--color-text-secondary)]">
+              <Loader2 size={12} className="shrink-0 animate-spin text-[var(--color-primary)]" />
+              <span className="max-w-[320px] truncate">
                 {jobProgress.stage}: {jobProgress.message} ({jobProgress.progress ?? 0}%)
               </span>
             </div>
           )}
         </div>
-      </header>
-
-      <div className="shrink-0 space-y-3 px-5 pt-3 empty:hidden">
-        {generationTask && generationTask.state !== "CANCELED" && generationTask.id !== dismissedGenerationId && (
-          <GenerationProgressStrip
-            key={generationTask.id}
-            task={generationTask}
-            onCancel={() => cancelGenerationRef.current?.()}
-            onReview={() => setGeneratorView("review")}
-            onRetry={() => setGeneratorView("generate")}
-            onDismiss={() => setDismissedGenerationId(generationTask.id)}
-          />
-        )}
-        <ExternalServicesBanner
-          setup={setupReport}
-          summary={summaryData}
-          onOpenSetup={openExternalSetup}
-          onRunTests={() => handleRunTests()}
-          running={runningTests}
-        />
-      </div>
-
-      {/* ── MAIN WORKSPACE CONTENT ── */}
-      <main className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
-        <SystemTestErrorNotice
-          message={error || discoveryError}
-          onDismiss={() => {
-            setError(null);
-            setDiscoveryError(null);
+        {snapshotPreparing && <span role="status" className="sr-only">Preparing imported snapshot…</span>}
+        <SystemNoticeSlot
+          generation={{
+            task: activeTab === "matrix" || generationTask?.state !== "SUCCEEDED" ? generationTask : null,
+            dismissedId: dismissedGenerationId,
+            onCancel: () => cancelGenerationRef.current?.(),
+            onReview: () => setGeneratorView("review"),
+            onRetry: () => setGeneratorView("generate"),
+            onDismiss: () => setDismissedGenerationId(generationTask.id),
           }}
-          onOpenLogs={() => openFloatingJobQueue({ domain: "system" })}
-          onOpenSetup={() => setSetupOpen(true)}
+          error={{
+            message: error || discoveryError,
+            messageOnly: error === NO_FULL_STACK_TESTS,
+            primaryAction: error === NO_FULL_STACK_TESTS && projectAccess.can("ai.use")
+              ? <Button size="sm" onClick={openGenerator}>Generate tests</Button>
+              : null,
+            onDismiss: () => {
+              setError(null);
+              setDiscoveryError(null);
+            },
+            onOpenLogs: error === NO_FULL_STACK_TESTS ? undefined : () => openFloatingJobQueue({ domain: "system" }),
+            onOpenSetup: () => setSetupOpen(true),
+          }}
+          draft={{
+            latest: activeTab === "matrix" ? latestDraft : null,
+            count: draftScenarioCount,
+            applying: applyingDraft,
+            onApply: handleApplyDraft,
+            canUseAi: projectAccess.can("ai.use") && projectAccess.can("evidence.approve"),
+            filling: fillingDraft,
+            onFillMissing: handleFillMissing,
+          }}
+          external={{
+            setup: setupReport,
+            summary: summaryData,
+            onOpenSetup: openExternalSetup,
+            onRunTests: () => handleRunTests(),
+            running: runningTests,
+          }}
         />
-
-        {notice && (
-          <div className="px-3.5 py-2.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 text-xs text-emerald-300 flex items-center justify-between gap-2">
-            <span>{notice}</span>
-            <button
-              type="button"
-              onClick={() => setNotice(null)}
-              className="text-emerald-400 hover:text-emerald-200 cursor-pointer"
-            >
-              Dismiss
-            </button>
-          </div>
-        )}
+        <SystemNoticeToast message={notice} onDismiss={() => setNotice(null)} />
 
         {activeTab === "matrix" && (
           <div data-guide="sys-matrix">
@@ -1433,10 +1320,8 @@ export default function SystemTestWorkspace({
             key={snapshotId || "system"}
             snapshotId={snapshotId}
             specGroups={specGroups}
-            framework={activeFramework}
-            latestDraft={latestDraft}
+            loading={workspaceLoading}
             syncingCatalog={syncingCatalog}
-            applyingDraft={applyingDraft}
             runningTarget={runningTarget}
             fixingTarget={fixingTarget}
             deletingTarget={deletingTarget}
@@ -1444,9 +1329,7 @@ export default function SystemTestWorkspace({
             canEditTests={projectAccess.can("tests.edit") || projectAccess.can("tests.run")}
             canUseAi={projectAccess.can("ai.use")}
             onSyncCatalog={handleSyncCatalog}
-            onOpenGenerator={openGenerator}
             onGenerateSelected={openGenerator}
-            onApplyDraft={handleApplyDraft}
             onRunSelectedFiles={(files) =>
               handleRunTests({ selectedFiles: files, targetLabel: `${files.length} specs` })
             }
@@ -1504,14 +1387,18 @@ export default function SystemTestWorkspace({
             projectId={projectId}
             snapshotId={snapshotId}
             activeJobId={activeJobId}
-            initialAssessmentId={activeAssessmentId || workspace.assessment?.id || null}
+            initialAssessmentId={runningTests && !activeJobId ? null : activeAssessmentId ||
+              (!activeJobId && completedJob?.snapshotId !== snapshotId ? workspace.assessment?.id : null)}
+            completedJob={completedJob?.snapshotId === snapshotId && !runningTests ? completedJob : null}
+            jobExecuting={jobProgress?.executing}
             specGroups={specGroups}
             runningTests={runningTests}
-            onRunScenario={(sc, group) =>
+            onRunScenario={(sc, group, watch) =>
               handleRunTests({
                 onlyFile: sc.testFile || group?.filePath,
                 selectedTitles: [sc.title || sc.testName],
                 targetLabel: sc.title || sc.testName,
+                watch,
               })
             }
           />
@@ -1541,6 +1428,7 @@ export default function SystemTestWorkspace({
             }
           />
         )}
+      </div>
       </main>
 
       {/* ── MODALS & DRAWERS ── */}
@@ -1650,12 +1538,11 @@ export default function SystemTestWorkspace({
           onStatus={setSetupReport}
           onReady={() => {
             const pending = pendingRunRef.current;
+            if (!pending) return; // opened manually (e.g. Add key / Test setup): keep the dialog open
+            pendingRunRef.current = null;
             setFocusServiceId(undefined);
             setSetupOpen(false);
-            if (pending) {
-              pendingRunRef.current = null;
-              void handleRunTests(pending);
-            }
+            void handleRunTests(pending);
           }}
           runtimeMessage={error}
           onGenerate={() => {

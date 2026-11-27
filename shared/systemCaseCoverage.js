@@ -218,6 +218,22 @@ export function annotateSystemGroupScenarios(group = {}, scenarios = []) {
   return { annotations, redundantCount, extraCount };
 }
 
+function getPlanCaseCoverage(items, scenarios) {
+  return items.map((item) => {
+    const matched = scenarios.find((sc) => sc.planItemId === item.id) ??
+      scenarios.find((sc) => item.testTitle && sc.title === item.testTitle);
+    return {
+      key: item.id,
+      category: item.caseKey,
+      label: item.title,
+      description: item.route || item.component || "",
+      covered: item.status === "COVERED",
+      passed: isSystemScenarioPassed(matched),
+      failed: isSystemScenarioFailed(matched) || item.status === "FAILED",
+    };
+  });
+}
+
 export function getSystemGroupCaseCoverage(group = {}, scenarios = []) {
   const required = getRequiredSystemCasesForGroup(group, scenarios);
   const coveredKeys = new Set();
@@ -238,12 +254,14 @@ export function getSystemGroupCaseCoverage(group = {}, scenarios = []) {
     }
   }
 
-  const cases = required.map((c) => ({
-    ...c,
-    covered: coveredKeys.has(c.key),
-    passed: passedKeys.has(c.key) && !failedKeys.has(c.key),
-    failed: failedKeys.has(c.key),
-  }));
+  const cases = group.testPlan?.items?.length > 0
+    ? getPlanCaseCoverage(group.testPlan.items, scenarios || [])
+    : required.map((c) => ({
+        ...c,
+        covered: coveredKeys.has(c.key),
+        passed: passedKeys.has(c.key) && !failedKeys.has(c.key),
+        failed: failedKeys.has(c.key),
+      }));
 
   const { annotations: scenarioAnnotations, redundantCount, extraCount } =
     annotateSystemGroupScenarios(group, scenarios);

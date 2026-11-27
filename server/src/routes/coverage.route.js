@@ -1,6 +1,7 @@
 import { enforceProjectEndpointPolicy } from '../middlewares/projectEndpointPolicy.js';
 import express from "express";
 import { authMiddleware } from "../middlewares/auth.middleware.js";
+import { getSystemTestPlansController } from "../controllers/systemGeneration.controller.js";
 import {
     getCoverageSummary,
     runCoverage,
@@ -82,6 +83,7 @@ router.get("/:snapshotId/system/scenarios/:scenarioId/evidence", authMiddleware,
 router.post("/:snapshotId/system/run", authMiddleware, runSystemTestCoverage);
 router.post("/:snapshotId/system/save-ai-test", authMiddleware, saveAiSystemTest);
 router.get("/:snapshotId/system/generate-tests/status", authMiddleware, getSystemGenerationStatusController);
+router.get("/:snapshotId/system/test-plans", authMiddleware, getSystemTestPlansController);
 router.post("/:snapshotId/system/generate-tests", authMiddleware, generateColdStartSystemTestsController);
 router.delete("/:snapshotId/system/generate-tests", authMiddleware, cancelSystemGenerationController);
 router.get("/:snapshotId/frameworks", authMiddleware, getCoverageFrameworks);

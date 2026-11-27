@@ -56,7 +56,7 @@ describe('Automatic system assessment discovery', () => {
         const full = discoverSystemAssessment({rootDir:root,executionMode:'full'});
         expect(full.coverageScope.backend).toEqual({root:'server',sourceDirectory:'.'});
         expect(full.testFiles).toEqual(['tests/system/cart.spec.js']);
-        expect(full.excludedTests).toEqual([{filePath:'client/e2e/mock.spec.js',reason:'Mocked or intercepted API: run this file in Frontend mode'}]);
+        expect(full.excludedTests).toEqual([{filePath:'client/e2e/mock.spec.js',reason:'Uses API mocks (frontend-only test)'}]);
         expect(discoverSystemAssessment({rootDir:root}).testFiles).toContain('client/e2e/mock.spec.js');
     });
     test('excludes a JavaScript spec with a TypeScript cast and selects the valid spec', () => {

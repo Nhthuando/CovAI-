@@ -1,7 +1,37 @@
 import { describe, test, expect, it } from '@jest/globals';
-import {validateStartupEnvironment,requiredStartupEnvironment,buildAutomaticTestEnvironment,managedEnvironmentNames,environmentFeatureMap,hardcodedServiceCredentials} from '../services/fullSystemEnvironment.service.js';
+import {validateStartupEnvironment,requiredStartupEnvironment,buildAutomaticTestEnvironment,managedEnvironmentNames,environmentFeatureMap,hardcodedServiceCredentials,referencedEnvironment} from '../services/fullSystemEnvironment.service.js';
 const files=[{path:'index.js',content:`const express=require('express');const payments=require('./routes/payments');`},{path:'routes/payments.js',content:`const Stripe=require('stripe');const stripe=Stripe(process.env.STRIPE_SECRET_KEY);`}];
 describe('external service source evidence', () => {
+    test('ignores stand-in SDK instances used only when the configured key is missing', () => {
+        const entry = {path:'src/stripe.client.js', content:`const Stripe = require('stripe');
+class Client { verify() { const sdk = this.sdk || new Stripe('sk_test_placeholder'); return sdk; } }
+const other = configured ? configured : new Stripe('sk_test_fallback');`};
+        expect(hardcodedServiceCredentials([entry])).toEqual([]);
+    });
+
+    test('does not report public Stripe publishable keys in frontend code', () => {
+        const entry = {path:'client/src/Payment.jsx', content:`import { loadStripe } from '@stripe/stripe-js';
+const stripePromise = loadStripe('pk_test_51Habc');`};
+        expect(hardcodedServiceCredentials([entry])).toEqual([]);
+    });
+
+    test('ignores credentials written in the app test suites', () => {
+        const entries = [
+            {path:'backend/tests/unit/stripe.test.js', content:`const Stripe = require('stripe'); const s = new Stripe('sk_test_unit');`},
+            {path:'src/pay.spec.ts', content:`import Stripe from 'stripe'; const s = new Stripe('sk_test_spec');`},
+        ];
+        expect(hardcodedServiceCredentials(entries)).toEqual([]);
+    });
+
+    test('reads environment names through process.env aliases', () => {
+        const entry = {path:'src/config/env.js', content:`function loadConfig(env = process.env) { return { stripe: env.STRIPE_SECRET_KEY, mail: env['MAIL_HOST'] }; }
+const vars = process.env; const port = vars.APP_PORT;
+function unrelated(env) { return env.NOT_AN_ENV; }`};
+        const names = new Set(referencedEnvironment([entry]).map(row => row.name));
+        expect([...names]).toEqual(expect.arrayContaining(['STRIPE_SECRET_KEY', 'MAIL_HOST', 'APP_PORT']));
+        expect(names.has('NOT_AN_ENV')).toBe(false);
+    });
+
     test('maps a Stripe variable to a checkout route in the same file', () => {
         const entry = {path:'app.js', content:`import Stripe from 'stripe';
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);

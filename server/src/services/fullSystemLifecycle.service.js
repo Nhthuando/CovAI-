@@ -114,6 +114,6 @@ export const startFullSystem = async ({rootDir,jobId,onProgress,measurementPrepa
       if(!frontend.started)throw new ServiceError('No frontend start script found',422);
       handles.push(frontend);
     }
-    return {frontendPort,backendUrl,cleanup,egressLogPath};
+    return {frontendPort,backendUrl,frontendRoot:frontendDir,cleanup,egressLogPath};
   } catch(error){await cleanup().catch(cleanupError=>console.warn('[fullSystemLifecycle] Cleanup failed:',redactSystemTestSecrets(cleanupError.message)));let message=redactSystemTestSecrets(error.message);for(const [key,value] of Object.entries(resources?.environment || {}))if(value && /PASSWORD|SECRET|TOKEN|KEY|URL/.test(key))message=message.replaceAll(value,'[redacted]');const failure=new ServiceError(`Full system setup failed: ${message}`,error.statusCode || 422);failure.code=error.code || 'SYSTEM_RUNTIME_START_FAILED';failure.details=redactDeep(error.details);throw failure;}
 };

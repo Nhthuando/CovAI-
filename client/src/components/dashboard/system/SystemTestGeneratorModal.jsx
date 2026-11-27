@@ -1,4 +1,4 @@
-import { systemEvidenceRequest } from "../../../services/systemTest.service.js";
+import { fillMissingSystemTests, systemEvidenceRequest } from "../../../services/systemTest.service.js";
 import { useProjectAccess } from "../../../hooks/useProjectAccess";
 import { useEffect, useState } from "react";
 import {
@@ -15,6 +15,7 @@ import {
 import Button from "../../common/Button.jsx";
 import { DraftVerification } from "./ExternalTestKeyNotices.jsx";
 import { generateColdStartSystemTests } from "../../../services/systemTest.service.js";
+import { summarizeSystemTestPlan } from "../../../../../shared/systemTestPlan.js";
 
 const DEFAULT_ROUTES = ["/"];
 
@@ -89,11 +90,11 @@ export default function SystemTestGeneratorModal({
     }
   };
 
-  const handleGenerate = async () => {
+  const handleGenerate = async (draftId) => {
     setGenerating(true);
     setError(null);
     try {
-      const task = await generateColdStartSystemTests(snapshotId, {
+      const task = draftId ? await fillMissingSystemTests(snapshotId, draftId) : await generateColdStartSystemTests(snapshotId, {
         framework,
         routes,
         executionMode,
@@ -101,10 +102,15 @@ export default function SystemTestGeneratorModal({
       onStarted?.(task);
       onClose();
     } catch (err) {
+      if (draftId && err.response?.data?.code === "GENERATION_IN_PROGRESS" && err.response.data.data) {
+        onStarted?.(err.response.data.data);
+        onClose();
+        return;
+      }
       setError(
         err.response?.data?.message ||
           err.message ||
-          "Failed to generate system tests.",
+          (draftId ? "Failed to generate missing tests." : "Failed to generate system tests."),
       );
     } finally {
       setGenerating(false);
@@ -139,6 +145,8 @@ export default function SystemTestGeneratorModal({
   };
 
   const hasSetupChanges = !!result?.setupChanges?.length;
+  const testPlan = summarizeSystemTestPlan(result?.testPlan);
+  const canFillMissing = access.can("ai.use") && access.can("evidence.approve");
   const verified = ["VERIFIED", "PARTIAL"].includes(result?.verificationStatus);
   const needsTestKey = result?.verificationStatus === "NEEDS_EXTERNAL_CONFIG";
   const verificationLabel = verified ? "Verified on your app" : needsTestKey ? "Needs a test key" : "Not verified";
@@ -150,12 +158,13 @@ export default function SystemTestGeneratorModal({
   const canApply =
     !!result &&
     !result.stale &&
+    !generating &&
     reviewed &&
     access.can("evidence.approve") &&
     (!hasSetupChanges || setupApproved);
 
   const frameworkButtonClass = (name) =>
-    `px-4 py-3 rounded-lg border text-sm text-left flex items-center justify-between cursor-pointer transition-all ${
+    `px-4 py-3 rounded-lg border text-sm text-left flex items-center justify-between cursor-pointer transition-colors ${
       framework === name
         ? "bg-[var(--color-primary)]/10 border-[var(--color-primary)] text-[var(--color-primary)] font-semibold shadow-xs"
         : "bg-[var(--color-surface-secondary)]/50 border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
@@ -232,10 +241,72 @@ export default function SystemTestGeneratorModal({
                 </code>
               </div>
 
+              {testPlan && (
+                <section className="space-y-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-secondary)]/25 p-3.5">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--color-text-secondary)]">
+                    <h4 className="font-semibold text-[var(--color-text)]">Test plan</h4>
+                    <span>{testPlan.covered}/{testPlan.total} cases covered</span>
+                    {testPlan.failed > 0 && <span>· {testPlan.failed} failed</span>}
+                    {testPlan.missing > 0 && <span>· {testPlan.missing} not generated</span>}
+                    {testPlan.omitted > 0 && <span>· {testPlan.omitted} beyond plan limit</span>}
+                    <div
+                      role="progressbar"
+                      aria-label="Test plan coverage"
+                      aria-valuenow={testPlan.percent}
+                      className="h-1.5 min-w-16 flex-1 overflow-hidden rounded-full bg-[var(--color-border)]"
+                    >
+                      <div className="h-full rounded-full bg-[var(--color-primary)]" style={{ width: `${testPlan.percent}%` }} />
+                    </div>
+                  </div>
+                  {testPlan.missing > 0 && canFillMissing && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      loading={generating}
+                      disabled={applying || generating || result.stale}
+                      onClick={() => handleGenerate(result.aiTestId)}
+                    >
+                      Generate missing ({testPlan.missing})
+                    </Button>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    {testPlan.byCase.map(({ caseKey, covered, total }) => (
+                      <span key={caseKey} className="inline-flex items-center rounded-md bg-[var(--color-primary)]/15 px-2 py-0.5 text-xs font-semibold text-[var(--color-primary)]">
+                        {caseKey} {covered}/{total}
+                      </span>
+                    ))}
+                  </div>
+                  <ul className="max-h-56 divide-y divide-[var(--color-border)] overflow-y-auto">
+                    {testPlan.items.map((item) => {
+                      const covered = item.status === "COVERED";
+                      const failed = item.status === "FAILED";
+                      const dot = covered ? "bg-emerald-400" : failed ? "bg-rose-400" : "bg-[var(--color-text-muted)]";
+                      return (
+                        <li key={item.id} className="flex items-start gap-2 py-2 text-xs">
+                          <span aria-hidden="true" className={`mt-1.5 size-2 shrink-0 rounded-full ${dot}`} />
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[var(--color-text)]">
+                              <span className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-[var(--color-text-secondary)]">{item.caseKey}</span>
+                              <code className="break-all font-mono text-[var(--color-text-secondary)]">{item.route || "form"}</code>
+                              <span>{item.title}</span>
+                            </div>
+                            <p className="break-words text-[var(--color-text-muted)]">
+                              {covered && <span className="sr-only">Covered. </span>}
+                              {failed && <span className="sr-only">Failed. </span>}
+                              {covered ? item.testTitle : failed ? item.reason : "Not generated"}
+                            </p>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              )}
+
               {/* Scenarios List */}
               {result.scenarios?.length > 0 && (
                 <div className="space-y-2.5">
-                  <div className="text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)] px-0.5">
+                  <div className="text-xs font-medium text-[var(--color-text-muted)] px-0.5">
                     Scenarios
                   </div>
                   <div className="grid gap-2.5">
@@ -344,7 +415,7 @@ export default function SystemTestGeneratorModal({
               {/* Framework Selector */}
               <div>
                 <div className="flex items-center justify-between gap-2 mb-2.5">
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
+                  <label className="block text-xs font-medium text-[var(--color-text-secondary)]">
                     Target Framework
                   </label>
                   {frameworksData && !frameworksData.needsUserSelection && frameworksData.recommendedFramework ? (
@@ -384,7 +455,7 @@ export default function SystemTestGeneratorModal({
               {/* Target Routes */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
+                  <label className="text-xs font-medium text-[var(--color-text-secondary)]">
                     Target Routes
                   </label>
                   <span className="text-[11px] text-[var(--color-text-muted)]">
@@ -518,7 +589,7 @@ export default function SystemTestGeneratorModal({
                 icon={generating ? Loader2 : FileCode2}
                 loading={generating}
                 disabled={generating}
-                onClick={handleGenerate}
+                onClick={() => handleGenerate()}
               >
                 {generating ? "Generating…" : "Generate Test Suite"}
               </Button>}

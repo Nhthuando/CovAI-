@@ -51,6 +51,7 @@ export const runSystemTest = async (
     selectedFiles = [],
     selectedTitles = [],
     headed = false,
+    watch,
   } = {},
 ) => {
   const headers = getAuthHeaders();
@@ -67,6 +68,7 @@ export const runSystemTest = async (
         ? { selectedTitles }
         : {}),
       ...(headed ? { headed: true } : {}),
+      ...(watch !== undefined ? { watch } : {}),
     },
     { headers },
   );
@@ -263,8 +265,14 @@ export const systemEvidenceRequest = async (
   return response.data.data;
 };
 
+export const getSystemTestPlans = (snapshotId) =>
+  systemEvidenceRequest(snapshotId, 'test-plans');
+
 export const getSystemGenerationStatus = (snapshotId, signal) =>
   systemEvidenceRequest(snapshotId, "generate-tests/status", { signal });
+
+export const fillMissingSystemTests = (snapshotId, draftId) =>
+  systemEvidenceRequest(snapshotId, `generation-drafts/${encodeURIComponent(draftId)}/fill-missing`, { method: 'POST' });
 
 export const cancelSystemGeneration = (snapshotId) =>
   systemEvidenceRequest(snapshotId, "generate-tests", { method: "DELETE" });

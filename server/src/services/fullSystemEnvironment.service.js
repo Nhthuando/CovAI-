@@ -38,12 +38,25 @@ const requireSpecifier = node => node?.type === 'CallExpression' && node.callee.
 const routeMethods = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'all']);
 const memberName = node => node.computed ? node.property.value : node.property.name;
 
+// `const env = process.env` and `function load(env = process.env)` make `env.X` an environment read.
+const isEnvironmentAlias = p => {
+    const object = p.node.object;
+    if (object?.type !== 'Identifier' || object.name === 'process') return false;
+    const binding = p.scope.getBinding(object.name);
+    if (!binding) return false;
+    if (binding.path.isVariableDeclarator()) return isEnvironment(binding.path.node.init);
+    const pattern = binding.path.isAssignmentPattern() ? binding.path.node
+        : binding.path.parentPath?.isAssignmentPattern() ? binding.path.parentPath.node : null;
+    return Boolean(pattern && isEnvironment(pattern.right));
+};
+const aliasEnvName = p => isEnvironmentAlias(p) ? memberName(p.node) : null;
+
 const environmentReferenceVisitors = add => {
     const record = (name, location, target) => {
         if (typeof name === 'string' && /^[A-Za-z_]\w*$/.test(name)) add(name, location, target);
     };
     return {
-        MemberExpression(p) { record(envName(p.node), p); },
+        MemberExpression(p) { record(envName(p.node) ?? aliasEnvName(p), p); },
         VariableDeclarator(p) {
             if (p.node.id.type !== 'ObjectPattern' || !isEnvironment(p.node.init)) return;
             for (const property of p.get('id.properties')) {
@@ -280,9 +293,20 @@ const positionalCredentialPackages = new Map([
 ]);
 const optionCredentialFields = ['apiKey', 'api_key', 'api_secret', 'authToken', 'clientSecret', 'dsn', 'secretAccessKey', 'accessToken', 'secret'];
 
+// Test suites are not code the running app depends on.
+const isTestSource = name => /(^|\/)(tests?|__tests__|e2e|cypress|playwright)\//i.test(filePath(name)) ||
+    /\.(test|spec|cy)\.[cm]?[jt]sx?$/i.test(name);
+// `configuredSdk || new Stripe('sk_…')` only builds a stand-in when the real key is absent.
+const isFallbackConstruction = call => {
+    const parent = call.parentPath;
+    return Boolean(parent?.isLogicalExpression() && ['||', '??'].includes(parent.node.operator) && call.key === 'right')
+        || Boolean(parent?.isConditionalExpression() && call.key === 'alternate');
+};
+
 export const hardcodedServiceCredentials = files => {
     const findings = new Map();
     for (const file of files) {
+        if (isTestSource(file.path)) continue;
         const parsed = parseFile(file);
         if (!parsed.success) continue;
         const routes = [];
@@ -300,7 +324,11 @@ export const hardcodedServiceCredentials = files => {
             const args = sdk ? sdkCredentialArguments(node, sdk)
                 : position !== undefined ? [node.arguments[position]]
                 : sdkCredentialArguments(node, {fields:optionCredentialFields});
-            if (!args.some(argument => argument?.type === 'StringLiteral')) return;
+            const literals = args.filter(argument => argument?.type === 'StringLiteral');
+            if (!literals.length) return;
+            // Publishable keys (Stripe pk_test_/pk_live_) are public by design and belong in frontend code.
+            if (literals.every(argument => /^pk_(?:test|live)_/.test(argument.value))) return;
+            if (isFallbackConstruction(call)) return;
             const line = node.loc.start.line;
             const declaration = call.parentPath;
             const id = declaration.isVariableDeclarator() && declaration.node.init === node && declaration.node.id;

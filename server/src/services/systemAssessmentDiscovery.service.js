@@ -4,7 +4,7 @@ import { parse } from '@babel/parser';
 import { scanSystemTestFiles } from '../utils/testFileParser.js';
 import { containedPath, readFullSystemConfig, resolveSystemRepositoryRoot } from './fullSystemConfig.service.js';
 import { ServiceError } from '../utils/serviceError.js';
-import { validateFullSystemTest } from './systemTestEvidence.service.js';
+import { validateFullSystemTestFile } from './systemTestEvidence.service.js';
 import { selectFrontendPackage } from './projectRuntimePlan.service.js';
 import { inspectSystemSetupSource } from './fullSystemSetup.service.js';
 import { inferFullSystemPlan } from './fullSystemPlan.service.js';
@@ -18,8 +18,8 @@ export const discoverSystemAssessment = ({ rootDir, runner = 'playwright', execu
     const syntaxErrors = [];
     const testFiles = discovered.filter(file => {
         const isJavaScript = /\.(?:[cm]?js|jsx)$/i.test(file);
-        const source = isJavaScript || executionMode === 'full' ? fs.readFileSync(containedPath(rootDir, file), 'utf8') : undefined;
         if (isJavaScript) {
+            const source = fs.readFileSync(containedPath(rootDir, file), 'utf8');
             try {
                 parse(source, { sourceType: 'unambiguous', plugins: ['jsx'] });
             } catch (error) {
@@ -37,12 +37,12 @@ export const discoverSystemAssessment = ({ rootDir, runner = 'playwright', execu
             return false;
         }
         if (executionMode !== 'full') return true;
-        try { validateFullSystemTest(source); return true; }
-        catch (error) { if (error.statusCode !== 422) throw error; excludedTests.push({filePath:file,reason:'Mocked or intercepted API: run this file in Frontend mode'}); return false; }
+        try { validateFullSystemTestFile({filePath:containedPath(rootDir,file),rootDir}); return true; }
+        catch (error) { if (error.statusCode !== 422) throw error; excludedTests.push({filePath:file,reason:'Uses API mocks (frontend-only test)'}); return false; }
     });
     if (!testFiles.length) {
         if (syntaxErrors.length) throw new ServiceError(syntaxErrors.join('\n'), 422);
-        const failure=new ServiceError(excludedTests.length ? 'No compatible Full Stack tests found. Existing tests mock API calls. Generate tests in Full Stack mode to exercise the real API and database; existing mocked tests remain available in Frontend mode.' : 'No Playwright test files were found in this snapshot',422);
+        const failure=new ServiceError(excludedTests.length ? 'No Full Stack tests yet: the existing tests mock API calls, so they cannot run against the real app. Generate Full Stack tests, review and apply them.' : 'No Playwright test files were found in this snapshot',422);
         failure.code=excludedTests.length?'FULL_STACK_TESTS_REQUIRED':'SYSTEM_TESTS_NOT_FOUND';
         throw failure;
     }

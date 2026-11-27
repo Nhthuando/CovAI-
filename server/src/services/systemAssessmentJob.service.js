@@ -64,7 +64,7 @@ export const assessSystemWorkspace = async ({ rootDir, environmentRoot = rootDir
                 : ['scenario','execution'].includes(input.reviewMode)
                     ? catalog.map(scenario => scenario.title)
                     : undefined;
-            const execution = { runner: 'playwright', rootDir: workspace.rootDir, testDirectory: 'tests', selectedFiles: input.testFiles.map(file => containedPath(workspace.rootDir, file)), selectedTitles, command: 'npx playwright test --reporter=json', reportDirectory, reportPath: path.join(reportDirectory, 'results.json'), headed: Boolean(input.headed) };
+            const execution = { runner: 'playwright', rootDir: workspace.rootDir, testDirectory: 'tests', selectedFiles: input.testFiles.map(file => containedPath(workspace.rootDir, file)), selectedTitles, command: 'npx playwright test --reporter=json', reportDirectory, reportPath: path.join(reportDirectory, 'results.json'), headed: Boolean(input.headed), watch: input.watch };
             const startedAt = new Date();
             const result = await (dependencies.run || runSystemTests)({ rootDir: workspace.rootDir, jobId, execution, executionMode: input.executionMode, measurementPreparation: preparation, assertionBindings: bindings, signal, onEvent: event => onEvent({ runIndex: index + 1, ...event }), onPreparing: (progress, message) => onProgress(`Run ${index + 1}/${input.repeatRuns}: ${message}`, baseProgress + Math.min(25, progress * 0.7)), onReady: () => onProgress(`Run ${index + 1}/${input.repeatRuns}: executing ${input.testFiles.length} test file(s)`, baseProgress + 30) });
             const testRun = parseSystemTestResult({ runner: 'playwright', resultPath: result.reportPath, startedAt, finishedAt: new Date(), rootDir: workspace.rootDir, stderr: result.stderr });
@@ -202,6 +202,7 @@ export const processSystemAssessmentJob = async (jobId, lease) => {
         emit = await createSystemEventPublisher({ client: prisma, assessmentId: assessment.id, snapshotId: job.snapshotId, userId: job.userId });
         const catalog = automaticCatalog || historical?.catalog || await prisma.systemScenario.findMany({ where: { snapshotId: job.snapshotId, filePath: { in: input.testFiles }, ...(['scenario','execution'].includes(input.reviewMode) ? { id: { in: input.scenarioIds } } : {}) }, select: { id: true, scenarioKey: true, filePath: true, title: true, reviewState: true, criterionIds: true, flowJson: true, inputJson: true, expectedJson: true, assertionHashes: true, requirementRevisionId: true } });
         if (['scenario','execution'].includes(input.reviewMode) && catalog.length !== input.scenarioIds.length) throw new ServiceError('Selected scenarios changed before execution; sync the catalog and retry', 409);
+        let liveFrameSeq = 0, lastLiveFrameAt = -Infinity;
         const onEvent = async ({ runIndex, type, screenshotBody, frame, ...payload }) => {
             if (type === 'LIVE_FRAME' && frame) {
                 const framePayload = {
@@ -210,25 +211,36 @@ export const processSystemAssessmentJob = async (jobId, lease) => {
                     runIndex,
                     frame,
                 };
-                recordSystemLiveFrame(framePayload);
-                global.io?.to?.(`user:${job.userId}`)?.emit?.('system-run:frame', framePayload);
+                recordSystemLiveFrame({ ...framePayload, url: payload.url });
+                const now = Date.now();
+                if (now - lastLiveFrameAt < 40) return;
+                lastLiveFrameAt = now;
+                const socketPayload = {
+                    ...framePayload,
+                    url: payload.url,
+                    mime: 'image/jpeg',
+                    frame: Buffer.from(frame, 'base64'),
+                    seq: ++liveFrameSeq,
+                };
+                global.io?.to?.(`user:${job.userId}`)?.emit?.('system-run:frame', socketPayload);
                 const operation = currentProjectOperation();
-                if (operation) void deliverScopedProjectTransport({ projectId: operation.projectId, event: 'system-run:frame', payload: framePayload });
+                if (operation) void deliverScopedProjectTransport({ projectId: operation.projectId, event: 'system-run:frame', payload: socketPayload });
                 return;
             }
             const matches = catalog.filter(scenario => scenario.filePath === payload.filePath && scenario.title === payload.title);
             if (type === 'SCENARIO_ENDED' && matches.length === 1 && screenshotBody) {
                 try {
                     const relativePath = storeScenarioScreenshot({ rootDir: job.snapshot.rootDir, source: { body: screenshotBody }, runKey: `live-${assessment.id}-${runIndex}` });
-                    if (relativePath) {
-                        const saved = await persistRunArtifacts({ client: prisma, assessmentId: assessment.id, rootDir: job.snapshot.rootDir, artifacts: [{ filePath: payload.filePath, title: payload.title, kind: 'SCREENSHOT', runIndex, purpose:'CHECKPOINT', relativePath }], catalog });
-                        if (saved[0]) payload.artifactId = saved[0].id;
-                    }
-                } catch { /* Checkpoint failure must not change the runner verdict. */ }
+                    // Saved in the background: waiting on the database here would hold
+                    // every later step event behind the live browser frames.
+                    if (relativePath) void persistRunArtifacts({ client: prisma, assessmentId: assessment.id, rootDir: job.snapshot.rootDir, artifacts: [{ filePath: payload.filePath, title: payload.title, kind: 'SCREENSHOT', runIndex, purpose:'CHECKPOINT', relativePath }], catalog })
+                        .catch(error => console.error('[systemAssessmentJob] Checkpoint screenshot save failed:', error.message));
+                } catch (error) { console.error('[systemAssessmentJob] Checkpoint screenshot store failed:', error.message); /* Checkpoint failure must not change the runner verdict. */ }
             }
             return emit({ runIndex, type, scenarioKey: matches.length === 1 ? matches[0].scenarioKey : null, payload: redactDeep(payload) });
         };
-        const report = await withProjectDependencyCache(() => assessSystemWorkspace({ rootDir: job.snapshot.rootDir, input, jobId, signal:lease.signal, revision, bindings: revision?.bindings || [], catalog, onProgress, onEvent }));
+        // flush: every live event is stored before the report is published.
+        const report = await withProjectDependencyCache(() => assessSystemWorkspace({ rootDir: job.snapshot.rootDir, input, jobId, signal:lease.signal, revision, bindings: revision?.bindings || [], catalog, onProgress, onEvent })).finally(() => emit.flush?.());
         if(automaticCatalog) {
             report.executionOnly=true;
             report.workspaceIdentity=workspaceIdentity;
@@ -258,7 +270,7 @@ export const processSystemAssessmentJob = async (jobId, lease) => {
         const current = await getJobById(jobId);
         const canceled = current.status === 'CANCELED' || error.code === 'SYSTEM_OPERATION_CANCELED';
         await prisma.systemTestAssessment.updateMany({ where: { jobId }, data: { status: canceled ? 'CANCELED' : 'FAILED', reportJson: { input, errorCode:error.code || 'SYSTEM_ASSESSMENT_FAILED', error: canceled ? 'Assessment canceled' : error.statusCode ? error.message.replace(/[a-z]:[\\/][^\s"'<>]+/gi, '[internal path]') : 'Assessment failed; inspect the owned job log' } } });
-        if (canceled) { try { await emit?.({ runIndex: 0, type: 'RUN_CANCELED' }); } catch { /* Job status remains the source of truth. */ } return; }
+        if (canceled) { try { await emit?.({ runIndex: 0, type: 'RUN_CANCELED' }); await emit?.flush?.(); } catch { /* Job status remains the source of truth. */ } return; }
         await markJobFailed(jobId, error);
         throw error;
     }

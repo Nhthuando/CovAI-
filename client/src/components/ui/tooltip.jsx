@@ -19,9 +19,11 @@ export function TooltipContent({ className, sideOffset = 6, children, ...props }
 export function Hint({ text, side = 'top', children }) {
   if (!text) return children;
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>{children}</TooltipTrigger>
-      <TooltipContent side={side}>{text}</TooltipContent>
-    </Tooltip>
+    <TooltipPrimitive.Provider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>{children}</TooltipTrigger>
+        <TooltipContent side={side}>{text}</TooltipContent>
+      </Tooltip>
+    </TooltipPrimitive.Provider>
   );
 }

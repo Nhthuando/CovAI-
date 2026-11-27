@@ -322,7 +322,7 @@ export default function SystemTestAssessmentPanel({
                     <ShieldCheck size={13} className="text-[var(--color-text-muted)]" />
                     Independent Runs Passed
                   </p>
-                  <p className="text-xl font-bold font-mono text-[var(--color-text)] tabular-nums">
+                  <p className="text-xl font-medium font-mono text-[var(--color-text)] tabular-nums">
                     {hasExecuted ? `${current?.stability?.passedRuns || 0}/${current?.stability?.runs || 1}` : '-/-'}
                   </p>
                   <span className="text-[11px] text-[var(--color-text-muted)] block">
@@ -337,7 +337,7 @@ export default function SystemTestAssessmentPanel({
                     <CheckCircle2 size={13} className="text-[var(--color-text-muted)]" />
                     Static Assertion Findings
                   </p>
-                  <p className="text-xl font-bold font-mono text-[var(--color-text)] tabular-nums">
+                  <p className="text-xl font-medium font-mono text-[var(--color-text)] tabular-nums">
                     {findings.length}
                   </p>
                   <span className="text-[11px] text-[var(--color-text-muted)] block">Static findings require review</span>
@@ -351,7 +351,7 @@ export default function SystemTestAssessmentPanel({
                     Quality Score
                   </p>
                   <div className="flex items-baseline gap-2">
-                    <span className="text-xl font-bold font-mono tabular-nums text-[var(--color-text)]">
+                    <span className="text-xl font-medium font-mono tabular-nums text-[var(--color-text)]">
                       {hasExecuted ? (current?.qualityScore?.status === 'CALCULATED' ? `${current.qualityScore.value}/100` : 'Not calculated') : '-'}
                     </span>
                     <span className="text-[10.5px] font-mono text-[var(--color-text-secondary)] px-1.5 py-0.5 rounded bg-[var(--color-surface-secondary)] border border-[var(--color-border)]">

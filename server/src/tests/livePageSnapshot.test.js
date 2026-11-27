@@ -6,11 +6,12 @@ import { captureLivePageSnapshots, selectSnapshotRoutes } from '../services/live
 import { __clearAllSystemTestSecretsForTest, storeSystemTestSecrets } from '../services/systemTestSecrets.service.js';
 
 describe('selectSnapshotRoutes', () => {
-    it('keeps up to six unique static routes with the root first', () => {
+    it('keeps up to ten unique static routes with the root first', () => {
         expect(selectSnapshotRoutes([
             '/one/', '/one', '/:id', '/files/*', '/(group)', '/[id]', '/search?q=1',
-            '//another-host', 'relative', null, '/two', '/three', '/four', '/five', '/six', '/',
-        ])).toEqual(['/', '/one', '/two', '/three', '/four', '/five']);
+            '//another-host', 'relative', null, '/two', '/three', '/four', '/five', '/six',
+            '/seven', '/eight', '/nine', '/ten', '/eleven', '/',
+        ])).toEqual(['/', '/one', '/two', '/three', '/four', '/five', '/six', '/seven', '/eight', '/nine']);
     });
 
     it('uses target routes when supplied', () => {

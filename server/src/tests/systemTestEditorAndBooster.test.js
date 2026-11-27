@@ -1,4 +1,6 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+// Static import resolves the real module before the mocks below; unmocked fs functions keep real behaviour.
+import realFs from 'node:fs';
 
 const prismaMock = {
     project: { findFirst: jest.fn(async ({where})=> {
@@ -43,7 +45,9 @@ const mockStatSync = jest.fn((p) => ({ size: (mockFiles.get(p) || '').length, is
 const mockRealpathSync = jest.fn((p) => p);
 
 jest.unstable_mockModule('fs', () => ({
+    ...realFs,
     default: {
+        ...realFs,
         existsSync: mockExistsSync,
         readFileSync: mockReadFileSync,
         writeFileSync: mockWriteFileSync,
@@ -60,7 +64,9 @@ jest.unstable_mockModule('fs', () => ({
 }));
 
 jest.unstable_mockModule('node:fs', () => ({
+    ...realFs,
     default: {
+        ...realFs,
         existsSync: mockExistsSync,
         readFileSync: mockReadFileSync,
         writeFileSync: mockWriteFileSync,
@@ -81,6 +87,7 @@ const mockCreateSystemTestAnalysisJob = jest.fn().mockImplementation((args) =>
 );
 
 jest.unstable_mockModule('../services/job.service.js', () => ({
+    createSnapshotJob: jest.fn(),
     createInstallDepsJob: jest.fn(),
     createRunTestsJob: jest.fn(),
     createSupertestCoverageJob: jest.fn(),

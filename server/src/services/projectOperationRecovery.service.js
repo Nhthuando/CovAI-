@@ -16,7 +16,7 @@ export const failInterruptedProjectOperation = async ({jobId,db = prisma}) => {
         const status = terminal ? job.status : 'FAILED';
         await tx.projectOperation.update({where:{id:current.id},data:{status}});
         if (!terminal) await tx.job.update({where:{id:jobId},data:{status:'FAILED',finishedAt:new Date(),
-            errorMessage:'WORKER_INTERRUPTED: queue ownership was lost. Retained evidence requires a fresh run.'}});
+            errorMessage:'The run was interrupted because the CovAI server restarted. Start it again. (WORKER_INTERRUPTED)'}});
         const event = await publishProjectEvent({tx,projectId:current.projectId,type:'operation.finished',actorId:null,
             resourceId:jobId,revision:current.capturedWorkspaceRevision,payload:{operationId:current.id,status,reason:'WORKER_INTERRUPTED'}});
         return {interrupted:!terminal,reconciled:terminal,event};

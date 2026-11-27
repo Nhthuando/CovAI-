@@ -489,32 +489,32 @@ export const streamPlaywrightEvents = async (managed, onEvent, run) => {
   let offset = 0,
     pending = "",
     reading = false;
-  let lastFrameMtime = 0,
-    lastFrameData = "";
+  let lastFrameStat, lastMetaStat, url;
   const frameFile = path.join(managed.directory, "live-frame.b64");
+  const metaFile = path.join(managed.directory, "live-meta.json");
   const sourceMap = JSON.parse(
     fs.readFileSync(path.join(managed.directory, "source-map.json"), "utf8"),
   );
 
   const checkLiveFrame = () => {
-    if (!fs.existsSync(frameFile)) return;
     try {
-      const stat = fs.statSync(frameFile);
-      if (stat.mtimeMs >= lastFrameMtime) {
-        lastFrameMtime = stat.mtimeMs;
-        const b64 = fs.readFileSync(frameFile, "utf8");
-        if (
-          b64 &&
-          b64 !== lastFrameData &&
-          b64.length > 50 &&
-          b64.length < 1500000
-        ) {
-          lastFrameData = b64;
-          Promise.resolve(onEvent({ type: "LIVE_FRAME", frame: b64 })).catch(
-            () => {},
-          );
+      const stat = fs.statSync(frameFile, { throwIfNoEntry: false });
+      if (!stat || (stat.mtimeMs === lastFrameStat?.mtimeMs && stat.size === lastFrameStat.size)) return;
+      if (stat.size <= 50 || stat.size >= 1500000) return;
+      const b64 = fs.readFileSync(frameFile, "utf8");
+      if (b64.length !== stat.size) return;
+      lastFrameStat = stat;
+
+      try {
+        const metaStat = fs.statSync(metaFile, { throwIfNoEntry: false });
+        if (metaStat && (metaStat.mtimeMs !== lastMetaStat?.mtimeMs || metaStat.size !== lastMetaStat.size)) {
+          ({ url } = JSON.parse(fs.readFileSync(metaFile, "utf8")));
+          lastMetaStat = metaStat;
         }
-      }
+      } catch {}
+      Promise.resolve(onEvent({ type: "LIVE_FRAME", frame: b64, url })).catch(
+        () => {},
+      );
     } catch {}
   };
 
@@ -584,20 +584,24 @@ export const streamPlaywrightEvents = async (managed, onEvent, run) => {
       reading = false;
     }
   };
-  const timer = setInterval(() => {
-    checkLiveFrame();
+  const drainTimer = setInterval(() => {
     drain().catch(() => {});
   }, 100);
+  const frameTimer = setInterval(checkLiveFrame, 40);
   try {
     return await run();
   } finally {
-    clearInterval(timer);
-    while (reading) await new Promise((resolve) => setTimeout(resolve, 20));
-    await drain();
-    checkLiveFrame();
+    clearInterval(drainTimer);
+    clearInterval(frameTimer);
     try {
-      if (fs.existsSync(frameFile)) fs.unlinkSync(frameFile);
-    } catch {}
+      while (reading) await new Promise((resolve) => setTimeout(resolve, 20));
+      await drain();
+      checkLiveFrame();
+    } finally {
+      for (const file of [frameFile, frameFile + ".tmp", metaFile, metaFile + ".tmp"]) {
+        try { fs.unlinkSync(file); } catch {}
+      }
+    }
   }
 };
 
@@ -613,7 +617,7 @@ export const runSystemTests = async ({ jobId, rootDir, execution, onReady, onPre
         ensurePlaywrightPrerequisites(runnerRoot,activeStack.frontendPort,{dependencyRoot:config ? path.dirname(config) : runnerRoot});
         await onPreparing?.(30, "Preparing Playwright browsers...");
         const browserEnv = await preparePlaywrightBrowsers(runnerRoot, jobId, {signal});
-        const managed=prepareSystemPlaywright({rootDir:runnerRoot,execution,executionMode,backendUrl:activeStack.backendUrl,frontendPort:activeStack.frontendPort,runKey:crypto.randomUUID(),testFile:execution.testFile,configPath:config,managedServer:true,measurementPreparation,assertionBindings,headed:Boolean(execution.headed)});
+        const managed=prepareSystemPlaywright({rootDir:runnerRoot,execution,executionMode,backendUrl:activeStack.backendUrl,frontendRoot:activeStack.frontendRoot || rootDir,frontendPort:activeStack.frontendPort,runKey:crypto.randomUUID(),testFile:execution.testFile,configPath:config,managedServer:true,measurementPreparation,assertionBindings,headed:Boolean(execution.headed)});
         const serverNodeModules = fileURLToPath(new URL("../../node_modules/", import.meta.url));
         const nodePath = [
           serverNodeModules,

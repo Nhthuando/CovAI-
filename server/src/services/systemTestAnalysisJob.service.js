@@ -16,7 +16,7 @@ import { storeCoverageOutputs } from "./coverageStorage.service.js";
 import { resolveSystemTestExecution } from "./systemTestDetection.service.js";
 import { runSystemTests } from "./systemTestRunner.service.js";
 import { parseSystemTestResult } from "./systemTestResultParser.service.js";
-import { storeScenarioScreenshot } from "./systemTestEvidence.service.js";
+import { mapSystemExecutionCopyPath, storeScenarioScreenshot } from "./systemTestEvidence.service.js";
 import { remapExecutionLocations } from "./systemTestExecutionDetails.service.js";
 import { calculateSystemCoverage } from "./systemCoverageEngine.service.js";
 import { collectSystemGenerationContext } from "./systemGenerationContext.service.js";
@@ -222,6 +222,9 @@ export const processSystemTestAnalysisJob = async (jobId) => {
     if (payload.headed) {
       execution.headed = true;
     }
+    if (payload.watch === true) {
+      execution.watch = true;
+    }
 
     await broadcastJobProgress(jobId, {
       progress: 15,
@@ -232,6 +235,7 @@ export const processSystemTestAnalysisJob = async (jobId) => {
       runner: execution.runner,
     });
     const onPreparing = (progress,message) => broadcastJobProgress(jobId,{progress,stage:'Preparing Full Stack',message,userId:job.userId,snapshotId:jobSnapshotId,runner:execution.runner});
+    let skippedFiles = [];
     if(executionMode === 'full' && execution.runner === 'playwright') {
       const { scanSystemTestFiles } = await import('../utils/testFileParser.js');
       const scanResult = scanSystemTestFiles(job.snapshot.rootDir);
@@ -241,6 +245,7 @@ export const processSystemTestAnalysisJob = async (jobId) => {
       }
       const prepared=await prepareFullSystemExecution({rootDir:job.snapshot.rootDir,execution,jobId,onProgress:onPreparing});
       execution=prepared.execution;
+      skippedFiles = prepared.skippedFiles || [];
       if(prepared.generated) await stagePreparedPublication(tx=>tx.aiTest.create({data:{projectId:job.projectId,snapshotId:job.snapshotId,filePath:prepared.generated.filePath,content:prepared.generated.code,mode:'PLAYWRIGHT_E2E',status:'VERIFIED',metaJson:JSON.stringify({executionMode:'full',verificationRuns:prepared.generated.verificationRuns,attempts:prepared.generated.attempts,contextHash:prepared.generated.contextHash,quality:prepared.generated.quality})}}));
     }
 
@@ -302,13 +307,25 @@ export const processSystemTestAnalysisJob = async (jobId) => {
       runner: execution.runner,
     });
 
+    const reportPath = executionResult.reportPath || execution.reportPath;
+    const mappingFile = reportPath && path.join(path.dirname(reportPath), 'source-map.json');
+    const runnerPrefix = path.relative(job.snapshot.rootDir, execution.rootDir || job.snapshot.rootDir).replaceAll('\\', '/');
+    const sourceMap = mappingFile && fs.existsSync(mappingFile)
+      ? Object.fromEntries(Object.entries(JSON.parse(fs.readFileSync(mappingFile, 'utf8')))
+        .map(([copy, original]) => [copy, path.posix.join(runnerPrefix, original)]))
+      : null;
     const testRun = parseSystemTestResult({
       runner: execution.runner,
-      resultPath: executionResult.reportPath || execution.reportPath,
+      resultPath: reportPath,
       startedAt,
       finishedAt,
       rootDir: job.snapshot.rootDir,
     });
+    if (sourceMap) {
+      for (const scenario of testRun.scenarios || []) {
+        scenario.testFile = mapSystemExecutionCopyPath(scenario.testFile, sourceMap);
+      }
+    }
     if (executionResult.exitCode !== 0 && testRun.status === "PASSED") {
       throw new ServiceError(
         `System test runner exited with code ${executionResult.exitCode} despite a passing report`,
@@ -330,8 +347,6 @@ export const processSystemTestAnalysisJob = async (jobId) => {
     });
 
     const { scenarios = [] } = testRun;
-    const mappingFile = executionResult.reportPath && path.join(path.dirname(executionResult.reportPath), 'source-map.json');
-    const sourceMap = mappingFile && fs.existsSync(mappingFile) ? JSON.parse(fs.readFileSync(mappingFile, 'utf8')) : {};
     const plannedTestRunId = currentProjectOperation()?.preparedPublications ? crypto.randomUUID() : undefined;
     const createdTestRun = await stagePreparedValue(tx=>tx.testRun.create({
       data: {
@@ -361,9 +376,9 @@ export const processSystemTestAnalysisJob = async (jobId) => {
                 suiteName: s.suiteName || null,
                 status: s.status,
                 durationMs: s.durationMs ?? null,
-                ...(s.executionDetails ? { executionDetails: remapExecutionLocations(s.executionDetails, job.snapshot.rootDir, sourceMap) } : {}),
+                ...(s.executionDetails ? { executionDetails: remapExecutionLocations(s.executionDetails, job.snapshot.rootDir, sourceMap || {}) } : {}),
                 failureMessages: s.failureMessages || [],
-                testFile: sourceMap[path.basename(s.testFile || '')] || s.testFile || null,
+                testFile: s.testFile || null,
                 screenshotPath: storeScenarioScreenshot({
                   rootDir: job.snapshot.rootDir,
                   source: s.screenshotSource,
@@ -427,6 +442,7 @@ export const processSystemTestAnalysisJob = async (jobId) => {
     const result = {
       runner: execution.runner,
       exitCode: executionResult.exitCode,
+      skippedFiles,
       testRun: {
         ...testRun,
         coverage: systemCoverage.summary,
@@ -445,7 +461,7 @@ export const processSystemTestAnalysisJob = async (jobId) => {
       await addJobLog(
         jobId,
         "INFO",
-        `System tests finished successfully: ${testRun.passedTests} passed, ${testRun.flakyTests || 0} flaky test(s).`,
+        `System tests finished successfully: ${testRun.passedTests} passed, ${testRun.flakyTests || 0} flaky test(s)${skippedFiles.length ? `; skipped ${skippedFiles.length} frontend-only spec${skippedFiles.length === 1 ? '' : 's'}` : ''}.`,
       );
     }
 

@@ -72,6 +72,10 @@ const isCypressPath = (fileName, relPath) =>
 export function classifySystemTestFile(rootDir, relPath) {
   const normalizedPath = relPath.replace(/\\/g, "/");
   const content = readTestFileContent(path.resolve(rootDir, normalizedPath));
+  return classifySystemTestPath(normalizedPath, content);
+}
+
+function classifySystemTestPath(normalizedPath, content) {
   const framework = classifySystemTestContent(content);
   if (framework) return framework;
   if (isCypressPath(path.basename(normalizedPath), normalizedPath)) return "CYPRESS";
@@ -136,6 +140,7 @@ function buildTestFileDetails(fileName, relPath, framework, content) {
  * @returns {{ playwrightFiles: Object[], cypressFiles: Object[], allFiles: Object[] }}
  */
 export function scanSystemTestFiles(rootDir, options = {}) {
+  const { readContent = readTestFileContent, includeDetails = true } = options;
   const IGNORED = new Set(
     options.ignoreDirs || [
       "node_modules",
@@ -186,11 +191,13 @@ export function scanSystemTestFiles(rootDir, options = {}) {
       const isSpec = /(?:^|\.)(?:spec|test)\.[cm]?[jt]sx?$/i.test(entry.name);
       if (!cypressPath && !isSpec) continue;
 
-      const framework = classifySystemTestFile(rootDir, relPath);
+      const content = readContent(fullPath);
+      const framework = classifySystemTestPath(relPath, content);
       if (!framework) continue;
 
-      const content = readTestFileContent(fullPath);
-      const details = buildTestFileDetails(entry.name, relPath, framework, content);
+      const details = includeDetails
+        ? buildTestFileDetails(entry.name, relPath, framework, content)
+        : { filePath: relPath };
       (framework === "CYPRESS" ? cypressFiles : playwrightFiles).push(details);
       allFiles.push(details);
     }

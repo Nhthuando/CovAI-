@@ -12,6 +12,8 @@ import {
   measureTestDesignCoverage,
   generateFallbackColdStartTest,
   generateColdStartSystemTests,
+  waitForSystemGenerationQuota,
+  removePlaywrightTests,
 } from '../services/verifiedSystemGeneration.service.js';
 import { validateGeneratedTestCode } from '../validators/aiTestCode.validator.js';
 import { systemDraftModuleExtension } from '../services/systemGenerationProposal.service.js';
@@ -28,6 +30,62 @@ afterEach(() => {
     try {
       fs.rmSync(dir, { recursive: true, force: true });
     } catch (_) {}
+  }
+});
+
+test.each([
+  ['playwright', { routes: ['/account'] }, 'request fixture'],
+  ['playwright', { interactiveComponents: [{ name: 'AdminPanel', filePath: 'AdminPanel.jsx' }] }, 'request fixture'],
+  ['cypress', { backendEndpoints: [{ method: 'POST', path: '/api/register' }] }, 'cy.request'],
+])('adds signed-in setup guidance for %s when auth is detected', (framework, context, request) => {
+  const prompt = buildColdStartSystemPrompt({ context: { sourceCode: [], ...context }, framework, executionMode: 'full' });
+  expect(prompt).toContain('Authentication: pages behind a login guard must be tested while signed in.');
+  expect(prompt).toContain('create a fresh unique user');
+  expect(prompt).toContain(request);
+  expect(prompt).toContain('then sign in through the UI');
+  expect(prompt).toContain('Never invent credentials');
+  expect(prompt).toContain('test the guard behaviour instead');
+});
+
+test('omits signed-in setup guidance for an app without auth signals', () => {
+  const prompt = buildColdStartSystemPrompt({ context: { routes: ['/products'], sourceCode: [] } });
+  expect(prompt).not.toContain('Authentication:');
+});
+
+test('waits for the structured quota retry time only within the deadline and wait budget', async () => {
+  jest.useFakeTimers();
+  try {
+    const now = Date.now();
+    const error = { code: 'AI_QUOTA_EXCEEDED', retryAt: new Date(now + 60_000).toISOString() };
+    const onWait = jest.fn();
+    await expect(waitForSystemGenerationQuota(error, { deadlineAt: now + 180_000, onWait })).resolves.toBeNull();
+    await expect(waitForSystemGenerationQuota(error, { deadlineAt: now + 240_000, remainingWaitMs: 59_999, onWait })).resolves.toBeNull();
+    expect(onWait).not.toHaveBeenCalled();
+
+    const waiting = waitForSystemGenerationQuota(error, { deadlineAt: now + 240_000, onWait });
+    expect(onWait).toHaveBeenCalledWith(60);
+    await jest.advanceTimersByTimeAsync(60_000);
+    await expect(waiting).resolves.toBe(60_000);
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test('cancels a quota wait via the generation signal', async () => {
+  jest.useFakeTimers();
+  try {
+    const controller = new AbortController();
+    const waiting = waitForSystemGenerationQuota({
+      status: 429,
+      errorDetails: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '30s' }],
+    }, { signal: controller.signal, deadlineAt: Date.now() + 240_000 });
+    const canceled = expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+    await jest.advanceTimersByTimeAsync(1);
+    controller.abort();
+    await canceled;
+    expect(jest.getTimerCount()).toBe(0);
+  } finally {
+    jest.useRealTimers();
   }
 });
 
@@ -85,7 +143,17 @@ describe('Phase 2: Cold-Start AI System Test Generator', () => {
       const prompt = buildColdStartSystemPrompt({ context, framework });
       expect(prompt).toContain(SYSTEM_TEST_DESIGN_RULES);
       expect(prompt).toContain(formatTestDesignForPrompt({ facts: context.validationFacts, checklist: context.testDesign }));
-      expect(prompt).toContain('// covers: <checklist id>');
+      expect(prompt).toContain(`id: check:${context.testDesign[0].id}`);
+      expect(prompt).not.toContain('// covers: <checklist id>');
+    });
+
+    it.each(['playwright', 'cypress'])('lists route-specific plan items in the %s prompt', (framework) => {
+      const context = { sourceCode: [], routes: ['/', '/login'] };
+      const prompt = buildColdStartSystemPrompt({ context, framework });
+      expect(prompt).toContain('id: /login#EDGE');
+      expect(prompt).toContain('// covers:');
+      expect(prompt).not.toContain('strictly 1 per required case');
+      expect(prompt).not.toContain('3–4 focused');
     });
 
     it('includes live snapshots only in a Playwright prompt with captured pages', () => {
@@ -119,7 +187,12 @@ describe('Phase 2: Cold-Start AI System Test Generator', () => {
       const context = makeContext();
       expect(buildVerifiedSystemPrompt(context, {})).toContain(testDesignPromptSection(context));
       expect(systemTestPromptRules({ repair: true })).not.toContain(SYSTEM_TEST_DESIGN_RULES);
-      expect(SYSTEM_PROMPT_VERSION).toBe('system-test-v4');
+      expect(SYSTEM_PROMPT_VERSION).toBe('system-test-v5');
+    });
+
+    it('asks for exactly one Action step per test', () => {
+      expect(SYSTEM_TEST_DESIGN_RULES).not.toContain('Group several invalid inputs');
+      expect(SYSTEM_TEST_DESIGN_RULES).toContain("exactly one 'Action:' step");
     });
 
     it.each(['playwright', 'cypress'])('omits checklist instructions without facts in the %s prompt', (framework) => {
@@ -129,7 +202,7 @@ describe('Phase 2: Cold-Start AI System Test Generator', () => {
       const prompt = buildColdStartSystemPrompt({ context, framework });
       expect(prompt).toContain('Test design (plan before writing code):');
       expect(prompt).not.toContain('Implement one test per checklist item');
-      expect(prompt).not.toContain('// covers:');
+      expect(prompt).toContain('id: /#HAPPY');
     });
   });
 
@@ -146,7 +219,7 @@ describe('Phase 2: Cold-Start AI System Test Generator', () => {
     });
   });
 
-  describe('Optional test-design coverage follow-up', () => {
+  describe('System test plan coverage', () => {
     const checklist = [
       { id: 'password-empty', field: 'password', technique: 'equivalence', input: '', expect: 'reject', message: 'Password is required', source: 'src/App.jsx' },
       { id: 'password-below-min', field: 'password', technique: 'boundary', input: '1234567', expect: 'reject', message: 'Password is too short', source: 'src/App.jsx' },
@@ -154,11 +227,177 @@ describe('Phase 2: Cold-Start AI System Test Generator', () => {
       { id: 'password-above-min', field: 'password', technique: 'boundary', input: '123456789', expect: 'accept', message: '', source: 'src/App.jsx' },
     ];
     const validCode = `import {test,expect} from '@playwright/test';
+// covers: /#HAPPY
 test('READ home heading',async({page})=>{
   await test.step('Action: READ - open home',async()=>{await page.goto('/');});
   await test.step('Assert: heading',async()=>{await expect(page.getByRole('heading',{name:'Welcome'})).toBeVisible();});
   await test.step('Evidence: verified outcome',async()=>{await test.info().attach('evidence',{body:await page.screenshot(),contentType:'image/png'});});
 });`;
+    const playwrightSuite = (tests) => {
+      const [playwrightImport] = validCode.split('\n');
+      return `${playwrightImport}\ntest.describe('Page headings', () => {\n${tests}\n});`;
+    };
+
+    describe('Chunked system test plans', () => {
+      const collectRoutes = () => ({
+        routes: ['/', ...Array.from({ length: 29 }, (_, index) => `/a${index + 1}`)],
+        sourceCode: [{ path: 'src/App.jsx', content: 'export default () => <h1>Welcome</h1>;' }],
+      });
+      const promptIds = (prompt) => [...prompt.matchAll(/^- id: (\S+)/gm)].map(([, id]) => id);
+      const respondToChunk = (prompt) => {
+        const [, homeTest] = validCode.split('\n// covers: /#HAPPY');
+        const scenarios = promptIds(prompt).map((planItemId) => {
+          const route = planItemId.split('#')[0];
+          return {
+            id: `read-heading-${route.slice(1) || 'home'}`,
+            title: `READ heading on ${route}`,
+            planItemId,
+            criterionIds: [],
+            preconditions: [],
+            inputs: [],
+            actions: [`Open ${route}`],
+            expected: ['The Welcome heading is visible'],
+            sourceReferences: ['src/App.jsx'],
+          };
+        });
+        const tests = scenarios.map(({ planItemId, title }) => {
+          const route = planItemId.split('#')[0];
+          return `// covers: ${planItemId}${homeTest
+            .replace('READ home heading', title)
+            .replace("page.goto('/')", `page.goto(${JSON.stringify(route)})`)}`;
+        });
+        return JSON.stringify({ content: playwrightSuite(tests.join('\n')), scenarios });
+      };
+
+      it('generates and merges 30 plan items in consecutive chunks', async () => {
+        const generate = jest.fn(respondToChunk);
+        const onProgress = jest.fn();
+        const result = await generateColdStartSystemTests({
+          rootDir: createTempDir(),
+          onProgress,
+          dependencies: { collect: collectRoutes, generate },
+        });
+
+        const chunks = generate.mock.calls.map(([prompt]) => promptIds(prompt));
+        const ids = result.testPlan.items.map(({ id }) => id);
+        expect(chunks.map((chunk) => chunk.length)).toEqual([12, 12, 6]);
+        expect(chunks.flat()).toEqual(ids);
+        expect(result.generationAttempts).toBe(3);
+        expect(result.testPlan.covered).toBe(30);
+        expect(result.suiteCount).toBe(1);
+        expect(result.scenarioCount).toBe(30);
+        expect(result.code.match(/test\.describe\(/g)).toHaveLength(1);
+        expect(result.generationMetadata.scenarios.map(({ planItemId }) => planItemId)).toEqual(ids);
+        expect(onProgress.mock.calls.map(([, message]) => message).filter((message) => message.startsWith('Writing tests ')))
+          .toEqual(['Writing tests 1/3', 'Writing tests 2/3', 'Writing tests 3/3']);
+      });
+
+      it('keeps successful chunks when another chunk fails validation twice', async () => {
+        const invalid = JSON.stringify({ content: 'const broken = ;' });
+        const generate = jest.fn()
+          .mockImplementationOnce(respondToChunk)
+          .mockResolvedValueOnce(invalid)
+          .mockResolvedValueOnce(invalid)
+          .mockImplementationOnce(respondToChunk)
+          .mockRejectedValueOnce(new Error('Follow-up unavailable'));
+        const result = await generateColdStartSystemTests({
+          rootDir: createTempDir(),
+          dependencies: { collect: collectRoutes, generate },
+        });
+
+        const failedIds = promptIds(generate.mock.calls[1][0]);
+        const missing = result.testPlan.items.filter(({ status }) => status === 'MISSING');
+        expect(generate).toHaveBeenCalledTimes(5);
+        expect(generate.mock.calls[2][0]).toContain('The previous candidate failed validation:');
+        expect(promptIds(generate.mock.calls[4][0])).toEqual(failedIds);
+        expect(missing.map(({ id }) => id)).toEqual(failedIds);
+        expect(missing).toHaveLength(12);
+        expect(missing.every(({ reason }) => reason.startsWith('Chunk generation failed:'))).toBe(true);
+        expect(result.testPlan.covered).toBe(18);
+      });
+    });
+
+    describe('Cold-start scenario quality pruning', () => {
+      const badTitle = 'READ about heading';
+      const badTest = [
+        '// covers: /about#HAPPY',
+        "test('READ about heading',async({page})=>{",
+        "  await test.step('Action: READ - open about',async()=>{await page.goto('/about');});",
+        "  await test.step('Action: READ - reload about',async()=>{await page.reload();});",
+        "  await test.step('Assert: heading',async()=>{await expect(page.getByRole('heading',{name:'About'})).toBeVisible();});",
+        "  await test.step('Evidence: verified outcome',async()=>{await test.info().attach('evidence',{body:await page.screenshot(),contentType:'image/png'});});",
+        '});',
+      ].join('\n');
+      const generateWithContent = (content, routes = ['/', '/about']) => generateColdStartSystemTests({
+        rootDir: createTempDir(),
+        dependencies: {
+          collect: () => ({
+            routes,
+            sourceCode: [{ path: 'src/App.jsx', content: 'export default () => <h1>Welcome</h1>;' }],
+          }),
+          generate: jest.fn().mockResolvedValue(JSON.stringify({ content })),
+        },
+      });
+
+      it('saves the valid test and explains why the rejected plan item is missing', async () => {
+        const result = await generateWithContent(validCode + '\n' + badTest);
+
+        const writtenCode = fs.readFileSync(result.fullPath, 'utf8');
+        expect(writtenCode).toContain('READ home heading');
+        expect(writtenCode).not.toContain(badTitle);
+        expect(result.testPlan.items).toContainEqual(expect.objectContaining({
+          id: '/about#HAPPY',
+          status: 'MISSING',
+          reason: expect.stringContaining('exactly one Action step'),
+        }));
+        expect(result.qualityRejected[0].title).toBe(badTitle);
+        expect(result.testPlan.items).toContainEqual(expect.objectContaining({
+          id: '/#HAPPY',
+          status: 'COVERED',
+        }));
+      });
+
+      it('rejects generation when all tests fail quality validation', async () => {
+        const [playwrightImport] = validCode.split('\n');
+
+        await expect(generateWithContent(playwrightImport + '\n' + badTest))
+          .rejects.toThrow(/fails quality validation/);
+      });
+
+      it('keeps the valid tests inside their describe when a marked test has invalid syntax', async () => {
+        const [playwrightImport, ...homeLines] = validCode.split('\n');
+        const homeTest = homeLines.join('\n');
+        const contactTest = homeTest
+          .replace('/#HAPPY', '/contact#HAPPY')
+          .replace('READ home heading', 'READ contact heading')
+          .replace("page.goto('/')", "page.goto('/contact')")
+          .replace('Welcome', 'Contact');
+        const brokenAbout = badTest.replace('About', 'bad \\uZZ escape');
+        const describeStart = "test.describe('Page headings', () => {";
+        const result = await generateWithContent(
+          [playwrightImport, describeStart, homeTest, brokenAbout, contactTest, '});'].join('\n'),
+          ['/', '/about', '/contact'],
+        );
+
+        expect(fs.readFileSync(result.fullPath, 'utf8')).toBe(
+          [playwrightImport, describeStart, homeTest, contactTest, '});'].join('\n'),
+        );
+        expect(result.testPlan.items).toContainEqual(expect.objectContaining({
+          id: '/about#HAPPY',
+          status: 'MISSING',
+          reason: expect.stringMatching(/^Invalid syntax: /),
+        }));
+      });
+
+      it('throws the original syntax error when every marked test is unparsable', async () => {
+        const brokenHome = validCode.replace('Welcome', 'bad \\uZZ escape');
+        const brokenAbout = badTest.replace('About', 'bad \\uZZ escape');
+
+        await expect(generateWithContent([brokenHome, brokenAbout].join('\n')))
+          .rejects.toThrow(/^Generated test code has invalid JS\/TS syntax: /);
+      });
+    });
+
     describe('Cold-start scenario metadata', () => {
       const scenario = {
         id: 'read-home-heading',
@@ -227,8 +466,8 @@ test('READ home heading',async({page})=>{
       });
     });
 
-    const additionalTests = checklist.map((item) => `
-// covers: ${item.id}
+    const checklistTests = checklist.map((item, index) => `
+// covers: ${index === 0 ? item.id : `check:${item.id}`}
 test('Register ${item.expect === 'reject' ? 'rejects' : 'accepts'} a ${item.input.length}-character password',async({page})=>{
   await test.step('Action: VALIDATION - submit password',async()=>{
     await page.goto('/');
@@ -239,26 +478,154 @@ test('Register ${item.expect === 'reject' ? 'rejects' : 'accepts'} a ${item.inpu
     ${item.expect === 'reject' ? "await expect(page.getByLabel('Password')).toBeFocused();" : "await expect(page.getByRole('heading',{name:'Account created'})).toBeVisible();"}
   });
   await test.step('Evidence: verified outcome',async()=>{await test.info().attach('evidence',{body:await page.screenshot(),contentType:'image/png'});});
-});`).join('\n');
+});`);
+    const additionalTests = checklistTests.join('');
     const collect = () => {
       const sourceCode = [{ path: 'src/App.jsx', content: 'export default function App() { return <main><h1>Welcome</h1><form><label>Password<input name="password" required minLength={8}/></label><button>Register</button></form></main>; }' }];
       return { routes: ['/'], sourceCode, validationFacts: extractValidationFacts({ files: sourceCode }), testDesign: checklist };
     };
 
+    it.each([
+      { clicks: true, onlyAction: false },
+      { clicks: false, onlyAction: false },
+      { clicks: false, onlyAction: true },
+    ])('requires a real checkout interaction (follow-up clicks: $clicks, only action test: $onlyAction)', async ({ clicks, onlyAction }) => {
+      const id = 'ui:PaymentPanel.createCheckout#HAPPY';
+      const presenceTitle = 'Checkout button is present';
+      const actionTitle = 'Checkout opens the payment form';
+      const [playwrightImport, homeTest] = validCode.split('\n// covers: /#HAPPY');
+      const presence = `\n// covers: ${id}${homeTest
+        .replace('READ home heading', presenceTitle)
+        .replace("getByRole('heading',{name:'Welcome'})", "getByRole('button',{name:'Create checkout'})")}`;
+      const action = `\n// covers: ${id}${homeTest
+        .replace('READ home heading', actionTitle)
+        .replace("await test.step('Action: READ - open home',async()=>{await page.goto('/');});",
+          "await test.step('Setup: open checkout',async()=>{await page.goto('/');});\n  await test.step('Action: OTHER - open payment form',async()=>{await page.getByRole('button',{name:'Create checkout'}).click();});")
+        .replace("getByRole('heading',{name:'Welcome'})", "getByRole('heading',{name:'Payment details'})")}`;
+      const initial = (onlyAction ? playwrightImport : validCode) + presence;
+      const generate = jest.fn()
+        .mockResolvedValueOnce(JSON.stringify({ content: initial }))
+        .mockResolvedValue(JSON.stringify({ content: playwrightSuite(clicks ? action : presence) }));
+      const result = await generateColdStartSystemTests({
+        rootDir: createTempDir(),
+        dependencies: {
+          generate,
+          collect: () => ({
+            routes: [],
+            sourceCode: [],
+            interactiveComponents: [{
+              name: 'PaymentPanel',
+              filePath: 'src/PaymentPanel.jsx',
+              actions: [{ handler: 'createCheckout', event: 'onClick', label: 'Create checkout' }],
+            }],
+          }),
+        },
+      });
+
+      expect(generate).toHaveBeenCalledTimes(2);
+      expect(generate.mock.calls[1][0]).toContain('Action items must actually trigger the control (click/press/submit) and assert the result; a visibility-only check does not count.');
+      const actionItems = result.testPlan.items.filter((item) => item.action);
+      expect(actionItems).toHaveLength(1);
+      const saved = fs.readFileSync(result.fullPath, 'utf8');
+      if (clicks) {
+        expect(actionItems[0]).toMatchObject({ id, status: 'COVERED', testTitle: actionTitle });
+        expect(saved).toContain(actionTitle);
+        expect(saved).toContain('.click()');
+        expect(saved).not.toContain(presenceTitle);
+      } else {
+        expect(actionItems[0]).toMatchObject({ id, status: 'MISSING', reason: 'Test did not trigger the action' });
+        if (onlyAction) {
+          expect(saved).toContain(presenceTitle);
+          expect(saved).toContain(`// covers: ${id}`);
+        } else {
+          expect(saved).toContain('READ home heading');
+          expect(saved).not.toContain(presenceTitle);
+          expect(saved).not.toContain(`// covers: ${id}`);
+        }
+      }
+    });
+
+    it('removes duplicate plan tests without requesting a follow-up', async () => {
+      const [, homeTest] = validCode.split('\n// covers: /#HAPPY');
+      const duplicate = `\n// covers: /#HAPPY${homeTest.replace('READ home heading', 'READ duplicate heading')}`;
+      const generate = jest.fn().mockResolvedValueOnce(JSON.stringify({ content: validCode + duplicate }));
+      const result = await generateColdStartSystemTests({
+        rootDir: createTempDir(), dependencies: { collect: () => ({ routes: ['/'], sourceCode: [] }), generate },
+      });
+      const saved = fs.readFileSync(result.fullPath, 'utf8');
+      expect(saved.match(/\btest\(/g)).toHaveLength(1);
+      expect(saved.match(/\/\/ covers:/g)).toHaveLength(1);
+      expect(result.testPlan.total).toBe(1);
+      expect(result.testPlan.covered).toBe(1);
+      expect(result.testPlan.items[0]).toMatchObject({ status: 'COVERED', testTitle: 'READ home heading' });
+      expect(generate).toHaveBeenCalledTimes(1);
+    });
+
+    it('removes only the marker run attached to a pruned Playwright test', () => {
+      const prefix = "import { test } from '@playwright/test';\r\n// covers: /orphan#HAPPY\r\n\r\n";
+      const removed = [
+        '// covers: /removed#HAPPY',
+        '// The same test also covers the error case.',
+        '// covers: /removed#ERROR',
+        "test('removed', () => {});",
+        '',
+      ].join('\r\n');
+      const kept = "// covers: /#HAPPY\r\ntest('kept', () => {});";
+
+      expect(removePlaywrightTests(prefix + removed + kept, ['removed'])).toBe(prefix + kept);
+    });
+
+    it('marks the home plan item covered when the generated marker is bracketed', async () => {
+      const content = validCode.replace('// covers: /#HAPPY', '// covers: [/#HAPPY]');
+      const generate = jest.fn().mockResolvedValueOnce(JSON.stringify({ content }));
+      const result = await generateColdStartSystemTests({
+        rootDir: createTempDir(), dependencies: { collect: () => ({ routes: ['/'], sourceCode: [] }), generate },
+      });
+
+      expect(result.testPlan.items).toContainEqual(expect.objectContaining({
+        id: '/#HAPPY', status: 'COVERED', testTitle: 'READ home heading',
+      }));
+      expect(generate).toHaveBeenCalledTimes(1);
+    });
+
+    it('fills missing route items in a follow-up', async () => {
+      const [, homeTest] = validCode.split('\n// covers: /#HAPPY');
+      const loginTests = ['HAPPY', 'AUTH', 'ERROR', 'EDGE'].map((caseKey) => {
+        const loginTest = homeTest.replace('READ home heading', `Login ${caseKey} outcome`)
+          .replace("page.goto('/')", "page.goto('/login')");
+        return `\n// covers: /login#${caseKey}${loginTest}`;
+      }).join('\n');
+      const generate = jest.fn()
+        .mockResolvedValueOnce(JSON.stringify({ content: validCode }))
+        .mockResolvedValueOnce(JSON.stringify({ content: playwrightSuite(loginTests) }));
+      const result = await generateColdStartSystemTests({
+        rootDir: createTempDir(), dependencies: { collect: () => ({ routes: ['/', '/login'], sourceCode: [] }), generate },
+      });
+      expect(generate).toHaveBeenCalledTimes(2);
+      expect(result.testPlan.covered).toBe(result.testPlan.total);
+    });
+
     it('requests missing items once and returns the validated expanded suite and coverage', async () => {
       const expanded = validCode + additionalTests;
-      const generate = jest.fn().mockResolvedValueOnce(JSON.stringify({ content: validCode })).mockResolvedValueOnce(JSON.stringify({ content: expanded }));
+      const generate = jest.fn()
+        .mockResolvedValueOnce(JSON.stringify({ content: validCode }))
+        .mockResolvedValueOnce(JSON.stringify({ content: playwrightSuite(additionalTests) }));
       const result = await generateColdStartSystemTests({ rootDir: createTempDir(), dependencies: { collect, generate } });
       expect(generate).toHaveBeenCalledTimes(2);
-      expect(generate.mock.calls[1][0]).toContain('The suite passed validation but does not cover these test design checklist items:');
-      expect(generate.mock.calls[1][0]).toContain('keep every existing test unchanged');
+      expect(generate.mock.calls[1][0]).toContain('Write ONLY new tests for these missing required test plan items');
+      expect([...generate.mock.calls[1][0].matchAll(/^- id: (\S+)/gm)].map(([, id]) => id))
+        .toEqual(checklist.map(({ id }) => `check:${id}`));
       for (const item of checklist) {
-        expect(generate.mock.calls[1][0]).toContain(item.id);
+        expect(generate.mock.calls[1][0]).toContain(`id: check:${item.id}`);
         expect(generate.mock.calls[1][0]).toContain(item.technique);
       }
       expect(result.code).toBe(expanded);
       expect(result.generationAttempts).toBe(2);
       expect(result.testDesign).toEqual({ facts: collect().validationFacts.length, checklist: 4, covered: checklist.map((item) => item.id), missing: [] });
+      expect(result.testPlan.covered).toBe(5);
+      expect(result.testPlan.items).toContainEqual(expect.objectContaining({
+        id: 'check:password-empty', status: 'COVERED', testTitle: 'Register rejects a 0-character password',
+      }));
       expect(fs.readFileSync(result.fullPath, 'utf8')).toBe(expanded);
     });
 
@@ -268,7 +635,7 @@ test('Register ${item.expect === 'reject' ? 'rejects' : 'accepts'} a ${item.inpu
         const expanded = validCode + additionalTests;
         const generate = jest.fn()
           .mockResolvedValueOnce(JSON.stringify({ content: validCode }))
-          .mockResolvedValueOnce(JSON.stringify({ content: expanded, scenarios: [{ id: 'wrong', title: 'Not a test title' }] }));
+          .mockResolvedValueOnce(JSON.stringify({ content: playwrightSuite(additionalTests), scenarios: [{ id: 'wrong', title: 'Not a test title' }] }));
         const result = await generateColdStartSystemTests({ rootDir: createTempDir(), dependencies: { collect, generate } });
         expect(generate).toHaveBeenCalledTimes(2);
         expect(result.code).toBe(expanded);
@@ -285,7 +652,7 @@ test('Register ${item.expect === 'reject' ? 'rejects' : 'accepts'} a ${item.inpu
       }
     });
 
-    it('keeps the original candidate when valid follow-up code covers no more checklist ids', async () => {
+    it('keeps the original candidate when valid follow-up code covers no more plan ids', async () => {
       const warning = jest.spyOn(console, 'warn').mockImplementation(() => {});
       try {
         const followUpCode = validCode.replace('READ home heading', 'READ welcome heading');
@@ -299,7 +666,7 @@ test('Register ${item.expect === 'reject' ? 'rejects' : 'accepts'} a ${item.inpu
         expect(result.testDesign.missing).toEqual(checklist.map((item) => item.id));
         expect(fs.readFileSync(result.fullPath, 'utf8')).toBe(validCode);
         expect(warning).toHaveBeenCalledWith(
-          '[verifiedSystemGeneration] Coverage follow-up did not increase checklist coverage; keeping validated candidate',
+          '[verifiedSystemGeneration] Coverage follow-up did not increase plan coverage; keeping validated candidate',
         );
       } finally {
         warning.mockRestore();
@@ -324,26 +691,31 @@ test('Register ${item.expect === 'reject' ? 'rejects' : 'accepts'} a ${item.inpu
       }
     });
 
-    it('never requests a second coverage follow-up even if coverage remains low', async () => {
-      const generate = jest.fn().mockResolvedValue(JSON.stringify({ content: validCode }));
+    it('requests at most two plan follow-ups', async () => {
+      const generate = jest.fn()
+        .mockResolvedValueOnce(JSON.stringify({ content: validCode }))
+        .mockResolvedValueOnce(JSON.stringify({ content: playwrightSuite(checklistTests[0]) }))
+        .mockResolvedValueOnce(JSON.stringify({ content: playwrightSuite(checklistTests[1]) }));
       const result = await generateColdStartSystemTests({ rootDir: createTempDir(), dependencies: { collect, generate } });
-      expect(generate).toHaveBeenCalledTimes(2);
-      expect(result.testDesign.covered).toEqual([]);
+      expect(generate).toHaveBeenCalledTimes(3);
+      expect(result.testDesign.covered).toEqual(['password-empty', 'password-below-min']);
+      expect(result.testPlan.covered).toBe(3);
     });
 
-    it('does not request a follow-up when half the checklist is covered', async () => {
-      const code = validCode + additionalTests.split('// covers: password-at-min')[0];
+    it('does not request a follow-up when every plan item is covered', async () => {
+      const code = validCode + additionalTests;
       const generate = jest.fn().mockResolvedValue(JSON.stringify({ content: code }));
       const result = await generateColdStartSystemTests({ rootDir: createTempDir(), dependencies: { collect, generate } });
       expect(generate).toHaveBeenCalledTimes(1);
-      expect(result.testDesign.covered).toEqual(['password-empty', 'password-below-min']);
+      expect(result.testDesign.covered).toEqual(checklist.map((item) => item.id));
+      expect(result.testPlan.covered).toBe(5);
     });
 
     it('keeps the existing correction attempt before the optional coverage request', async () => {
       const generate = jest.fn()
         .mockResolvedValueOnce(JSON.stringify({ content: validCode.replace('Action: READ - open home', 'Open home') }))
         .mockResolvedValueOnce(JSON.stringify({ content: validCode }))
-        .mockResolvedValueOnce(JSON.stringify({ content: validCode + additionalTests }));
+        .mockResolvedValueOnce(JSON.stringify({ content: playwrightSuite(additionalTests) }));
       const result = await generateColdStartSystemTests({ rootDir: createTempDir(), dependencies: { collect, generate } });
       expect(generate).toHaveBeenCalledTimes(3);
       expect(generate.mock.calls[1][0]).toContain('The previous candidate failed validation:');
@@ -362,6 +734,10 @@ test('Register ${item.expect === 'reject' ? 'rejects' : 'accepts'} a ${item.inpu
     });
     it('detects React Router routes, Next.js page/app routes, and navigation links', () => {
       const mockFiles = [
+        {
+          path: 'package.json',
+          content: JSON.stringify({ dependencies: { next: '14.2.0', react: '18.3.1' } }),
+        },
         {
           path: 'src/App.jsx',
           content: `
@@ -551,12 +927,17 @@ test('Register ${item.expect === 'reject' ? 'rejects' : 'accepts'} a ${item.inpu
             import { test, expect } from '@playwright/test';
 
             test.describe('App E2E Verification', () => {
+              // covers: /#HAPPY
               test('Smoke Test: App loads', async ({ page }) => {
                 await test.step('Action: NAVIGATION - open home',async()=>{await page.goto('/');});
                 await test.step('Assert: page visible',async()=>{await expect(page.locator('body')).toBeVisible();});
                 await test.step('Evidence: verified outcome',async()=>{await test.info().attach('evidence',{body:await page.screenshot(),contentType:'image/png'});});
               });
 
+              // covers: /login#HAPPY
+              // covers: /login#AUTH
+              // covers: /login#ERROR
+              // covers: /login#EDGE
               test('Navigation Test: Login route opens', async ({ page }) => {
                 await test.step('Action: NAVIGATION - open login',async()=>{await page.goto('/login');});
                 await test.step('Assert: login URL',async()=>{await expect(page).toHaveURL(/\\/login/);});
@@ -647,6 +1028,7 @@ test('Register ${item.expect === 'reject' ? 'rejects' : 'accepts'} a ${item.inpu
     it('corrects unlabeled steps and saves only the validated replacement', async () => {
       const dir = createTempDir();
       const valid = `import {test,expect} from '@playwright/test';
+      // covers: /#HAPPY
       test('READ home heading',async({page})=>{
         await test.step('Action: READ - open home',async()=>{await page.goto('/');});
         await test.step('Assert: heading',async()=>{await expect(page.getByRole('heading',{name:'Welcome'})).toBeVisible();});

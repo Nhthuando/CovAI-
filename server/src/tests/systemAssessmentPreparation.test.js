@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {describe,it,expect,jest,afterEach} from '@jest/globals';
 import {prepareAutomaticAssessment} from '../services/systemAssessmentPreparation.service.js';
+import {assessmentRequest, automaticAssessmentRequest} from '../validators/systemAssessment.validator.js';
 const roots=[];
 const write=(root,file,text)=>{const target=path.join(root,file);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,text);};
 const fixture=()=>{
@@ -16,12 +17,22 @@ const fixture=()=>{
 const proposal={frontend:{directory:'client'},backend:{directory:'server',healthPath:'/api/todos'},database:{engine:'mysql',initSql:'.covai/generated-schema.sql'},schemaSql:'CREATE TABLE todos(id INT PRIMARY KEY,title VARCHAR(255));',missingInformation:[]};
 afterEach(()=>{for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true});});
 describe('automatic Run preparation',()=>{
+    it('accepts an optional boolean watch on both assessment requests',()=>{
+        const automatic = {autoDiscover:true,selectedFiles:['tests/home.spec.js'],selectedTitles:['home'],repeatRuns:1};
+        const direct = {testFiles:['tests/home.spec.js'],coverageScope:{}};
+        for (const [schema, request] of [[automaticAssessmentRequest, automatic], [assessmentRequest, direct]]) {
+            expect(schema.parse({...request,watch:true}).watch).toBe(true);
+            expect(schema.parse({...request,watch:false}).watch).toBe(false);
+            expect(schema.parse(request)).not.toHaveProperty('watch');
+            expect(schema.safeParse({...request,watch:'true'}).success).toBe(false);
+        }
+    });
     it('discovers imported scenarios for execution without changing their reviewed state',async()=>{
         const root=fixture();
         write(root,'server/package.json',JSON.stringify({scripts:{start:'node index.js'},dependencies:{express:'5'}}));
         write(root,'server/index.js',"import express from 'express';const app=express();app.get('/',(_req,res)=>res.send('ready'));");
-        const result=await prepareAutomaticAssessment({rootDir:root,input:{autoDiscover:true,runner:'playwright',executionMode:'full',headed:true}});
-        expect(result.input).toMatchObject({reviewMode:'execution',headed:true,scenarioIds:[result.catalog[0].id]});
+        const result=await prepareAutomaticAssessment({rootDir:root,input:{autoDiscover:true,runner:'playwright',executionMode:'full',headed:true,watch:true}});
+        expect(result.input).toMatchObject({reviewMode:'execution',headed:true,watch:true,scenarioIds:[result.catalog[0].id]});
         expect(result.catalog[0]).toMatchObject({title:'read todos',reviewState:'DRAFT'});
     });
     it('generates missing tests only when requested, then discovers the generated execution catalog',async()=>{

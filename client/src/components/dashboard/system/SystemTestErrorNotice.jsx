@@ -1,4 +1,5 @@
 import { AlertCircle, ListOrdered, Settings2, X } from "lucide-react";
+import { Button } from "../../ui/button.jsx";
 
 // Splits "System test job failed: Full system setup failed: <cause>" into a
 // short title and the actionable cause, so long runtime errors stay readable.
@@ -10,12 +11,9 @@ function splitMessage(message) {
   return { title: parts[0].length <= 60 ? parts[0] : "System Test could not continue", detail: parts[0].length <= 60 ? detail : text };
 }
 
-const actionClass =
-  "inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-xs font-medium text-[var(--color-text)] transition-colors duration-150 hover:border-[var(--color-text-muted)] active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-[var(--color-focus)]/40";
-
-export default function SystemTestErrorNotice({ message, onDismiss, onOpenLogs, onOpenSetup, className = "" }) {
+export default function SystemTestErrorNotice({ message, onDismiss, onOpenLogs, onOpenSetup, messageOnly, primaryAction, className = "" }) {
   if (!message) return null;
-  const { title, detail: fullDetail } = splitMessage(message);
+  const { title, detail: fullDetail } = messageOnly ? { title: message, detail: "" } : splitMessage(message);
   // Runtime failures append raw process output after "Details:"; keep the
   // readable cause visible and fold the stack trace away.
   const detailsAt = fullDetail.indexOf(" Details: ");
@@ -23,31 +21,28 @@ export default function SystemTestErrorNotice({ message, onDismiss, onOpenLogs, 
   const technical = detailsAt >= 0 ? fullDetail.slice(detailsAt + " Details: ".length) : "";
   const setupRelated = /setup|dependenc|install|environment|database|port|start|health/i.test(message);
   return (
-    <div role="alert" className={`w-full rounded-lg border border-[var(--color-border)] border-l-2 border-l-rose-400/75 bg-rose-500/[0.06] p-4 text-sm ${className}`}>
-      <div className="flex items-start gap-3">
-        <AlertCircle size={17} className="mt-0.5 shrink-0 text-rose-400/90" aria-hidden="true" />
-        <div className="min-w-0 flex-1 space-y-1">
-          <p className="font-semibold text-[var(--color-text)]">{title}</p>
-          {detail && <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--color-text-secondary)]">{detail}</p>}
-          {technical && (
-            <details className="text-xs text-[var(--color-text-muted)]">
-              <summary className="cursor-pointer select-none hover:text-[var(--color-text-secondary)]">Technical details</summary>
-              <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] p-2 font-mono text-[11px]">{technical}</pre>
-            </details>
-          )}
-          {(onOpenLogs || (onOpenSetup && setupRelated)) && (
-            <div className="flex flex-wrap gap-2 pt-2">
-              {onOpenLogs && <button type="button" className={actionClass} onClick={onOpenLogs}><ListOrdered size={13} aria-hidden="true" />View job logs</button>}
-              {onOpenSetup && setupRelated && <button type="button" className={actionClass} onClick={onOpenSetup}><Settings2 size={13} aria-hidden="true" />Review setup</button>}
-            </div>
-          )}
-        </div>
+    <div role="alert" className={`w-full rounded-lg border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-sm ${className}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <AlertCircle size={16} className="shrink-0 text-[var(--color-danger)]" aria-hidden="true" />
+        <p className={`min-w-0 flex-1 text-[var(--color-text-secondary)] ${messageOnly ? "" : "truncate"}`} title={detail || title}>
+          <strong className="text-[var(--color-text)]">{title}</strong>
+          {detail && ` · ${detail}`}
+        </p>
+        {primaryAction}
+        {onOpenLogs && <Button size="sm" variant="outline" onClick={onOpenLogs}><ListOrdered aria-hidden="true" />View job logs</Button>}
+        {onOpenSetup && setupRelated && <Button size="sm" variant="outline" onClick={onOpenSetup}><Settings2 aria-hidden="true" />Review setup</Button>}
         {onDismiss && (
-          <button type="button" aria-label="Dismiss error" onClick={onDismiss} className="rounded-md p-1 text-[var(--color-text-muted)] transition-colors duration-150 hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-text)]">
-            <X size={15} />
-          </button>
+          <Button size="icon-sm" variant="ghost" aria-label="Dismiss error" onClick={onDismiss}>
+            <X />
+          </Button>
         )}
       </div>
+      {technical && (
+        <details className="mt-1 text-xs text-[var(--color-text-muted)]">
+          <summary className="cursor-pointer select-none hover:text-[var(--color-text-secondary)]">Technical details</summary>
+          <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] p-2 font-mono text-[11px]">{technical}</pre>
+        </details>
+      )}
     </div>
   );
 }

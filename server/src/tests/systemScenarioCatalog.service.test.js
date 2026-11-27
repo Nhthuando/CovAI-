@@ -2,7 +2,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it, test, expect, jest } from '@jest/globals';
-import { discoverExecutionScenarios, syncSystemScenarioCatalog, evaluateRunReadiness, reviewScenario, updateScenarioDraft, confirmScenarioExpected } from '../services/systemScenarioCatalog.service.js';
+import * as staticAnalysis from '../services/systemTestStaticAnalysis.service.js';
+
+const analyzeSystemTestFile = jest.fn(staticAnalysis.analyzeSystemTestFile);
+await jest.unstable_mockModule('../services/systemTestStaticAnalysis.service.js', () => ({
+    ...staticAnalysis,
+    analyzeSystemTestFile,
+}));
+const { discoverExecutionScenarios, syncSystemScenarioCatalog, evaluateRunReadiness, reviewScenario, updateScenarioDraft, confirmScenarioExpected } = await import('../services/systemScenarioCatalog.service.js');
 
 const createFixture = () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'covai-catalog-'));
@@ -25,6 +32,30 @@ const createFixture = () => {
 };
 
 describe('system scenario catalog', () => {
+    test('catalog GET reuses unchanged analysis and syncs a changed file', async () => {
+        const { client, rootDir, filePath } = createFixture();
+        const options = { client, rootDir, snapshotId: 'snapshot', syncChangedFilesOnly: true };
+        analyzeSystemTestFile.mockClear();
+        try {
+            const first = await syncSystemScenarioCatalog(options);
+            expect(first.scenarios[0].fullStackCompatible).toBe(true);
+            client.systemScenario.findMany.mockClear();
+
+            const second = await syncSystemScenarioCatalog(options);
+            expect(second).toEqual(first);
+            expect(analyzeSystemTestFile).toHaveBeenCalledTimes(1);
+            expect(client.systemScenario.findMany).toHaveBeenCalledTimes(1);
+            expect(client.systemScenario.create).toHaveBeenCalledTimes(1);
+            expect(client.systemScenario.update).not.toHaveBeenCalled();
+
+            fs.appendFileSync(path.join(rootDir, filePath), "\nawait page.route('**/api/**', () => {});");
+            const changed = await syncSystemScenarioCatalog(options);
+            expect(changed.scenarios[0].fullStackCompatible).toBe(false);
+            expect(analyzeSystemTestFile).toHaveBeenCalledTimes(2);
+            expect(client.systemScenario.update).toHaveBeenCalledTimes(1);
+        } finally { fs.rmSync(rootDir, { recursive: true, force: true }); }
+    });
+
     test('discovers Playwright scenarios in mixed CommonJS and ESM specs', () => {
         const { rootDir, filePath } = createFixture();
         try {

@@ -282,7 +282,7 @@ export default function SystemTestEditorModal({
         {/* AI & Quick Action Toolbar */}
         <div className="px-5 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">
+            <span className="text-[11px] font-semibold text-[var(--color-text-muted)]">
               AI Tools:
             </span>
 

@@ -103,8 +103,8 @@ export default function SystemTestBreakpointModal({
             </div>
             <div className="overflow-hidden">
               <div className="flex items-center gap-2">
-                <span className={`text-xs px-2 py-0.5 rounded-[var(--radius-sm)] border font-semibold uppercase tracking-wider ${isFailure ? "bg-[var(--color-danger)]/10 text-[var(--color-danger)] border-[var(--color-danger)]/30" : "bg-[var(--color-success)]/10 text-[var(--color-success)] border-[var(--color-success)]/30"}`}>
-                  {isFailure ? failureCategory : scenario.status || "Evidence"}
+                <span className={`text-xs px-2 py-0.5 rounded-[var(--radius-sm)] border font-medium ${isFailure ? "bg-[var(--color-danger)]/10 text-[var(--color-danger)] border-[var(--color-danger)]/30" : "bg-[var(--color-success)]/10 text-[var(--color-success)] border-[var(--color-success)]/30"}`}>
+                  {isFailure ? String(failureCategory).replaceAll("_", " ").toLowerCase().replace(/^./, c => c.toUpperCase()) : scenario.status || "Evidence"}
                 </span>
                 <span className="text-xs text-[var(--color-text-muted)] font-mono truncate">
                   {scenario.testFile}
@@ -129,7 +129,7 @@ export default function SystemTestBreakpointModal({
           {/* Failure Step box */}
           {failureStep && (
             <div>
-              <label className="block text-[11px] font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-1">
+              <label className="block text-[11px] font-semibold text-[var(--color-text-secondary)] mb-1">
                 Failing Test Step
               </label>
               <div className="p-2.5 rounded-[var(--radius-md)] bg-[var(--color-surface-secondary)] border border-[var(--color-border)] font-mono text-[12px] text-[var(--color-danger)] flex items-center gap-2 overflow-x-auto">
@@ -141,7 +141,7 @@ export default function SystemTestBreakpointModal({
 
           {/* Error Message */}
           {isFailure && <div>
-            <label className="block text-[11px] font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-1">
+            <label className="block text-[11px] font-semibold text-[var(--color-text-secondary)] mb-1">
               Failure Reason & Stack
             </label>
             <div className="p-3 rounded-[var(--radius-md)] bg-[var(--color-danger)]/5 border border-[var(--color-danger)]/20 text-[var(--color-danger)] font-mono text-[11px] leading-relaxed whitespace-pre-wrap overflow-x-auto max-h-36">
@@ -152,7 +152,7 @@ export default function SystemTestBreakpointModal({
           {/* Code Snippet Highlight */}
           {failureSnippet && (
             <div>
-              <label className="block text-[11px] font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-1">
+              <label className="block text-[11px] font-semibold text-[var(--color-text-secondary)] mb-1">
                 Code Context
               </label>
               <div className="p-3 rounded-[var(--radius-md)] bg-[var(--color-bg)] border border-[var(--color-border)] font-mono text-[11px] leading-relaxed text-[var(--color-text-secondary)] overflow-x-auto max-h-48 border-l-4 border-l-[var(--color-danger)]">
@@ -218,7 +218,7 @@ export default function SystemTestBreakpointModal({
                   />
                 </div>
               ) : (
-                <div className="p-6 text-center text-[var(--color-text-muted)] italic border border-dashed border-[var(--color-border)] rounded-[var(--radius-md)]">
+                <div className="p-6 text-center text-[var(--color-text-muted)] border border-dashed border-[var(--color-border)] rounded-[var(--radius-md)]">
                   {evidenceError || "No screenshot available for this scenario."}
                 </div>
               )
@@ -229,7 +229,7 @@ export default function SystemTestBreakpointModal({
                     {typeof domData === "string" ? domData : JSON.stringify(domData, null, 2)}
                   </pre>
                 ) : (
-                  <div className="text-[var(--color-text-muted)] italic text-center py-4">
+                  <div className="text-[var(--color-text-muted)] text-center py-4">
                     No DOM snapshot captured at this breakpoint.
                   </div>
                 )}

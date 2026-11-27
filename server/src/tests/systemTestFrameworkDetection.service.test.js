@@ -76,6 +76,29 @@ describe("extractSuitesAndScenarios & parseTestFileDetails", () => {
 });
 
 describe("detectSystemTestFrameworks", () => {
+  it("exposes Full Stack compatibility on each discovered spec", async () => {
+    const rootDir = fixture({
+      "tests/e2e/clean.spec.ts": "import { test } from '@playwright/test'; test('clean', async ({ page }) => { await page.goto('/'); });",
+      "tests/e2e/mocked.spec.ts": "import { test } from '@playwright/test'; test('mocked', async ({ page }) => { await page.route('**/api/**', route => route.fulfill({ body: '{}' })); });",
+      "tests/e2e/helper-mocked.spec.ts": "import { test } from '@playwright/test'; import { mockApi } from './helpers'; test('helper mocked', async ({ page }) => { await mockApi(page); });",
+      "tests/e2e/helpers/index.ts": "export { mockApi } from '../mockApi';",
+      "tests/e2e/mockApi.ts": "export const mockApi = page => page.route('**/api/**', route => route.fulfill({ body: '{}' }));",
+    });
+    const result = await detectSystemTestFrameworks(rootDir);
+    const { testFiles } = result.frameworks.find(({ name }) => name === "PLAYWRIGHT");
+    expect(testFiles.find(({ fileName }) => fileName === "clean.spec.ts")).toMatchObject({
+      fullStackCompatible: true,
+    });
+    expect(testFiles.find(({ fileName }) => fileName === "mocked.spec.ts")).toMatchObject({
+      fullStackCompatible: false,
+      incompatibleReason: "Uses API mocks (frontend-only test)",
+    });
+    expect(testFiles.find(({ fileName }) => fileName === "helper-mocked.spec.ts")).toMatchObject({
+      fullStackCompatible: false,
+      incompatibleReason: "Uses API mocks via tests/e2e/mockApi.ts (frontend-only test)",
+    });
+  });
+
   it("detects Playwright project and extracts test file details, suites, and scenarios", async () => {
     const rootDir = fixture({
       "package.json": JSON.stringify({

@@ -86,7 +86,7 @@ export const createAssessmentControllers = ({ client = prisma, queue = async () 
             const snapshot = await owned(req);
             if (snapshot.rootDir && fs.existsSync(snapshot.rootDir)) {
                 try {
-                    const synced = await syncSystemScenarioCatalog({ client, snapshotId: snapshot.id, rootDir: snapshot.rootDir });
+                    const synced = await syncSystemScenarioCatalog({ client, snapshotId: snapshot.id, rootDir: snapshot.rootDir, syncChangedFilesOnly: true });
                     if (synced?.scenarios) {
                         return res.json({ success: true, data: { scenarios: synced.scenarios, discoveryStatus: synced.scenarios.length ? 'DISCOVERED' : 'NOT_SCANNED' } });
                     }
@@ -125,7 +125,10 @@ export const createAssessmentControllers = ({ client = prisma, queue = async () 
             const record = await client.systemTestAssessment.findFirst({ where: { snapshotId: req.params.snapshotId, ...filters }, orderBy: { createdAt: 'desc' } });
             const projected = projectSystemAssessment(record);
             const liveFrame = record?.id ? getLatestSystemLiveFrame(record.id) : null;
-            if (projected && liveFrame) projected.liveFrame = liveFrame;
+            if (projected && liveFrame) {
+                projected.liveFrame = liveFrame.frame;
+                projected.liveFrameUrl = liveFrame.url;
+            }
             res.json({ success: true, data: projected });
         }),
         history: handler(async (req, res) => {
@@ -182,7 +185,10 @@ export const createAssessmentControllers = ({ client = prisma, queue = async () 
             const latestRevision = await client.systemRequirementRevision.findFirst({where:{snapshotId:snapshot.id,status:'CONFIRMED'},orderBy:{revisionNumber:'desc'}});
             const projected = projectSystemAssessment(record,{artifacts:client.systemRunArtifact?await client.systemRunArtifact.findMany({where:{assessmentId:record.id},take:500}):[]});
             const liveFrame = getLatestSystemLiveFrame(record.id);
-            if (projected && liveFrame) projected.liveFrame = liveFrame;
+            if (projected && liveFrame) {
+                projected.liveFrame = liveFrame.frame;
+                projected.liveFrameUrl = liveFrame.url;
+            }
             const expected=record.reportJson?.workspaceIdentity || record;
             res.json({ success: true, data: { ...projected, stale: identity.sourceHash !== expected.sourceHash || identity.testHash !== expected.testHash || (!record.reportJson?.executionOnly && (latestRevision?.id || null) !== record.requirementRevisionId) } });
         }),

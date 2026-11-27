@@ -149,6 +149,15 @@ export const resolveSnapshotRootDir = (snapshotRoot) => {
     if (process.platform !== 'win32') {
         return path.resolve(strippedDrive);
     }
+    // An existing absolute host directory (temp workspace, config-only package folder) is already a
+    // valid working directory; rebasing it under the server folder would point at a missing path.
+    if (!isWindowsContainerPath && path.isAbsolute(snapshotRoot)) {
+        try {
+            if (fs.statSync(snapshotRoot).isDirectory()) return path.resolve(snapshotRoot);
+        } catch (error) {
+            if (error?.code !== 'ENOENT') console.warn('[projectRootResolver] Cannot inspect snapshot root:', error.message);
+        }
+    }
     const clean = strippedDrive.replace(/^\/+/, '');
     return path.resolve(fileServerDir, clean);
 };

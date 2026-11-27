@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {containedPath} from './fullSystemConfig.service.js';
-import {validateFullSystemTest} from './systemTestEvidence.service.js';
+import {validateFullSystemTestFile} from './systemTestEvidence.service.js';
+import {extractSuitesAndScenarios} from '../utils/testFileParser.js';
 import {ServiceError} from '../utils/serviceError.js';
 
 const collectSpecs = directory => {
@@ -29,17 +30,44 @@ export const resolveSystemTestFile = (rootDir, runnerRoot, testFile) => {
 export const prepareFullSystemExecution = async ({rootDir,execution,jobId,onProgress=async()=>{},dependencies={}}) => {
     const runnerRoot=execution.rootDir || rootDir;
     if(Array.isArray(execution.selectedFiles) && execution.selectedFiles.length > 0) {
-        const validated = execution.selectedFiles.map(f => {
+        const compatible = [];
+        const skippedFiles = [];
+        const titlesByCompatibility = { compatible: new Set(), skipped: new Set() };
+        let firstError;
+        for (const f of execution.selectedFiles) {
             const abs = path.isAbsolute(f) ? f : resolveSystemTestFile(rootDir, runnerRoot, f);
-            try { validateFullSystemTest(fs.readFileSync(abs,'utf8')); }
-            catch(error) { throw new ServiceError(`${path.relative(rootDir,abs).replace(/\\/g,'/')}: ${error.message}`,422); }
-            return abs;
-        });
-        return {execution:{...execution,selectedFiles:validated}};
+            const file = path.relative(rootDir,abs).replace(/\\/g,'/');
+            let content;
+            let titles = titlesByCompatibility.compatible;
+            try {
+                if (execution.selectedTitles?.length) content = fs.readFileSync(abs,'utf8');
+                validateFullSystemTestFile({filePath:abs,rootDir});
+                compatible.push(abs);
+            } catch(error) {
+                const validationError = new ServiceError(`${file}: ${error.message}`,422);
+                if (!error.message.startsWith('Full-system tests must call the real backend.')) throw validationError;
+                firstError ??= validationError;
+                skippedFiles.push({file,reason:'Uses API mocks (frontend-only test); not run in Full Stack mode.'});
+                titles = titlesByCompatibility.skipped;
+            }
+            if (execution.selectedTitles?.length) {
+                for (const title of extractSuitesAndScenarios(content,'PLAYWRIGHT').scenarios) titles.add(title);
+            }
+        }
+        if (!compatible.length) throw firstError;
+        const prepared = {...execution,selectedFiles:compatible};
+        if (skippedFiles.length) {
+            if (execution.selectedTitles?.length) {
+                const {compatible: retained, skipped} = titlesByCompatibility;
+                prepared.selectedTitles = execution.selectedTitles.filter(title => !skipped.has(title) || retained.has(title));
+            }
+            await onProgress(18,`Skipped ${skippedFiles.length} frontend-only spec${skippedFiles.length === 1 ? ' that mocks' : 's that mock'} APIs: ${skippedFiles.map(({file}) => file).join(', ')}`);
+        }
+        return {execution:prepared,skippedFiles};
     }
     if(execution.testFile) {
         const file=resolveSystemTestFile(rootDir,runnerRoot,execution.testFile);
-        try { validateFullSystemTest(fs.readFileSync(file,'utf8')); }
+        try { validateFullSystemTestFile({filePath:file,rootDir}); }
         catch(error) { throw new ServiceError(`${path.relative(rootDir,file).replace(/\\/g,'/')}: ${error.message} Generate Full Stack tests that call the real backend instead of API mocks. No other suite was run.`,422); }
         return {execution:{...execution,testFile:file}};
     }
@@ -48,7 +76,7 @@ export const prepareFullSystemExecution = async ({rootDir,execution,jobId,onProg
         const files=collectSpecs(containedPath(rootDir,'tests/system'));
         if (files.length) {
             let compatible=true;
-            try {for(const file of files) validateFullSystemTest(fs.readFileSync(file,'utf8'));} catch {compatible=false;}
+            try {for(const file of files) validateFullSystemTestFile({filePath:file,rootDir});} catch {compatible=false;}
             if(compatible) {
                 await onProgress(18,`Full Stack selected tests/system (${files.length} spec file(s)). Frontend suites with mocked APIs are not executed in this mode.`);
                 return {execution:{...execution,rootDir,testDirectory:'tests/system',testFile:undefined}};
@@ -58,7 +86,7 @@ export const prepareFullSystemExecution = async ({rootDir,execution,jobId,onProg
     for(const directory of [...new Set(['tests/system',execution.testDirectory].filter(Boolean))]) {
         const files=collectSpecs(containedPath(runnerRoot,directory));
         if(!files.length) continue;
-        try { for(const file of files) validateFullSystemTest(fs.readFileSync(file,'utf8')); }
+        try { for(const file of files) validateFullSystemTestFile({filePath:file,rootDir}); }
         catch { continue; }
         return {execution:{...execution,testDirectory:directory}};
     }

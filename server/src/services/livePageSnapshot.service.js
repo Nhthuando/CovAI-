@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dockerRunner } from './dockerRunner.service.js';
 import { preparePlaywrightBrowsers } from './systemTestRunner.service.js';
 import { redactSystemTestSecrets } from './systemTestSecrets.service.js';
+import { buildHardcodedBackendForwardingSnippet, prepareHardcodedBackendForwarding } from './hardcodedBackendOrigins.service.js';
 
 export const selectSnapshotRoutes = (routes = [], targetRoutes = []) => {
     const candidates = Array.isArray(targetRoutes) && targetRoutes.length ? targetRoutes : routes;
@@ -12,13 +13,13 @@ export const selectSnapshotRoutes = (routes = [], targetRoutes = []) => {
             !route.startsWith('//') && !/[:*(\[?]/.test(route))
         .map(route => route.replace(/\/+$/, '') || '/'));
     const hasRoot = unique.delete('/');
-    return (hasRoot ? ['/', ...unique] : [...unique]).slice(0, 6);
+    return (hasRoot ? ['/', ...unique] : [...unique]).slice(0, 10);
 };
 
 const playwrightEsm = new URL('../../node_modules/playwright/index.mjs', import.meta.url);
 const playwrightCjs = new URL('../../node_modules/playwright/index.js', import.meta.url);
 
-const snapshotScript = () => `
+const snapshotScript = ({ origins, backendUrl }) => `
 import fs from 'node:fs';
 ${fs.existsSync(playwrightEsm)
     ? `import { chromium } from ${JSON.stringify(pathToFileURL(fileURLToPath(playwrightEsm)).href)};`
@@ -30,7 +31,9 @@ const { baseURL, routes } = JSON.parse(fs.readFileSync(inputPath, 'utf8'));
 const browser = await chromium.launch({ headless: true });
 const snapshots = [];
 try {
-    const page = await browser.newPage();
+    const context = await browser.newContext(${origins.length ? "{ serviceWorkers: 'block' }" : ''});
+    ${buildHardcodedBackendForwardingSnippet({ origins, backendUrl })}
+    const page = await context.newPage();
     for (const route of routes) {
         try {
             await page.goto(baseURL + route, { waitUntil: 'domcontentloaded', timeout: 20000 });
@@ -58,7 +61,9 @@ export const captureLivePageSnapshots = async ({ rootDir, stack, routes, signal,
             const inputPath = path.join(tempDir, 'input.json');
             const outputPath = path.join(tempDir, 'snapshots.json');
             const baseURL = `http://127.0.0.1:${stack.frontendPort}`;
-            fs.writeFileSync(script, snapshotScript());
+            const { backendUrl, frontendPort, frontendRoot = rootDir } = stack;
+            const origins = prepareHardcodedBackendForwarding({ rootDir: frontendRoot, backendUrl, frontendPort });
+            fs.writeFileSync(script, snapshotScript({ origins, backendUrl }));
             fs.writeFileSync(inputPath, JSON.stringify({ baseURL, routes }));
             const browserEnv = await (dependencies.prepareBrowsers || preparePlaywrightBrowsers)(rootDir, null, { signal });
             signal?.throwIfAborted();

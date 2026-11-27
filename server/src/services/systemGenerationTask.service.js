@@ -36,7 +36,7 @@ export function startSystemGenerationTask({ snapshotId, framework, run }) {
     }
 
     const cancellation = new AbortController();
-    const signal = AbortSignal.any([cancellation.signal, AbortSignal.timeout(10 * 60 * 1000)]);
+    const signal = AbortSignal.any([cancellation.signal, AbortSignal.timeout(20 * 60 * 1000)]);
     const view = {
         id: randomUUID(),
         state: 'RUNNING',
@@ -89,8 +89,10 @@ export function startSystemGenerationTask({ snapshotId, framework, run }) {
             if (!error?.statusCode || error.statusCode >= 500) {
                 console.error('[systemGenerationTask] Generation failed:', error);
             }
-            const message = showMessage ? error.message : 'Test generation failed. Try again.';
             const code = isAiProviderBusy(error) ? 'AI_PROVIDER_BUSY' : error?.code || null;
+            const message = code === 'AI_REQUEST_TIMEOUT'
+                ? 'The AI took too long to answer. Try again in a moment.'
+                : showMessage ? error.message : 'Test generation failed. Try again.';
             const scenarios = showMessage ? error.details?.droppedScenarios : undefined;
             finishTask(task, { state: 'FAILED', message, error: { message, code, ...(scenarios && { scenarios }) } });
         });

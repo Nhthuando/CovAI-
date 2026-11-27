@@ -5826,6 +5826,10 @@ export const runSystemTestCoverage = async (req, res) => {
       ? req.body.selectedTitles.filter((t) => typeof t === "string" && t.trim())
       : [];
     const headed = Boolean(req.body?.headed);
+    const watch = req.body?.watch;
+    if (watch !== undefined && typeof watch !== "boolean") {
+      throw new ServiceError("watch must be a boolean", 400);
+    }
 
     const job = await createSystemTestAnalysisJob({
       projectId: snapshot.projectId,
@@ -5837,6 +5841,7 @@ export const runSystemTestCoverage = async (req, res) => {
       selectedFiles,
       selectedTitles,
       headed,
+      ...(watch !== undefined ? { watch } : {}),
     });
 
     await addJobToQueue("SYSTEM_TEST_ANALYSIS", job.id, {
@@ -5849,6 +5854,7 @@ export const runSystemTestCoverage = async (req, res) => {
       selectedFiles,
       selectedTitles,
       headed,
+      ...(watch !== undefined ? { watch } : {}),
     });
 
     return res.status(202).json({
@@ -6029,7 +6035,12 @@ export const getSystemTestSummary = async (req, res) => {
       (tier) => tier.status === "MEASURED",
     );
 
-    const systemTestFiles = (latestRun.testFiles || []).map((file) => ({
+    const EXECUTION_COPY_PATH = /(^|[\\/])(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[^\\/]*|\.covai-system-test(?:[\\/]|$))/i;
+    const hasSourceSpec = ({ filePath }) =>
+      typeof filePath === "string" && filePath.length > 0 &&
+      !/^(?:[a-zA-Z]:[\\/]|[\\/])/.test(filePath) &&
+      !EXECUTION_COPY_PATH.test(filePath);
+    const systemTestFiles = (latestRun.testFiles || []).filter(hasSourceSpec).map((file) => ({
       ...file,
       coverageLinesPct: null,
     }));
@@ -6160,6 +6171,7 @@ export const getSystemTestSummary = async (req, res) => {
         testFiles: systemTestFiles,
         testRuns: testRuns.map((run) => ({
           ...run,
+          testFiles: (run.testFiles || []).filter(hasSourceSpec),
           coverageLinesPct: null,
           coverageBranchesPct: null,
           coverageStatementsPct: null,
@@ -6173,6 +6185,7 @@ export const getSystemTestSummary = async (req, res) => {
         scenarios,
         latestRun: {
           ...latestRun,
+          testFiles: systemTestFiles,
           coverageLinesPct: null,
           coverageBranchesPct: null,
           coverageStatementsPct: null,

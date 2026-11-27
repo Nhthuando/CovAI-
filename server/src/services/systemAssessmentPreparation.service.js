@@ -69,12 +69,17 @@ export const prepareAutomaticAssessment = async ({rootDir, input, onProgress = a
     if (Array.isArray(input.selectedFiles) && input.selectedFiles.length > 0) {
         const want = new Set(input.selectedFiles.map(f => String(f).replace(/\\/g, '/')));
         const filtered = resolved.testFiles.filter(f => want.has(String(f).replace(/\\/g, '/')));
+        const fullStackExcluded = resolved.excludedTests ?? [];
         if (!filtered.length && resolved.executionMode === 'full') {
             await checkpoint(32, 'Selected spec uses frontend mode; switching to Frontend mode');
             resolved = (dependencies.discover || discoverSystemAssessment)({rootDir, runner: input.runner, executionMode: 'frontend'});
         }
         const matched = resolved.testFiles.filter(f => want.has(String(f).replace(/\\/g, '/')));
-        if (!matched.length) throw new ServiceError('Selected test file was not found in system specs.', 422);
+        if (!matched.length) {
+            const excluded = [...fullStackExcluded, ...(resolved.excludedTests ?? [])].find(({ filePath }) => want.has(String(filePath).replace(/\\/g, '/')));
+            if (excluded) throw new ServiceError(`${excluded.filePath} can't run on the real stack: ${excluded.reason}. Generate Full Stack tests instead.`, 422);
+            throw new ServiceError('Selected test file was not found in system specs.', 422);
+        }
         resolved = { ...resolved, testFiles: matched };
     }
     const rawCatalog=executionOnly?discoverExecutionScenarios({rootDir,testFiles:resolved.testFiles}):undefined;
@@ -85,5 +90,5 @@ export const prepareAutomaticAssessment = async ({rootDir, input, onProgress = a
         ? rawCatalog.filter(row => selectedTitleSet.has(String(row.title || '').trim().toLowerCase()))
         : rawCatalog;
     const repeatRuns = input.repeatRuns || (selectedTitleSet ? 1 : resolved.repeatRuns || 2);
-    return {rootDir, input: parseRequest(assessmentRequest, {...resolved,repeatRuns,...(input.selectedTitles?.length?{selectedTitles:input.selectedTitles}:{}),...(input.headed!==undefined?{headed:input.headed}:{}),...(executionOnly?{reviewMode:'execution',scenarioIds:(catalog||[]).map(row=>row.id)}:{})}),catalog,generatedTests,aiUsage:currentAiJobBudget()?.snapshot()};
+    return {rootDir, input: parseRequest(assessmentRequest, {...resolved,repeatRuns,...(input.selectedTitles?.length?{selectedTitles:input.selectedTitles}:{}),...(input.headed!==undefined?{headed:input.headed}:{}),...(input.watch!==undefined?{watch:input.watch}:{}),...(executionOnly?{reviewMode:'execution',scenarioIds:(catalog||[]).map(row=>row.id)}:{})}),catalog,generatedTests,aiUsage:currentAiJobBudget()?.snapshot()};
 };

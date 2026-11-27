@@ -13,6 +13,9 @@ import { currentProjectOperation } from './projectOperationWorkspace.service.js'
 import { resolveSystemRepositoryRoot } from './fullSystemConfig.service.js';
 
 const traverse = traverseModule.default || traverseModule;
+const moduleExtensions = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'];
+const mockMethods = new Set(['fulfill', 'abort', 'routeFromHAR', 'route', 'addInitScript', 'intercept']);
+const fullSystemMockMessage = 'Full-system tests must call the real backend. API mocks, request routes, HAR replay and init-script replacements are not allowed; regenerate tests in full-system mode.';
 const playwrightTestMethods = new Set([
   'step', 'info', 'describe', 'beforeEach', 'afterEach', 'beforeAll', 'afterAll',
   'skip', 'fixme', 'fail', 'slow', 'setTimeout', 'use', 'extend', 'only', 'expect',
@@ -36,16 +39,16 @@ const isPlaywrightTestBinding = (scope, receiver) => {
     property.value.name === receiver.name);
 };
 
-export const validateFullSystemTest = (code) => {
-  const ast=parse(code,{sourceType:'module',plugins:['typescript','jsx']});
+const hasFullSystemMock = (ast, validateTest = false) => {
+  let mocked = false;
   traverse(ast, {
     'CallExpression|OptionalCallExpression'(call) {
       const { callee } = call.node;
       const method = memberName(callee);
-      if (method && !playwrightTestMethods.has(method) && isPlaywrightTestBinding(call.scope, callee.object)) {
+      if (validateTest && method && !playwrightTestMethods.has(method) && isPlaywrightTestBinding(call.scope, callee.object)) {
         throw new ServiceError(`Use page.${method}() instead of test.${method}() in Playwright tests`,422);
       }
-      if (call.isCallExpression() && callee.type === 'MemberExpression' && method === 'step' &&
+      if (validateTest && call.isCallExpression() && callee.type === 'MemberExpression' && method === 'step' &&
           callee.object.type === 'Identifier' && callee.object.name === 'test') {
         const callback = call.node.arguments.slice(1).find(argument =>
           argument.type === 'FunctionExpression' || argument.type === 'ArrowFunctionExpression');
@@ -55,11 +58,85 @@ export const validateFullSystemTest = (code) => {
       }
       if (['describe', 'step'].includes(memberName(callee?.object)) &&
           isPlaywrightTestBinding(call.scope, callee.object.object)) return;
-      if (call.isCallExpression() && ['fulfill','abort','routeFromHAR','route','addInitScript','intercept'].includes(callee?.property?.name || callee?.property?.value)) {
-        throw new ServiceError('Full-system tests must call the real backend. API mocks, request routes, HAR replay and init-script replacements are not allowed; regenerate tests in full-system mode.',422);
+      if (call.isCallExpression() && mockMethods.has(callee?.property?.name || callee?.property?.value)) {
+        mocked = true;
+        call.stop();
       }
     },
   });
+  return mocked;
+};
+
+const parseTestModule = (code, sourceType = 'module') => parse(code, { sourceType, plugins: ['typescript', 'jsx'] });
+
+export const validateFullSystemTest = (code) => {
+  if (hasFullSystemMock(parseTestModule(code), true)) throw new ServiceError(fullSystemMockMessage, 422);
+};
+
+const resolveRelativeModule = (file, specifier) => {
+  if (!/^\.{1,2}(?:[\\/]|$)/.test(specifier)) return;
+  const target = path.resolve(path.dirname(file), specifier);
+  const candidates = [target, ...moduleExtensions.map(ext => target + ext), ...moduleExtensions.map(ext => path.join(target, `index${ext}`))];
+  return candidates.find(candidate => {
+    try { return fs.statSync(candidate, { throwIfNoEntry: false })?.isFile(); }
+    catch (error) { if (error.code !== 'ENOTDIR') throw error; }
+  });
+};
+
+const moduleReferences = (ast, visit) => {
+  traverse(ast, {
+    enter({ node }) {
+      const isImport = node.type === 'ImportDeclaration';
+      const isExport = node.type === 'ExportNamedDeclaration' || node.type === 'ExportAllDeclaration';
+      const isCall = node.type === 'CallExpression';
+      const isRequire = isCall && node.callee.type === 'Identifier' && node.callee.name === 'require' && node.arguments.length === 1;
+      const isDynamic = node.type === 'ImportExpression' || (isCall && node.callee.type === 'Import');
+      if (!isImport && !isExport && !isRequire && !isDynamic) return;
+      const source = isCall ? node.arguments[0] : node.source;
+      if (source?.type === 'StringLiteral') visit(source, { isRequire, isDynamic, isImport });
+    },
+  });
+};
+
+const isLocalModule = (root, file) => {
+  const relative = path.relative(root, file);
+  return !path.isAbsolute(relative) && !relative.split(path.sep).some(part => part === '..' || part.toLowerCase() === 'node_modules');
+};
+
+export const analyzeFullStackCompatibility = ({ filePath, rootDir }) => {
+  const root = path.resolve(rootDir);
+  const realRoot = fs.realpathSync(root);
+  const spec = path.resolve(root, filePath);
+  const queue = [{ file: spec, depth: 0 }];
+  const visited = new Set([fs.realpathSync(spec)]);
+  for (const { file, depth } of queue) {
+    const isSpec = depth === 0;
+    const ast = parseTestModule(fs.readFileSync(file, 'utf8'), isSpec ? 'module' : 'unambiguous');
+    if (hasFullSystemMock(ast, isSpec)) {
+      const relative = path.relative(root, file).replaceAll('\\', '/');
+      return { compatible: false, offendingFile: file, reason: isSpec ? fullSystemMockMessage : `Uses API mocks via ${relative} (frontend-only test)` };
+    }
+    if (depth >= 3) continue;
+    moduleReferences(ast, source => {
+      const resolved = resolveRelativeModule(file, source.value);
+      if (!resolved || !isLocalModule(root, resolved)) return;
+      const extension = path.extname(resolved).toLowerCase();
+      if (extension && !moduleExtensions.includes(extension)) return;
+      const realFile = fs.realpathSync(resolved);
+      if (!isLocalModule(realRoot, realFile) || visited.has(realFile)) return;
+      visited.add(realFile);
+      queue.push({ file: resolved, depth: depth + 1 });
+    });
+  }
+  return { compatible: true };
+};
+
+export const validateFullSystemTestFile = ({ filePath, rootDir }) => {
+  const result = analyzeFullStackCompatibility({ filePath, rootDir });
+  if (!result.compatible) {
+    const message = result.reason === fullSystemMockMessage ? result.reason : `${fullSystemMockMessage} ${result.reason}.`;
+    throw new ServiceError(message, 422);
+  }
 };
 
 // Playwright transpiles import syntax to require() in CommonJS packages.
@@ -81,6 +158,7 @@ const isModuleFile = file => {
 };
 
 export const prepareSystemPlaywright = ({rootDir,execution,executionMode,backendUrl,frontendPort,runKey,testFile,configPath,managedServer=false,measurementPreparation,assertionBindings=[],headed=false}) => {
+  const watch = execution.watch === true;
   const directory=path.join(rootDir,'.covai-system-test','runs',runKey);
   const specs=path.join(directory,'specs');
   fs.mkdirSync(specs,{recursive:true});
@@ -91,7 +169,11 @@ const test=base.extend({
   _covaiLiveStream: [async ({page}, use) => {
     let cdp = null, frameTimer = null, capturing = false, closed = false;
     let screencasting = false, screencastTimer = null, latestFrame = null, lastFrameAt = 0;
+    let lastMeta, width = null, height = null;
     const frameFile = path.join(${JSON.stringify(directory)}, 'live-frame.b64');
+    const frameTmpFile = frameFile + '.tmp';
+    const metaFile = path.join(${JSON.stringify(directory)}, 'live-meta.json');
+    const metaTmpFile = metaFile + '.tmp';
     try {
       await page.addInitScript(() => {
         if (window.__covaiCursorInstalled) return;
@@ -105,7 +187,7 @@ const test=base.extend({
           if (document.getElementById('covai-live-cursor')) return;
           const c = document.createElement('div');
           c.id = 'covai-live-cursor';
-          c.style.cssText = 'position:fixed;top:0;left:0;width:22px;height:22px;border-radius:50%;background:#ef4444;border:2.5px solid #ffffff;box-shadow:0 0 12px rgba(239,68,68,0.8),0 0 4px rgba(0,0,0,0.5);pointer-events:none;z-index:2147483647;transition:transform 0.1s cubic-bezier(0.2,0.8,0.2,1),background 0.1s;transform:translate(-50px,-50px);';
+          c.style.cssText = 'position:fixed;top:0;left:0;width:22px;height:22px;border-radius:50%;background:#ef4444;border:2.5px solid #ffffff;box-shadow:0 0 12px rgba(239,68,68,0.8),0 0 4px rgba(0,0,0,0.5);pointer-events:none;z-index:2147483647;transition:transform ${watch ? '0.35s' : '0.1s'} cubic-bezier(0.2,0.8,0.2,1),background 0.1s;transform:translate(-50px,-50px);';
           root.appendChild(c);
           const ring = document.createElement('div');
           ring.style.cssText = 'position:fixed;top:0;left:0;width:40px;height:40px;margin-left:-9px;margin-top:-9px;border-radius:50%;border:2px solid #ef4444;opacity:0;pointer-events:none;z-index:2147483646;transition:transform 0.25s ease-out,opacity 0.25s ease-out;transform:translate(-50px,-50px) scale(0.5);';
@@ -133,6 +215,28 @@ const test=base.extend({
       }).catch(() => {});
     } catch {}
 
+    const writeLiveMeta = (force = false) => {
+      try {
+        if (closed || page.isClosed()) return;
+        const url = page.url();
+        if (!force && url === lastMeta?.url && width === lastMeta.width && height === lastMeta.height) return;
+        const meta = { url, width, height, at: Date.now() };
+        fs.writeFileSync(metaTmpFile, JSON.stringify(meta), 'utf8');
+        fs.renameSync(metaTmpFile, metaFile);
+        lastMeta = meta;
+      } catch {}
+    };
+
+    const writeLiveFrame = (data) => {
+      writeLiveMeta();
+      try {
+        fs.writeFileSync(frameTmpFile, data, 'utf8');
+        fs.renameSync(frameTmpFile, frameFile);
+      } catch {
+        fs.writeFileSync(frameFile, data, 'utf8');
+      }
+    };
+
     const captureFrame = async () => {
       if (closed || capturing || page.isClosed() || !/^https?:\\/\\//i.test(page.url() || '')) return;
       capturing = true;
@@ -142,7 +246,7 @@ const test=base.extend({
           cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 72 }),
           new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 1200))
         ]);
-        if (snap?.data) fs.writeFileSync(frameFile, snap.data, 'utf8');
+        if (!closed && !page.isClosed() && snap?.data) writeLiveFrame(snap.data);
       } catch {} finally {
         capturing = false;
       }
@@ -156,7 +260,7 @@ const test=base.extend({
           return;
         }
         if (latestFrame) {
-          fs.writeFileSync(frameFile, latestFrame, 'utf8');
+          writeLiveFrame(latestFrame);
           lastFrameAt = Date.now();
           latestFrame = null;
         }
@@ -164,12 +268,14 @@ const test=base.extend({
     };
     try {
       cdp = await page.context().newCDPSession(page);
-      cdp.on('Page.screencastFrame', ({ data, sessionId }) => {
+      cdp.on('Page.screencastFrame', ({ data, metadata, sessionId }) => {
         try {
           if (!closed && !page.isClosed() && /^https?:\\/\\//i.test(page.url() || '')) {
             latestFrame = data;
+            width = metadata?.deviceWidth ?? width;
+            height = metadata?.deviceHeight ?? height;
             if (!screencastTimer) {
-              const delay = Math.max(0, 120 - (Date.now() - lastFrameAt));
+              const delay = Math.max(0, 50 - (Date.now() - lastFrameAt));
               if (!delay) writeLatestFrame();
               else {
                 screencastTimer = setTimeout(writeLatestFrame, delay);
@@ -181,22 +287,30 @@ const test=base.extend({
           cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
         }
       });
-      await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 60, maxWidth: 1280, maxHeight: 800, everyNthFrame: 1 });
+      await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 55, maxWidth: 1280, maxHeight: 800, everyNthFrame: 1 });
       screencasting = true;
     } catch {
-      frameTimer = setInterval(() => { void captureFrame(); }, 240);
+      frameTimer = setInterval(() => { void captureFrame(); }, 150);
       if (frameTimer.unref) frameTimer.unref();
     }
 
     const onLoad = () => { if (!screencasting) void captureFrame(); };
+    const onNavigate = (frame) => { if (frame === page.mainFrame()) writeLiveMeta(); };
+    const metaTimer = setInterval(() => writeLiveMeta(true), 1000);
+    if (metaTimer.unref) metaTimer.unref();
+    writeLiveMeta();
     page.on('load', onLoad);
+    page.on('framenavigated', onNavigate);
 
     try {
       await use();
       await captureFrame();
+      ${watch ? 'if (!page.isClosed()) await page.waitForTimeout(1500).catch(() => {});' : ''}
     } finally {
       closed = true;
       page.off('load', onLoad);
+      page.off('framenavigated', onNavigate);
+      clearInterval(metaTimer);
       if (frameTimer) clearInterval(frameTimer);
       if (screencastTimer) clearTimeout(screencastTimer);
       if (cdp) {
@@ -204,7 +318,7 @@ const test=base.extend({
         try { await cdp.detach(); } catch {}
       }
     }
-  }, {auto:true}],
+  }, {auto:true${watch ? ',timeout:5000' : ''}}],
   _covaiInteractionEvidence: [async ({page}, use, testInfo) => {
     const requests=new Map(),apiCalls=[];
     const requestStarted=request=>{try{const url=new URL(request.url());if(requests.size<30)requests.set(request,{url:url.origin+url.pathname,type:request.resourceType(),startedAt:Date.now()});}catch{}};
@@ -295,44 +409,28 @@ module.exports={...playwright,test${measurementPreparation ? ',__covaiAssertion'
   if(!files.length) throw new ServiceError('No E2E test files were found for this run',422);
   for(const file of files) {
     const esm=isModuleFile(file);
+    if(executionMode === 'full') validateFullSystemTestFile({filePath:file,rootDir});
     let code=fs.readFileSync(file,'utf8');
-    if(executionMode === 'full') validateFullSystemTest(code);
     if(measurementPreparation && assertionBindings.length) code=instrumentReviewedAssertions({content:code,filePath:path.relative(rootDir,file).replaceAll('\\','/'),bindings:assertionBindings,helperImport:esm ? `import {__covaiAssertion} from ${JSON.stringify(pathToFileURL(fixture).href)};` : `const {__covaiAssertion}=require(${JSON.stringify(commonJsFixture)});`});
     if (!configPath || managedServer) code=relocateSystemTestNavigation(code,`http://127.0.0.1:${frontendPort}`);
     // Record steps in the execution copy; user source and assertions stay intact.
     // Unsupported custom fixtures/dynamic tests still run without a guessed percentage.
     try { code=ensurePlaywrightExecutionSteps(code); } catch { /* Retain original semantics when instrumentation is unsupported. */ }
-    const ast=parse(code,{sourceType:'module',plugins:['typescript','jsx']});
+    const ast=parseTestModule(code);
     const replacements=[];
     let hasPlaywright=false;
-    for(const node of ast.program.body) if(node.type === 'ImportDeclaration') {
-      const value=node.source.value;
-      if(value === '@playwright/test') {
+    moduleReferences(ast, (source, { isRequire, isDynamic, isImport }) => {
+      if(source.value === '@playwright/test' && (isImport || isRequire)) {
         hasPlaywright=true;
-        replacements.push([node.source.start,node.source.end,JSON.stringify(esm ? pathToFileURL(fixture).href : commonJsFixture)]);
+        replacements.push([source.start,source.end,JSON.stringify(esm && !isRequire ? pathToFileURL(fixture).href : commonJsFixture)]);
+        return;
       }
-      else if(value.startsWith('.')) {
-        const resolved=path.resolve(path.dirname(file),value);
-        replacements.push([node.source.start,node.source.end,JSON.stringify(esm ? pathToFileURL(resolved).href : resolved)]);
+      const resolved=resolveRelativeModule(file,source.value);
+      if(resolved) {
+        const specifier=isDynamic || (esm && !isRequire) ? pathToFileURL(resolved).href : resolved;
+        replacements.push([source.start,source.end,JSON.stringify(specifier)]);
       }
-    }
-    const visit=node => {
-      if(!node || typeof node !== 'object') return;
-      if(node.type === 'CallExpression' && node.callee?.type === 'Identifier' && node.callee.name === 'require' && node.arguments.length === 1 && node.arguments[0].type === 'StringLiteral') {
-        const source=node.arguments[0];
-        if(source.value === '@playwright/test') {
-          hasPlaywright=true;
-          replacements.push([source.start,source.end,JSON.stringify(commonJsFixture)]);
-        } else if(source.value.startsWith('.')) {
-          replacements.push([source.start,source.end,JSON.stringify(path.resolve(path.dirname(file),source.value))]);
-        }
-      }
-      for(const value of Object.values(node)) {
-        if(Array.isArray(value)) value.forEach(visit);
-        else if(value?.type) visit(value);
-      }
-    };
-    visit(ast);
+    });
     if(!hasPlaywright) throw new ServiceError(`Managed system test ${path.relative(rootDir,file)} must import or require @playwright/test`,422);
     for(const [start,end,value] of replacements.sort((a,b)=>b[0]-a[0])) code=code.slice(0,start)+value+code.slice(end);
     const extension=/\.[cm]?ts$/.test(file) ? (esm ? '.mts' : '.cts') : (esm ? '.mjs' : '.cjs');
@@ -351,11 +449,14 @@ const server=item=>({...item,cwd:path.resolve(originalRoot,item.cwd || '.')});
 const rebase=value=>Array.isArray(value)?value.map(rebase):typeof value==='string'&&!path.isAbsolute(value)&&(value.startsWith('.')||fs.existsSync(path.resolve(originalRoot,value)))?path.resolve(originalRoot,value):value;
 const base={...original,globalSetup:rebase(original.globalSetup),globalTeardown:rebase(original.globalTeardown),snapshotDir:rebase(original.snapshotDir),tsconfig:rebase(original.tsconfig)||(fs.existsSync(path.join(originalRoot,'tsconfig.json'))?path.join(originalRoot,'tsconfig.json'):undefined),webServer:${managedServer ? 'undefined' : 'Array.isArray(original.webServer) ? original.webServer.map(server) : original.webServer ? server(original.webServer) : undefined'}};` : 'const base={};';
   const isHeaded = Boolean(headed || execution?.headed);
+  // Watch mode paces each browser action like a person so viewers can follow it.
+  const slowMo = isHeaded ? 450 : watch ? 500 : 0;
+  const timeoutScale = slowMo ? 3 : 1;
   const fastFail = execution?.fastFail === true;
   fs.writeFileSync(config,`${inherited}
-const use={headless:${!isHeaded},launchOptions:{slowMo:${isHeaded ? 450 : 0}},...base.use,${fastFail ? 'actionTimeout:8000,navigationTimeout:15000,' : ''}${!configPath || managedServer ? `baseURL:'http://127.0.0.1:${frontendPort}',` : ''}screenshot:'on',trace:'retain-on-failure'};
-export default {...base,testDir:'./specs',testMatch:'**/*.spec.*',grep:${grepPattern ? `new RegExp(${JSON.stringify(grepPattern)})` : 'base.grep'},workers:1,retries:${measurementPreparation || testFile ? 0 : 'base.retries ?? 1'},timeout:${fastFail ? 'Math.min(base.timeout || 30000, 20000)' : 'base.timeout || 30000'},${fastFail ? 'expect:{...base.expect,timeout:Math.min(base.expect?.timeout || 5000, 5000)},' : ''}outputDir:'./artifacts',use,
-projects:base.projects?.map(project=>({...project,testDir:${JSON.stringify(specs)},testMatch:'**/*.spec.*',${grepPattern ? `grep:new RegExp(${JSON.stringify(grepPattern)}),` : ''}use:{...use,...project.use,${managedServer ? `baseURL:'http://127.0.0.1:${frontendPort}',` : ''}screenshot:'on',trace:'retain-on-failure'}}))};`,'utf8');
+const use={headless:${!isHeaded},...base.use,launchOptions:{...base.use?.launchOptions,slowMo:${slowMo}},${fastFail ? 'actionTimeout:8000,navigationTimeout:15000,' : ''}${!configPath || managedServer ? `baseURL:'http://127.0.0.1:${frontendPort}',` : ''}screenshot:'on',trace:'retain-on-failure'};
+export default {...base,testDir:'./specs',testMatch:'**/*.spec.*',grep:${grepPattern ? `new RegExp(${JSON.stringify(grepPattern)})` : 'base.grep'},workers:1,retries:${measurementPreparation || testFile ? 0 : 'base.retries ?? 1'},timeout:${timeoutScale > 1 ? '(' : ''}${fastFail ? 'Math.min(base.timeout || 30000, 20000)' : 'base.timeout || 30000'}${timeoutScale > 1 ? `)*${timeoutScale}` : ''},${fastFail ? 'expect:{...base.expect,timeout:Math.min(base.expect?.timeout || 5000, 5000)},' : ''}outputDir:'./artifacts',use,
+projects:base.projects?.map(project=>({...project,testDir:${JSON.stringify(specs)},testMatch:'**/*.spec.*',${grepPattern ? `grep:new RegExp(${JSON.stringify(grepPattern)}),` : ''}use:{...use,...project.use,launchOptions:{...use.launchOptions,...project.use?.launchOptions,slowMo:${slowMo}},${managedServer ? `baseURL:'http://127.0.0.1:${frontendPort}',` : ''}screenshot:'on',trace:'retain-on-failure'}}))};`,'utf8');
   const reportPath=path.join(directory,'results.json');
   const eventPath=path.join(directory,'events.jsonl');
   const reporterPath=path.join(directory,'live-reporter.cjs');
@@ -382,6 +483,12 @@ class CovaiReporter {
 module.exports=CovaiReporter;`, 'utf8');
   fs.writeFileSync(path.join(directory,'source-map.json'),JSON.stringify(fileMap),'utf8');
   return {directory,reportPath,eventPath,command:`npx playwright test --config "${path.relative(rootDir,config).replace(/\\/g,'/')}" --reporter=json,"${path.relative(rootDir,reporterPath).replace(/\\/g,'/')}" > "${path.relative(rootDir,reportPath).replace(/\\/g,'/')}"`};
+};
+
+export const mapSystemExecutionCopyPath = (copyPath, sourceMap) => {
+  if (!copyPath) return null;
+  const name = path.posix.basename(copyPath.replaceAll('\\','/'));
+  return Object.hasOwn(sourceMap, name) ? sourceMap[name] : null;
 };
 
 export const storeScenarioScreenshot = ({rootDir,source,runKey}) => {

@@ -6,6 +6,7 @@ import { detectCypress } from "../utils/cypressDetector.js";
 import { detectPlaywright } from "../utils/playwrightDetector.js";
 import { classifySystemTestFile, parseTestFileDetails, scanSystemTestFiles } from "../utils/testFileParser.js";
 import { resolveSnapshotRootDir } from "../utils/snapshotWorkspace.js";
+import { getSystemTestFileCompatibility } from "./systemScenarioCatalog.service.js";
 
 /**
  * Detects System Test frameworks (Playwright, Cypress) in a project
@@ -164,6 +165,7 @@ export async function detectSystemTestFrameworks(rawRootDir) {
   const allTestFilesMap = new Map();
   for (const fw of frameworks) {
     for (const tf of fw.testFiles || []) {
+      Object.assign(tf, getSystemTestFileCompatibility(rootDir, tf.filePath));
       allTestFilesMap.set(tf.filePath, tf);
     }
   }

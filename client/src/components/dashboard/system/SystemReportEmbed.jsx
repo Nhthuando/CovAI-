@@ -4,11 +4,11 @@ import {
   XCircle,
   Download,
   Printer,
-  Wand2,
   Play,
   Loader2,
   Camera,
   AlertTriangle,
+  Wrench,
 } from "lucide-react";
 import { downloadSystemAssessmentPdf } from "../../../services/systemTest.service.js";
 import SystemTestDimensionsTable from "./SystemTestDimensionsTable.jsx";
@@ -128,17 +128,17 @@ export default function SystemReportEmbed({
           <div
             className={`w-14 h-14 rounded-lg border flex flex-col items-center justify-center font-mono tabular-nums ${gradeMeta.color}`}
           >
-            <span className="text-xl font-bold leading-none">{gradeMeta.grade}</span>
-            <span className="text-[10px] opacity-80 mt-0.5">{qualityScore}%</span>
+            <span className="text-xl font-medium leading-none">{gradeMeta.grade}</span>
+            <span className="text-[11px] opacity-80 mt-1">{qualityScore}%</span>
           </div>
           <div>
             <h2 className="text-base font-semibold text-[var(--color-text)]">
-              System Test Executive Report
+              System test report
             </h2>
-            <p className="text-xs text-[var(--color-text-muted)] mt-0.5 font-mono tabular-nums">
+            <p className="text-xs text-[var(--color-text-muted)] mt-1 tabular-nums">
               {hasRun
                 ? `${stats.passed}/${stats.total} scenarios passed · ${stats.coveredCases}/${stats.totalRequiredCases} E2E cases verified`
-                : "Execute system specs to compile E2E verification, browser telemetry & trace evidence."}
+                : "Run the suite to see pass rate, flow coverage and evidence"}
             </p>
           </div>
         </div>
@@ -163,7 +163,7 @@ export default function SystemReportEmbed({
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-hover)] text-xs font-medium text-[var(--color-text)] cursor-pointer transition-colors"
             >
               <Printer size={13} />
-              <span>Printable Report</span>
+              <span>Printable report</span>
             </button>
           )}
 
@@ -175,7 +175,7 @@ export default function SystemReportEmbed({
               className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-[var(--color-primary)]/90 hover:bg-[var(--color-primary)] text-[var(--color-primary-foreground)] text-xs font-semibold cursor-pointer transition-colors disabled:opacity-50"
             >
               {isRunning ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} fill="currentColor" />}
-              <span>Run Full Suite</span>
+              <span>Run full suite</span>
             </button>
           )}
         </div>
@@ -190,41 +190,41 @@ export default function SystemReportEmbed({
       {/* Telemetry Pillars */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-          <div className="text-[11px] font-medium text-[var(--color-text-secondary)]">Pass Rate</div>
-          <div className="mt-1.5 text-2xl font-bold font-mono tabular-nums text-[var(--color-text)]">
+          <div className="text-xs text-[var(--color-text-secondary)]">Pass rate</div>
+          <div className="mt-2 text-2xl font-medium font-mono tabular-nums text-[var(--color-text)]">
             {stats.passRate}%
           </div>
-          <div className="mt-1 text-[11px] text-[var(--color-text-muted)] font-mono tabular-nums">
+          <div className="mt-1 text-xs text-[var(--color-text-muted)] tabular-nums">
             {stats.passed} passed · {stats.failed} failed · {stats.flaky} flaky
           </div>
         </div>
 
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-          <div className="text-[11px] font-medium text-[var(--color-text-secondary)]">E2E Flow Cases</div>
-          <div className="mt-1.5 text-2xl font-bold font-mono tabular-nums text-[var(--color-text)]">
+          <div className="text-xs text-[var(--color-text-secondary)]">E2E flow cases</div>
+          <div className="mt-2 text-2xl font-medium font-mono tabular-nums text-[var(--color-text)]">
             {stats.caseRate}%
           </div>
-          <div className="mt-1 text-[11px] text-[var(--color-text-muted)] font-mono tabular-nums">
+          <div className="mt-1 text-xs text-[var(--color-text-muted)] tabular-nums">
             {stats.coveredCases}/{stats.totalRequiredCases} cases across {specGroups.length} specs
           </div>
         </div>
 
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-          <div className="text-[11px] font-medium text-[var(--color-text-secondary)]">Spec Files</div>
-          <div className="mt-1.5 text-2xl font-bold font-mono tabular-nums text-[var(--color-text)]">
+          <div className="text-xs text-[var(--color-text-secondary)]">Spec files</div>
+          <div className="mt-2 text-2xl font-medium font-mono tabular-nums text-[var(--color-text)]">
             {specGroups.length}
           </div>
-          <div className="mt-1 text-[11px] text-[var(--color-text-muted)] font-mono tabular-nums">
+          <div className="mt-1 text-xs text-[var(--color-text-muted)] tabular-nums">
             {stats.total} total scenarios
           </div>
         </div>
 
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-          <div className="text-[11px] font-medium text-[var(--color-text-secondary)]">Total Duration</div>
-          <div className="mt-1.5 text-2xl font-bold font-mono tabular-nums text-[var(--color-text)]">
+          <div className="text-xs text-[var(--color-text-secondary)]">Total duration</div>
+          <div className="mt-2 text-2xl font-medium font-mono tabular-nums text-[var(--color-text)]">
             {(stats.durationMs / 1000).toFixed(1)}s
           </div>
-          <div className="mt-1 text-[11px] text-[var(--color-text-muted)] font-mono tabular-nums">
+          <div className="mt-1 text-xs text-[var(--color-text-muted)] tabular-nums">
             Full-stack E2E runtime
           </div>
         </div>
@@ -248,19 +248,16 @@ export default function SystemReportEmbed({
               <CheckCircle2 size={14} className="text-emerald-400" />
             )}
             <h3 className="text-xs font-semibold text-[var(--color-text)]">
-              Failing &amp; Flaky Scenarios ({failingScenarios.length})
+              Failing and flaky scenarios ({failingScenarios.length})
             </h3>
           </div>
-          <span className="text-[11px] text-[var(--color-text-muted)] font-mono">
-            Direct Playwright / Cypress root-cause triage
-          </span>
         </div>
 
         {failingScenarios.length === 0 ? (
           <div className="p-6 text-center text-xs text-[var(--color-text-muted)]">
             {hasRun
-              ? "All executed E2E system scenarios passed cleanly."
-              : "No failures recorded yet. Run your specs to inspect root causes."}
+              ? "All scenarios passed"
+              : "No failures yet. Run the suite to see root causes"}
           </div>
         ) : (
           <div className="divide-y divide-[var(--color-border)]">
@@ -284,14 +281,14 @@ export default function SystemReportEmbed({
                     <div className="space-y-1 min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span
-                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold border ${
+                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium border ${
                             isFlaky
                               ? "bg-amber-500/10 text-amber-400 border-amber-500/25"
                               : "bg-rose-500/10 text-rose-400 border-rose-500/25"
                           }`}
                         >
                           {isFlaky ? <AlertTriangle size={10} /> : <XCircle size={10} />}
-                          <span>{isFlaky ? "FLAKY" : "FAILED"}</span>
+                          <span>{isFlaky ? "Flaky" : "Failed"}</span>
                         </span>
                         <span className="text-xs font-semibold text-[var(--color-text)]">
                           {sc.title}
@@ -314,9 +311,9 @@ export default function SystemReportEmbed({
                           {isFixing ? (
                             <Loader2 size={11} className="animate-spin" />
                           ) : (
-                            <Wand2 size={11} />
+                            <Wrench size={11} />
                           )}
-                          <span>AI Fix</span>
+                          <span>AI fix</span>
                         </button>
                       )}
 

@@ -1,5 +1,5 @@
 import { describeAssertionOutcome, outcomeBindings, isVagueExpectedOutcome } from './systemExpectedOutcome.service.js';
-import { validateFullSystemTest } from './systemTestEvidence.service.js';
+import { analyzeFullStackCompatibility, validateFullSystemTestFile } from './systemTestEvidence.service.js';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -13,12 +13,46 @@ const scenarioIdentity = (filePath, title, occurrence) => digest(`${filePath.rep
 const reviewedContent = scenario => ({ title: scenario.title, flow: scenario.flowJson, input: scenario.inputJson, expected: scenario.expectedJson, criterionIds: scenario.criterionIds, testHash: scenario.testHash, assertionHashes: scenario.assertionHashes, requirementRevisionId: scenario.requirementRevisionId });
 export const scenarioReviewHash = scenario => digest(reviewedContent(scenario));
 
-const readTest = (rootDir, filePath) => {
+const supportedTestPath = (rootDir, filePath) => {
     if (!/\.(spec|test)\.[cm]?[jt]s$/.test(filePath)) throw new ServiceError('This Playwright adapter supports JS/TS spec files without JSX syntax', 422);
-    const absolute = containedPath(rootDir, filePath);
+    return containedPath(rootDir, filePath);
+};
+
+const statTestFile = absolute => {
     const stat = fs.statSync(absolute);
     if (!stat.isFile() || stat.size > 256 * 1024) throw new ServiceError('Test file must be at most 256 KiB', 422);
+    return stat;
+};
+
+const readTest = (rootDir, filePath) => {
+    const absolute = supportedTestPath(rootDir, filePath);
+    statTestFile(absolute);
     return fs.readFileSync(absolute, 'utf8');
+};
+
+const testFileCache = new Map();
+const cachedTestFile = absolute => {
+    const { mtimeMs, size } = statTestFile(absolute);
+    const cached = testFileCache.get(absolute);
+    const file = cached?.mtimeMs === mtimeMs && cached.size === size
+        ? cached
+        : { mtimeMs, size, content: fs.readFileSync(absolute, 'utf8') };
+    testFileCache.delete(absolute);
+    testFileCache.set(absolute, file);
+    if (testFileCache.size > 500) testFileCache.delete(testFileCache.keys().next().value);
+    return file;
+};
+
+export const getSystemTestFileCompatibility = (rootDir, filePath) => {
+    let incompatibleReason = 'Uses API mocks (frontend-only test)';
+    try {
+        const absolute = containedPath(rootDir, filePath);
+        statTestFile(absolute);
+        const result = analyzeFullStackCompatibility({ filePath: absolute, rootDir });
+        if (result.compatible) return { fullStackCompatible: true };
+        if (result.offendingFile !== absolute) incompatibleReason = result.reason;
+    } catch { /* Preserve the compatibility badge for files that cannot be checked. */ }
+    return { fullStackCompatible: false, incompatibleReason };
 };
 
 const draftFromTest = (content, site, analysis) => {
@@ -46,18 +80,44 @@ export const discoverExecutionScenarios = ({rootDir,testFiles}) => testFiles.fla
     });
 });
 
-export const syncSystemScenarioCatalog = async ({ client, snapshotId, rootDir }) => {
-    const scanned = scanSystemTestFiles(rootDir);
+export const syncSystemScenarioCatalog = async ({ client, snapshotId, rootDir, syncChangedFilesOnly = false }) => {
+    const sources = new Map();
+    const scanned = scanSystemTestFiles(rootDir, {
+        includeDetails: false,
+        readContent: absolute => {
+            try {
+                const resolved = path.resolve(absolute);
+                const file = cachedTestFile(resolved);
+                sources.set(resolved, file);
+                return file.content;
+            } catch {
+                return null;
+            }
+        },
+    });
     const files = [
         ...(scanned.playwrightFiles || []).map(file => file.filePath),
         ...(scanned.cypressFiles || []).map(file => file.filePath),
     ];
+    const query = { where: { snapshotId }, orderBy: [{ filePath: 'asc' }, { title: 'asc' }] };
+    const existingScenarios = await client.systemScenario.findMany(query);
+    const existingByKey = new Map(existingScenarios.map(row => [row.scenarioKey, row]));
     const seen = new Set(), failedFiles = new Set(), unsupportedFeatures = [];
+    const removedIds = new Set();
+    let wroteScenarios = false;
     for (const filePath of files) {
-        let content, analysis;
+        let content, analysis, testHash;
         try {
-            content = readTest(rootDir, filePath);
-            analysis = analyzeSystemTestFile({ content, filePath });
+            const absolute = supportedTestPath(rootDir, filePath);
+            const file = sources.get(absolute) ?? cachedTestFile(absolute);
+            content = file.content;
+            if (!file.analysis && !file.analysisError) {
+                try { file.analysis = analyzeSystemTestFile({ content, filePath }); }
+                catch (error) { file.analysisError = error; }
+            }
+            if (file.analysisError) throw file.analysisError;
+            analysis = file.analysis;
+            testHash = file.testHash ??= digest(content);
         } catch (error) {
             failedFiles.add(filePath.replaceAll('\\', '/'));
             unsupportedFeatures.push({ filePath, reason: error.statusCode ? error.message : 'Test file could not be analyzed' });
@@ -70,13 +130,14 @@ export const syncSystemScenarioCatalog = async ({ client, snapshotId, rootDir })
             occurrences.set(site.title, occurrence + 1);
             const scenarioKey = scenarioIdentity(filePath, site.title, occurrence);
             seen.add(scenarioKey);
+            const existing = existingByKey.get(scenarioKey);
+            if (syncChangedFilesOnly && existing?.testHash === testHash) continue;
             const assertions = analysis.assertionSites.filter(assertion => assertion.scenarioLine === site.line).map(assertion => assertion.hash).sort();
-            const testHash = digest(content);
-            const existing = await client.systemScenario.findUnique({ where: { snapshotId_scenarioKey: { snapshotId, scenarioKey } } });
             if (!existing) {
                 const draft = { snapshotId, scenarioKey, source: 'IMPORTED', filePath, title: site.title, ...draftFromTest(content, site, analysis), criterionIds: [], reviewState: 'DRAFT', scenarioHash: '', testHash, assertionHashes: assertions };
                 draft.scenarioHash = scenarioReviewHash(draft);
                 await client.systemScenario.create({ data: draft });
+                wroteScenarios = true;
             } else if (existing.testHash !== testHash || JSON.stringify(existing.assertionHashes) !== JSON.stringify(assertions) || existing.expectedJson?.some(isVagueExpectedOutcome)) {
                 const extracted = draftFromTest(content, site, analysis);
                 const changed = { ...existing, testHash, assertionHashes: assertions,
@@ -84,20 +145,25 @@ export const syncSystemScenarioCatalog = async ({ client, snapshotId, rootDir })
                     inputJson: existing.inputJson?.length ? existing.inputJson : extracted.inputJson,
                     expectedJson: existing.expectedJson?.length && !existing.expectedJson.some(isVagueExpectedOutcome) ? existing.expectedJson : extracted.expectedJson };
                 await client.systemScenario.update({ where: { id: existing.id }, data: { testHash, assertionHashes: assertions, flowJson: changed.flowJson, inputJson: changed.inputJson, expectedJson: changed.expectedJson, scenarioHash: scenarioReviewHash(changed), reviewState: 'STALE', reviewedByUserId: null, reviewedAt: null } });
+                wroteScenarios = true;
             }
         }
     }
-    const all = await client.systemScenario.findMany({ where: { snapshotId }, orderBy: [{ filePath: 'asc' }, { title: 'asc' }] });
-    for (const scenario of all) {
+    for (const scenario of existingScenarios) {
         if (!scenario.filePath || seen.has(scenario.scenarioKey)) continue;
         const normRel = scenario.filePath.replaceAll('\\', '/');
         if (failedFiles.has(normRel)) continue;
         const absFile = path.resolve(rootDir, normRel);
         if (!fs.existsSync(absFile)) {
-            await client.systemScenario.delete({ where: { id: scenario.id } });
+            removedIds.add(scenario.id);
+            if (!syncChangedFilesOnly) {
+                await client.systemScenario.delete({ where: { id: scenario.id } });
+                wroteScenarios = true;
+            }
         }
     }
-    return { scenarios: fullStackCatalog(await client.systemScenario.findMany({ where: { snapshotId }, orderBy: [{ filePath: 'asc' }, { title: 'asc' }] }),rootDir), discoveryStatus: files.length ? 'DISCOVERED' : 'NO_TESTS', unsupportedFeatures };
+    const scenarios = wroteScenarios ? await client.systemScenario.findMany(query) : existingScenarios;
+    return { scenarios: fullStackCatalog(scenarios.filter(row => !removedIds.has(row.id)), rootDir), discoveryStatus: files.length ? 'DISCOVERED' : 'NO_TESTS', unsupportedFeatures };
 };
 
 export const fullStackCatalog = (scenarios, rootDir) => {
@@ -105,8 +171,14 @@ export const fullStackCatalog = (scenarios, rootDir) => {
     return scenarios.map(row => {
         if (!row.filePath) return {...row,fullStackCompatible:false,executionIssue:'This scenario does not have an executable test file.'};
         if (!files.has(row.filePath)) {
-            try { validateFullSystemTest(readTest(rootDir,row.filePath)); files.set(row.filePath,null); }
-            catch(error) { files.set(row.filePath,error.statusCode ? error.message : 'Test file could not be checked.'); }
+            try {
+                const filePath = supportedTestPath(rootDir, row.filePath);
+                statTestFile(filePath);
+                const result = analyzeFullStackCompatibility({ filePath, rootDir });
+                files.set(row.filePath, result.compatible ? null : result.reason);
+            } catch (error) {
+                files.set(row.filePath, error.statusCode ? error.message : 'Test file could not be checked.');
+            }
         }
         return {...row,fullStackCompatible:!files.get(row.filePath),executionIssue:files.get(row.filePath)};
     });
@@ -177,7 +249,11 @@ export const reviewScenario = async ({ client, snapshotId, rootDir, scenarioId, 
 export const evaluateRunReadiness = async ({ client, snapshotId, rootDir, revisionId, testFiles, reviewMode = 'legacy', scenarioIds = [], executionMode }) => {
     const blockers = [];
     if (executionMode === 'full') for (const filePath of testFiles) {
-        try { validateFullSystemTest(readTest(rootDir,filePath)); }
+        try {
+            const absolute = supportedTestPath(rootDir,filePath);
+            statTestFile(absolute);
+            validateFullSystemTestFile({filePath:absolute,rootDir});
+        }
         catch (error) { blockers.push({filePath,code:'FULL_STACK_TEST_REQUIRED',message:`${filePath}: ${error.statusCode ? error.message : 'Test file could not be checked'}`}); }
     }
 

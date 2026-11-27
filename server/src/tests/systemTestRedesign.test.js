@@ -54,10 +54,60 @@ describe('shared/systemCaseCoverage', () => {
     expect(annotations.s5.badgeType).toBe('DUPLICATE');
 
     const cov = getSystemGroupCaseCoverage(group, scenarios);
-    expect(cov.coveredCount).toBe(4);
-    expect(cov.totalRequired).toBe(4);
-    expect(cov.passedCount).toBe(3);
-    expect(cov.failedCount).toBe(1);
+    expect(cov).toEqual({
+      cases: required.map((definition) => ({
+        ...definition,
+        covered: true,
+        passed: definition.key !== 'EDGE',
+        failed: definition.key === 'EDGE',
+      })),
+      coveredCount: 4,
+      totalRequired: 4,
+      passedCasesCount: 3,
+      passedCount: 3,
+      failedCount: 1,
+      notRunCount: 1,
+      scenarioAnnotations: annotations,
+      redundantCount: 1,
+      extraCount: 0,
+    });
+    expect(getSystemGroupCaseCoverage({ ...group, testPlan: { items: [] } }, scenarios)).toEqual(cov);
+  });
+
+  test('counts generation plan items and matches scenario results by plan ID or title', () => {
+    const group = {
+      filePath: 'tests/e2e/covai-ce5f80fd3988.spec.mjs',
+      testPlan: {
+        items: [
+          { id: 'list', caseKey: 'HAPPY', title: 'List items', route: '/items', status: 'COVERED', testTitle: 'shows items' },
+          { id: 'empty', caseKey: 'EDGE', title: 'Empty list', component: 'ItemList', status: 'COVERED', testTitle: 'shows empty state' },
+          { id: 'error', caseKey: 'ERROR', title: 'Load error', status: 'FAILED', testTitle: 'shows load error' },
+        ],
+      },
+    };
+    const scenarios = [
+      { id: 's1', planItemId: 'list', title: 'shows the updated item list', status: 'PASSED' },
+      { id: 's2', title: 'shows empty state', status: 'FAILED' },
+      { id: 's3', title: 'opens the item details', status: 'NOT_RUN' },
+    ];
+    const { annotations, redundantCount, extraCount } = annotateSystemGroupScenarios(group, scenarios);
+
+    expect(getSystemGroupCaseCoverage(group, scenarios)).toEqual({
+      cases: [
+        { key: 'list', category: 'HAPPY', label: 'List items', description: '/items', covered: true, passed: true, failed: false },
+        { key: 'empty', category: 'EDGE', label: 'Empty list', description: 'ItemList', covered: true, passed: false, failed: true },
+        { key: 'error', category: 'ERROR', label: 'Load error', description: '', covered: false, passed: false, failed: true },
+      ],
+      coveredCount: 2,
+      totalRequired: 3,
+      passedCasesCount: 1,
+      passedCount: 1,
+      failedCount: 1,
+      notRunCount: 1,
+      scenarioAnnotations: annotations,
+      redundantCount,
+      extraCount,
+    });
   });
 
   test('preserves user scenarios over AI scenarios when 3 required cases have 5 total scenarios', () => {

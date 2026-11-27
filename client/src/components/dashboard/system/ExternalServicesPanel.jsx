@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Activity, AlertTriangle, Check, CheckCircle2, ClipboardPaste, Cloud, Copy, CreditCard,
   Database, ExternalLink, Eye, EyeOff, FileWarning, KeyRound, Mail,
-  Map as MapIcon, MessageSquare, Plug, Radio, Search, Settings2, Sparkles,
+  Map as MapIcon, MessageSquare, Plug, Radio, Search, Settings2, Cpu,
 } from 'lucide-react';
 import { Button } from '../../ui/button.jsx';
 import { Input } from '../../ui/input.jsx';
@@ -15,7 +15,7 @@ const icons = {
   payments: CreditCard,
   email: Mail,
   sms: MessageSquare,
-  ai: Sparkles,
+  ai: Cpu,
   storage: Cloud,
   auth: KeyRound,
   maps: MapIcon,

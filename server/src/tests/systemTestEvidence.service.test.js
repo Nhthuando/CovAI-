@@ -1,24 +1,34 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { describe, test, expect } from '@jest/globals';
 import { afterEach, it } from '@jest/globals';
-import {validateFullSystemTest,storeScenarioScreenshot,prepareSystemPlaywright} from '../services/systemTestEvidence.service.js';
+import {analyzeFullStackCompatibility,validateFullSystemTest,storeScenarioScreenshot,prepareSystemPlaywright,mapSystemExecutionCopyPath} from '../services/systemTestEvidence.service.js';
 import {readFullSystemConfig} from '../services/fullSystemLifecycle.service.js';
 import { ServiceError } from '../utils/serviceError.js';
 const roots=[];
 const root=()=>{const directory=fs.mkdtempSync(path.join(os.tmpdir(),'covai-evidence-'));roots.push(directory);return directory;};
 afterEach(()=>{for(const directory of roots.splice(0)) fs.rmSync(directory,{recursive:true,force:true});});
 describe('real system execution and evidence',()=>{
+  it('maps reporter paths for execution copies to their original project-relative spec',()=>{
+    const copy='657319ce-b609-4afc-8f09-e9ca80db34a9.spec.mjs';
+    const original='client/tests/e2e/checkout.spec.mjs';
+    const sourceMap={[copy]:original};
+    expect(mapSystemExecutionCopyPath(copy,sourceMap)).toBe(original);
+    expect(mapSystemExecutionCopyPath(`C:\\repo\\runs\\specs\\${copy}`,sourceMap)).toBe(original);
+    expect(mapSystemExecutionCopyPath('specs/unknown.spec.mjs',sourceMap)).toBeNull();
+  });
   it('keeps scenario screenshots as checkpoints without relaying them as live frames',async()=>{
     const source=fs.readFileSync(new URL('../services/systemAssessmentJob.service.js',import.meta.url),'utf8');
-    const start=source.indexOf('const onEvent = async (');
+    const start=source.indexOf('let liveFrameSeq =');
     const end=source.indexOf('const report = await withProjectDependencyCache',start);
     expect(start).toBeGreaterThanOrEqual(0);expect(end).toBeGreaterThan(start);
     const frames=[],recorded=[],transport=[],events=[],checkpoints=[];
+    let now=0;
     const dependencies={
+      Date:{now:()=>now},
       job:{snapshotId:'snapshot',userId:'user',snapshot:{rootDir:'/workspace'}},
       assessment:{id:'assessment'},prisma:{},
       catalog:[{filePath:'test.spec.js',title:'scenario',scenarioKey:'scenario-key'}],
@@ -29,16 +39,48 @@ describe('real system execution and evidence',()=>{
       storeScenarioScreenshot:()=> 'checkpoint.png',
       persistRunArtifacts:async input=>{checkpoints.push(input);return [{id:'artifact'}];},
       emit:async event=>events.push(event),
+      console,
       redactDeep:value=>value,
     };
     const onEvent=new Function(...Object.keys(dependencies),`${source.slice(start,end)} return onEvent;`)(...Object.values(dependencies));
     await onEvent({runIndex:0,type:'SCENARIO_ENDED',screenshotBody:'blank-page',filePath:'test.spec.js',title:'scenario'});
     expect(frames).toEqual([]);expect(recorded).toEqual([]);expect(transport).toEqual([]);
     expect(checkpoints[0].artifacts[0]).toEqual(expect.objectContaining({purpose:'CHECKPOINT',relativePath:'checkpoint.png'}));
-    expect(events[0]).toEqual(expect.objectContaining({type:'SCENARIO_ENDED',payload:expect.objectContaining({artifactId:'artifact'})}));
-    await onEvent({runIndex:0,type:'LIVE_FRAME',frame:'live-page'});
-    expect(frames).toEqual([{event:'system-run:frame',payload:expect.objectContaining({frame:'live-page'})}]);
-    expect(recorded).toHaveLength(1);expect(transport).toHaveLength(1);
+    expect(events[0]).toEqual(expect.objectContaining({type:'SCENARIO_ENDED'}));
+    const frameBuffer=Buffer.from('live-page');
+    const frame=frameBuffer.toString('base64');
+    const url='http://localhost:4173/checkout';
+    await onEvent({runIndex:1,type:'LIVE_FRAME',frame,url});
+    now=39;
+    await onEvent({runIndex:1,type:'LIVE_FRAME',frame,url});
+    now=40;
+    await onEvent({runIndex:2,type:'LIVE_FRAME',frame,url});
+
+    const firstPayload={snapshotId:'snapshot',assessmentId:'assessment',runIndex:1,frame:frameBuffer,url,mime:'image/jpeg',seq:1};
+    expect(frames).toEqual([
+      {event:'system-run:frame',payload:firstPayload},
+      {event:'system-run:frame',payload:{...firstPayload,runIndex:2,seq:2}},
+    ]);
+    expect(Buffer.isBuffer(frames[0].payload.frame)).toBe(true);
+    expect(recorded).toHaveLength(3);
+    expect(recorded[0]).toEqual({snapshotId:'snapshot',assessmentId:'assessment',runIndex:1,frame,url});
+    expect(transport).toHaveLength(2);
+    expect(transport[0]).toEqual({projectId:'project',event:'system-run:frame',payload:firstPayload});
+  });
+  it('generates the throttled screencast and atomic frame and metadata writes',()=>{
+    const directory=root();
+    fs.mkdirSync(path.join(directory,'e2e'));
+    const file=path.join(directory,'e2e/home.spec.js');
+    fs.writeFileSync(file,"import {test} from '@playwright/test'; test('home',async({page})=>{await page.goto('/');});");
+    const result=prepareSystemPlaywright({rootDir:directory,execution:{selectedFiles:[file]},executionMode:'frontend',frontendPort:4173,runKey:'live'});
+    const fixture=fs.readFileSync(path.join(result.directory,'fixture.mjs'),'utf8');
+    expect(fixture).toContain("'Page.startScreencast', { format: 'jpeg', quality: 55, maxWidth: 1280, maxHeight: 800, everyNthFrame: 1 }");
+    expect(fixture).toContain('50 - (Date.now() - lastFrameAt)');
+    expect(fixture).toContain("const frameTmpFile = frameFile + '.tmp'");
+    expect(fixture).toContain("fs.writeFileSync(frameTmpFile, data, 'utf8');");
+    expect(fixture).toContain('fs.renameSync(frameTmpFile, frameFile);');
+    expect(fixture).toContain("'live-meta.json'");
+    expect(fixture).toContain('fs.renameSync(metaTmpFile, metaFile);');
   });
   it('limits a selected scenario run to its literal Playwright title',()=>{
     const directory=root();fs.mkdirSync(path.join(directory,'e2e'));
@@ -51,6 +93,22 @@ describe('real system execution and evidence',()=>{
     expect(new RegExp(pattern).test('suite A [item]')).toBe(true);
     expect(new RegExp(pattern).test('suite Other')).toBe(false);
     expect(new RegExp(pattern).test('suite A i')).toBe(false);
+  });
+  it.each([
+    [true, false, 500],
+    [undefined, false, 0],
+    [false, false, 0],
+    [true, true, 450],
+  ])('configures watch=%s and headed=%s with slowMo=%i', (watch, headed, slowMo) => {
+    const directory = root();
+    const file = path.join(directory, 'home.spec.js');
+    fs.writeFileSync(file, "import {test} from '@playwright/test'; test('home',async({page})=>{await page.goto('/');});");
+    const execution = { selectedFiles: [file], ...(watch !== undefined ? { watch } : {}) };
+    const result = prepareSystemPlaywright({ rootDir: directory, execution, executionMode: 'frontend', frontendPort: 4173, runKey: 'speed', headed });
+    const config = fs.readFileSync(path.join(result.directory, 'playwright.config.mjs'), 'utf8');
+    const fixture = fs.readFileSync(path.join(result.directory, 'fixture.mjs'), 'utf8');
+    expect(config).toContain(`slowMo:${slowMo}`);
+    expect(fixture.includes('page.waitForTimeout(1500)')).toBe(watch === true);
   });
   it('automatically records user-written steps in an execution copy and preserves config-owned servers',()=>{
     const directory=root();fs.mkdirSync(path.join(directory,'e2e'));
@@ -78,7 +136,7 @@ describe('real system execution and evidence',()=>{
     });
     const config = fs.readFileSync(path.join(result.directory, 'playwright.config.mjs'), 'utf8');
     if (fastFail) {
-      expect(config).toContain('...base.use,actionTimeout:8000,navigationTimeout:15000,');
+      expect(config).toContain('actionTimeout:8000,navigationTimeout:15000,');
       expect(config).toContain('timeout:Math.min(base.timeout || 30000, 20000)');
       expect(config).toContain('expect:{...base.expect,timeout:Math.min(base.expect?.timeout || 5000, 5000)}');
     } else {
@@ -187,16 +245,59 @@ describe('real system execution and evidence',()=>{
     expect(fixture).toContain('playwright.request.newContext({baseURL:backend');
     expect(fixture).toContain('await request.dispose()');
   });
+  it('reports API mocks in an extensionless helper import', () => {
+    const rootDir = root();
+    const filePath = path.join(rootDir, 'system-flows.spec.ts');
+    fs.writeFileSync(filePath, "import { test } from '@playwright/test'; import { installMockApi } from './mockApi'; test('flow', async ({ page }) => { await installMockApi(page); });");
+    fs.writeFileSync(path.join(rootDir, 'mockApi.ts'), "export const installMockApi = page => page.route('**/api/v1/**', route => route.fulfill({ body: '{}' }));");
+
+    expect(analyzeFullStackCompatibility({ filePath, rootDir })).toEqual({
+      compatible: false,
+      offendingFile: path.join(rootDir, 'mockApi.ts'),
+      reason: 'Uses API mocks via mockApi.ts (frontend-only test)',
+    });
+    expect(() => prepareSystemPlaywright({ rootDir, execution: { selectedFiles: [filePath] }, executionMode: 'full', frontendPort: 4173, runKey: 'helper-mock' })).toThrow(/real backend.*mockApi\.ts/);
+  });
+  it('accepts a clean helper and resolves extensionless imports and re-exports in an ESM spec copy', () => {
+    const rootDir = root();
+    const filePath = path.join(rootDir, 'flow.spec.ts');
+    const helper = path.join(rootDir, 'helpers.ts');
+    const index = path.join(rootDir, 'shared', 'index.ts');
+    fs.mkdirSync(path.dirname(index));
+    fs.writeFileSync(path.join(rootDir, 'package.json'), JSON.stringify({ type: 'module' }));
+    fs.writeFileSync(helper, 'export const answer = 42;');
+    fs.writeFileSync(index, "export { answer } from '../helpers';");
+    fs.writeFileSync(filePath, `
+      import { test, expect } from '@playwright/test';
+      import { answer } from './helpers';
+      export { answer as sharedAnswer } from './shared';
+      test('flow', async () => { expect((await import('./helpers')).answer).toBe(answer); });
+    `);
+
+    expect(analyzeFullStackCompatibility({ filePath, rootDir })).toEqual({ compatible: true });
+    const { directory } = prepareSystemPlaywright({ rootDir, execution: { selectedFiles: [filePath] }, executionMode: 'frontend', frontendPort: 4173, runKey: 'helper' });
+    const specs = path.join(directory, 'specs');
+    const [name] = fs.readdirSync(specs);
+    expect(name).toMatch(/\.spec\.mts$/);
+    const copy = fs.readFileSync(path.join(specs, name), 'utf8');
+    const helperUrl = JSON.stringify(pathToFileURL(helper).href);
+    expect(copy).toContain(`from ${helperUrl}`);
+    expect(copy).toContain(`import(${helperUrl})`);
+    expect(copy).toContain(`from ${JSON.stringify(pathToFileURL(index).href)}`);
+  });
   it.each(['js','cjs'])('runs CommonJS .%s Playwright imports through a CommonJS fixture and preserves the original file',(extension)=>{
     const directory=root();fs.mkdirSync(path.join(directory,'tests/e2e'),{recursive:true});
-    const source="const {test,expect}=require('@playwright/test'); const helper=require('./helper'); test('real',async({page})=>{await page.goto('/');});";
+    const source="const {test,expect}=require('@playwright/test'); const helper=require('./helper'); const missing=require('./missing'); test('real',async({page})=>{await page.goto('/');});";
     const original=path.join(directory,`tests/e2e/crud.spec.${extension}`);
+    const helper=path.join(directory,'tests/e2e/helper.cjs');
+    fs.writeFileSync(helper,'module.exports = {};');
     fs.writeFileSync(original,source);
     const result=prepareSystemPlaywright({rootDir:directory,execution:{testDirectory:'tests/e2e'},executionMode:'frontend',frontendPort:4173,runKey:'cjs'});
     const specs=path.join(result.directory,'specs');
     const copy=fs.readFileSync(path.join(specs,fs.readdirSync(specs)[0]),'utf8');
     expect(copy).toContain(`require(${JSON.stringify(path.join(result.directory,'fixture.cjs'))})`);
-    expect(copy).toContain(`require(${JSON.stringify(path.join(directory,'tests/e2e/helper'))})`);
+    expect(copy).toContain(`require(${JSON.stringify(helper)})`);
+    expect(copy).toContain("require('./missing')");
     expect(fs.readFileSync(original,'utf8')).toBe(source);
     expect(fs.readFileSync(path.join(result.directory,'fixture.cjs'),'utf8')).toContain('module.exports={...playwright,test}');
   });

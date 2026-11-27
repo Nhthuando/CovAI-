@@ -13,7 +13,6 @@ import {
   AlertOctagon,
   Edit3,
   Search,
-  Zap,
 } from "lucide-react";
 import Button from "../../common/Button.jsx";
 
@@ -139,7 +138,7 @@ export default function SystemTestScenarioList({
       {/* Files List */}
       <div className="divide-y divide-[var(--color-border)]">
         {filteredFiles.length === 0 ? (
-          <div className="p-10 text-center text-xs text-[var(--color-text-muted)] italic">
+          <div className="p-10 text-center text-xs text-[var(--color-text-muted)]">
             {testFiles.length === 0
               ? "No system test files or scenarios loaded."
               : "No scenarios match the current filter criteria."}
@@ -257,8 +256,7 @@ export default function SystemTestScenarioList({
                               <td className="py-2.5 px-4 text-[var(--color-text-secondary)] font-mono text-[11px]">
                                 <div>{formatMs(sc.executionTimeMs || sc.durationMs)}</div>
                                 {(sc.tokens || sc.telemetry?.tokens) && (
-                                  <div className="text-[10px] text-amber-400 font-mono flex items-center gap-1 mt-0.5">
-                                    <Zap size={9} />
+                                  <div className="text-[11px] text-[var(--color-text-muted)] font-mono mt-0.5">
                                     <span>{(sc.tokens || sc.telemetry?.tokens?.total || sc.telemetry?.tokens).toLocaleString()} tok</span>
                                   </div>
                                 )}
