@@ -707,23 +707,25 @@ ${businessFunctionTargets.length > 1 ? `   - MINIMUM TEST BLOCK COUNT & FUNCTION
      * DETERMINISTIC ASSERTIONS: Trace exact return expressions and mock return values from the source code before writing \`.toBe(...)\` or \`.toEqual(...)\`. When code uses dynamic timestamps (\`Date.now()\`, \`new Date()\`), assert deterministic fields or use \`expect.any(Number)\` / \`.toMatchObject(...)\` so tests never fail on runtime drift.
    - Branch/Logic Reference Matrix:
 ${fullCasePlanMarkdown}
-   - You MUST include test cases addressing all applicable testing categories:
-   - Category A (Happy Path - CORE LOGIC PATH TRAVERSAL):
+   - You MUST apply all 5 Test Design Techniques across your scenarios to drive Statements, Branches, Functions, and Lines coverage toward 100% (each scenario for a function MUST test a DISTINCT input class, boundary, branch combination, or failure mode — NEVER generate duplicate scenarios with the same intent):
+   - Category A / Technique 1 — Happy Path (Core Logic Path Traversal):
      * MANDATORY POPULATED MULTI-ELEMENT FIXTURES: If a function accepts an array, collection, or list parameter (e.g. 'history', 'items', 'messages', 'data', 'turns'), you MUST pass a fully populated, valid multi-element fixture (minimum 2 to 3 distinct items) with all required fields populated.
      * NEVER pass empty arrays '[]' or empty objects '{}' in Category A! Empty collections trip early-return guards and fail to execute core business logic.
      * MULTI-ITEM TRANSFORMATIONS: To test loops, transformations, filtering, sorting, or merging, pass diverse collections (e.g. multiple items with different roles/types/statuses, consecutive matching items, and leading/trailing items) so all core logic loops and branches (e.g., L14-L55) are completely traversed and executed.
-   - Category B (Boundary Values - GUARD VERIFICATION):
+   - Technique 2 — Equivalence Partitioning (Valid & Invalid Input Classes):
+     * Partition inputs into distinct representative equivalence classes (e.g. valid plan/mode/role/format vs unsupported/unrecognized enum/schema/type returning 400 or validation fallback) and write separate, clearly titled scenarios for distinct partitions when the function validates or classifies inputs.
+   - Category B / Technique 3 — Boundary Values (Guard & Limit Verification):
      * Test genuine boundary limits (0, -1, empty array '[]', empty string '""', empty object '{}', max bounds).
      * Recognize that empty collections '[]' test guard clauses only; verify that the function handles them gracefully (e.g. returns empty array without throwing).
      * DO NOT use empty collections for Category A or for testing downstream branches.
-   - Category C (Branch Toggling - GUARD CLAUSE PRECEDENCE INVARIANT):
-     * For internal conditional branches located AFTER early-return guards, you MUST provide valid outer inputs (e.g. populated multi-element collections) that satisfy all preceding guards, and ONLY vary the specific target property or element field to exercise the True and False paths.
+   - Category C / Technique 4 — Decision Table & Branch Toggling (Guard Clause Precedence Invariant):
+     * For internal conditional branches and multi-condition combinations located AFTER early-return guards, you MUST provide valid outer inputs (e.g. populated multi-element collections) that satisfy all preceding guards, and ONLY vary the specific target property or element field to exercise the True and False paths.
      * NEVER pass top-level null, undefined, or empty arrays to test downstream internal branches, because doing so immediately trips early return guards and leaves internal branches unreached.
-   - Category D (Error & Exception Handling):
-     * Test error handling and schema violations while respecting the non-null body guarantee.
+   - Category D / Technique 5 — Error Guessing & Exception Handling:
+     * Test dependency rejections, thrown errors, fault states, and schema violations while respecting the non-null body guarantee (e.g. distinguish 400 validation failure from 500 downstream service failure with clear titles).
      * For pure collection normalizers without throw statements, test tolerance for malformed elements within a populated collection.
-   - REQUIRED CATEGORY COVERAGE MANDATE:
-     * Generate at least ONE dedicated, standalone \`it(...)\` or \`test(...)\` block for EVERY applicable category above (A. Happy Path, B. Boundary Values, C. Branch Toggling when branches exist, D. Error Handling when guards/throws/async calls exist). Do NOT skip required categories or generate only 1 smoke test!
+   - REQUIRED CATEGORY & TECHNIQUE COVERAGE MANDATE:
+     * Generate dedicated, standalone \`it(...)\` or \`test(...)\` blocks applying every applicable technique above (Happy Path, Equivalence Partitioning, Boundary Values, Decision Table / Branch Toggling, Error Guessing) so all functions and branches are covered. Every scenario targeting the same \`[functionName]\` MUST have a unique, specific descriptive title — NEVER repeat two tests for the same scenario intent!
    - STRUCTURED COEXISTENCE WITH EXISTING TESTS:
      * Carefully inspect EXISTING TEST CODE in ${testFileInfo.relativePath} so your generated tests reuse working mocks/imports cleanly and use distinct, descriptive scenario titles (never clobbering existing test names).
      * Wrap your generated test blocks cleanly (e.g. in \`describe('AI Suggested Unit Tests', () => { ... })\`) when adding to an existing file so existing user test blocks remain 100% intact. Do not generate fake or placeholder assertions like expect(true).toBe(true).
@@ -827,23 +829,25 @@ ${businessFunctionTargets.length > 1 ? `   - MINIMUM TEST BLOCK COUNT & FUNCTION
      * DETERMINISTIC ASSERTIONS: Trace exact return expressions and mock return values from the source code before writing \`.toBe(...)\` or \`.toEqual(...)\`. When code uses dynamic timestamps (\`Date.now()\`, \`new Date()\`), assert deterministic fields or use \`expect.any(Number)\` / \`.toMatchObject(...)\` so tests never fail on runtime drift.
    - Branch/Logic Reference Decision Table:
 ${fullCasePlanMarkdown || deltaDecisionTableMarkdown || decisionTableMarkdown}
-   - You MUST include test cases addressing all 4 essential business logic testing categories:
-   - Category A (Happy Path - CORE LOGIC PATH TRAVERSAL):
+   - You MUST apply all 5 Test Design Techniques across your scenarios to drive Statements, Branches, Functions, and Lines coverage toward 100% (each scenario for a function MUST test a DISTINCT input class, boundary, branch combination, or failure mode — NEVER generate duplicate scenarios with the same intent):
+   - Category A / Technique 1 — Happy Path (Core Logic Path Traversal):
      * MANDATORY POPULATED MULTI-ELEMENT FIXTURES: If a function accepts an array, collection, or list parameter (e.g. 'history', 'items', 'messages', 'data', 'turns'), you MUST pass a fully populated, valid multi-element fixture (minimum 2 to 3 distinct items) with all required fields populated.
      * NEVER pass empty arrays '[]' or empty objects '{}' in Category A! Empty collections trip early-return guards and fail to execute core business logic.
      * MULTI-ITEM TRANSFORMATIONS: To test loops, transformations, filtering, sorting, or merging, pass diverse collections (e.g. multiple items with different roles/types/statuses, consecutive matching items, and leading/trailing items) so all core logic loops and branches (e.g., L14-L55) are completely traversed and executed.
-   - Category B (Boundary Values - GUARD VERIFICATION):
+   - Technique 2 — Equivalence Partitioning (Valid & Invalid Input Classes):
+     * Partition inputs into distinct representative equivalence classes (e.g. valid plan/mode/role/format vs unsupported/unrecognized enum/schema/type returning 400 or validation fallback) and write separate, clearly titled scenarios for distinct partitions when the function validates or classifies inputs.
+   - Category B / Technique 3 — Boundary Values (Guard & Limit Verification):
      * Test genuine boundary limits (0, -1, empty array '[]', empty string '""', empty object '{}', max bounds).
      * Recognize that empty collections '[]' test guard clauses only; verify that the function handles them gracefully (e.g. returns empty array without throwing).
      * DO NOT use empty collections for Category A or for testing downstream branches.
-   - Category C (Branch Toggling - GUARD CLAUSE PRECEDENCE INVARIANT):
-     * For internal conditional branches located AFTER early-return guards, you MUST provide valid outer inputs (e.g. populated multi-element collections) that satisfy all preceding guards, and ONLY vary the specific target property or element field to exercise the True and False paths.
+   - Category C / Technique 4 — Decision Table & Branch Toggling (Guard Clause Precedence Invariant):
+     * For internal conditional branches and multi-condition combinations located AFTER early-return guards, you MUST provide valid outer inputs (e.g. populated multi-element collections) that satisfy all preceding guards, and ONLY vary the specific target property or element field to exercise the True and False paths.
      * NEVER pass top-level null, undefined, or empty arrays to test downstream internal branches, because doing so immediately trips early return guards and leaves internal branches unreached.
-   - Category D (Error & Exception Handling):
-     * Test error handling and schema violations while respecting the non-null body guarantee.
+   - Category D / Technique 5 — Error Guessing & Exception Handling:
+     * Test dependency rejections, thrown errors, fault states, and schema violations while respecting the non-null body guarantee (e.g. distinguish 400 validation failure from 500 downstream service failure with clear titles).
      * For pure collection normalizers without throw statements, test tolerance for malformed elements within a populated collection.
    - REQUIRED FUNCTION & BRANCH COVERAGE MANDATE:
-     * Generate dedicated \`it(...)\` / \`test(...)\` blocks covering every business logic function in the file (${businessFunctionTargets.length || 1} function(s)) and all its branches so 100% of Functions, Statements, Branches, and Lines are covered and 100% of generated tests pass.
+     * Generate dedicated \`it(...)\` / \`test(...)\` blocks covering every business logic function in the file (${businessFunctionTargets.length || 1} function(s)) and all its branches so 100% of Functions, Statements, Branches, and Lines are covered and 100% of generated tests pass, with unique descriptive titles per scenario.
    - Never generate fake or placeholder assertions like expect(true).toBe(true) for unreachable or environment-dependent code.
 5. REAL ASSERTIONS, NO TRIVIAL PLACEHOLDERS:
    - DO NOT write placeholder assertions like expect(true).toBe(true) or expect(1).toBe(1).

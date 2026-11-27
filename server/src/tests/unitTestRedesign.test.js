@@ -106,6 +106,57 @@ describe('shared/unitTestCaseCoverage', () => {
     expect(cov.scenarioAnnotations.fn3.badgeType).toBe('PRIMARY_PENDING');
     expect(cov.scenarioAnnotations.fn3.functionLabel).toBe('calculateActiveTimeForSession()');
   });
+
+  test('preserves multiple distinct design-technique scenarios per function without false Duplicate flags even before Istanbul telemetry exists', () => {
+    const file = { funcsTotal: 0, branchesTotal: 4, linesTotal: 60 };
+    const emptyIstanbulFns = [];
+    const tests = [
+      {
+        id: 's1',
+        title: '[createCheckoutSession] should create session successfully using headers.origin and request returnUrl',
+        status: 'passed',
+        origin: 'AI_DRAFT',
+      },
+      {
+        id: 's2',
+        title: '[createCheckoutSession] should fallback origin and returnUrl when headers.origin and body.returnUrl are missing',
+        status: 'passed',
+        origin: 'AI_DRAFT',
+      },
+      {
+        id: 's3',
+        title: '[createCheckoutSession] should return 400 when amount validation error occurs',
+        status: 'passed',
+        origin: 'AI_DRAFT',
+      },
+      {
+        id: 's4',
+        title: '[createCheckoutSession] should return 500 on generic checkout error',
+        status: 'passed',
+        origin: 'AI_DRAFT',
+      },
+      {
+        id: 's5_dup',
+        title: '[createCheckoutSession] should return 500 on generic checkout error',
+        status: 'draft',
+        origin: 'AI_DRAFT',
+      },
+    ];
+
+    const cov = getFileUnitCaseCoverage(file, emptyIstanbulFns, tests);
+    expect(cov.redundantCount).toBe(1);
+    expect(cov.scenarioAnnotations.s1.badgeType).toBe('PRIMARY_PASS');
+    expect(cov.scenarioAnnotations.s1.badgeLabel).toBe('Fn: createCheckoutSession()');
+    expect(cov.scenarioAnnotations.s1.techniqueKey).toBe('HAPPY');
+    expect(cov.scenarioAnnotations.s2.badgeType).toBe('PRIMARY_PASS');
+    expect(cov.scenarioAnnotations.s2.techniqueKey).toBe('BRANCH');
+    expect(cov.scenarioAnnotations.s3.badgeType).toBe('PRIMARY_PASS');
+    expect(cov.scenarioAnnotations.s3.techniqueKey).toBe('EQUIVALENCE');
+    expect(cov.scenarioAnnotations.s4.badgeType).toBe('PRIMARY_PASS');
+    expect(cov.scenarioAnnotations.s4.techniqueKey).toBe('ERROR');
+    expect(cov.scenarioAnnotations.s5_dup.badgeType).toBe('DUPLICATE');
+    expect(cov.functionCoverage.functions.map((f) => f.name)).toEqual(['createCheckoutSession']);
+  });
 });
 
 describe('unitTestCaseOperations.service', () => {

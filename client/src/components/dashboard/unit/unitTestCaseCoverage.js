@@ -1,9 +1,12 @@
 export {
   UNIT_CASE_DEFINITIONS,
   UNIT_CATEGORY_TO_KEY,
+  UNIT_TECHNIQUE_DEFINITIONS,
   isTrivialCallbackFunctionName,
   isUnitTestPassed,
   isUnitTestFailed,
+  extractLeadingFunctionTag,
+  classifyUnitTestTechnique,
   getTestableUnitFunctions,
   matchUnitTestToFunction,
   matchUnitTestToFunctions,
