@@ -13,6 +13,20 @@ import { createAuthTestDatabase } from "./helpers/authTestDatabase.js";
 import { encrypt } from "../utils/crypto.js";
 
 const execFileAsync = promisify(execFile);
+
+async function configureLocalGitIdentity(
+  cwd,
+  name = "CovAI Test",
+  email = "test@covai.local",
+) {
+  await execFileAsync("git", ["config", "user.name", name], { cwd, windowsHide: true });
+  await execFileAsync("git", ["config", "user.email", email], { cwd, windowsHide: true });
+  await execFileAsync("git", ["config", "commit.gpgsign", "false"], {
+    cwd,
+    windowsHide: true,
+  });
+}
+
 jest.setTimeout(60000);
 const testDb = await createAuthTestDatabase();
 
@@ -446,14 +460,7 @@ describe("Phase 1 Full Git & GitHub Workflow Integration", () => {
     await execFileAsync("git", ["clone", bareRemoteDir, peerCloneDir], {
       windowsHide: true,
     });
-    await execFileAsync("git", ["config", "user.name", "Peer Dev"], {
-      cwd: peerCloneDir,
-      windowsHide: true,
-    });
-    await execFileAsync("git", ["config", "user.email", "peer@covai.test"], {
-      cwd: peerCloneDir,
-      windowsHide: true,
-    });
+    await configureLocalGitIdentity(peerCloneDir, "Peer Dev", "peer@covai.test");
     fs.writeFileSync(path.join(peerCloneDir, "remote-file.js"), "export const r = 1;\n");
     await execFileAsync("git", ["add", "remote-file.js"], {
       cwd: peerCloneDir,
@@ -752,14 +759,7 @@ describe("Phase 1 Full Git & GitHub Workflow Integration", () => {
     await execFileAsync("git", ["clone", bareRemoteDir, peerCloneDir], {
       windowsHide: true,
     });
-    await execFileAsync("git", ["config", "user.name", "Peer Dev"], {
-      cwd: peerCloneDir,
-      windowsHide: true,
-    });
-    await execFileAsync("git", ["config", "user.email", "peer@covai.dev"], {
-      cwd: peerCloneDir,
-      windowsHide: true,
-    });
+    await configureLocalGitIdentity(peerCloneDir, "Peer Dev", "peer@covai.dev");
     fs.writeFileSync(path.join(peerCloneDir, "from-remote.txt"), "synced via smart console\n", "utf8");
     await execFileAsync("git", ["add", "from-remote.txt"], {
       cwd: peerCloneDir,
@@ -894,13 +894,28 @@ describe("Phase 1 Full Git & GitHub Workflow Integration", () => {
       cwd: repoRoot,
       windowsHide: true,
     });
+    await configureLocalGitIdentity(repoRoot, "CovAI Test", "test@covai.local");
     fs.writeFileSync(path.join(repoRoot, "README.md"), "# Initial\n", "utf8");
     fs.writeFileSync(path.join(repoRoot, "notes.md"), "base note\n", "utf8");
     await execFileAsync("git", ["add", "."], { cwd: repoRoot, windowsHide: true });
-    await execFileAsync("git", ["commit", "-m", "chore: init"], {
-      cwd: repoRoot,
-      windowsHide: true,
-    });
+    await execFileAsync(
+      "git",
+      [
+        "-c",
+        "user.name=CovAI Test",
+        "-c",
+        "user.email=test@covai.local",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        "chore: init",
+      ],
+      {
+        cwd: repoRoot,
+        windowsHide: true,
+      },
+    );
     await execFileAsync("git", ["remote", "add", "origin", bareRemoteDir], {
       cwd: repoRoot,
       windowsHide: true,
@@ -928,14 +943,7 @@ describe("Phase 1 Full Git & GitHub Workflow Integration", () => {
     await execFileAsync("git", ["clone", bareRemoteDir, peerCloneDir], {
       windowsHide: true,
     });
-    await execFileAsync("git", ["config", "user.name", "Peer Dev"], {
-      cwd: peerCloneDir,
-      windowsHide: true,
-    });
-    await execFileAsync("git", ["config", "user.email", "peer@covai.dev"], {
-      cwd: peerCloneDir,
-      windowsHide: true,
-    });
+    await configureLocalGitIdentity(peerCloneDir, "Peer Dev", "peer@covai.dev");
     fs.writeFileSync(path.join(peerCloneDir, "README.md"), "# Updated from remote\n", "utf8");
     await execFileAsync("git", ["add", "README.md"], {
       cwd: peerCloneDir,

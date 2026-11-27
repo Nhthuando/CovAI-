@@ -583,6 +583,10 @@ app.post("/api/__test/seed-vcs", async (_req, res) => {
       cwd: gitRepoDir,
       windowsHide: true,
     });
+    await execFileAsync("git", ["config", "commit.gpgsign", "false"], {
+      cwd: gitRepoDir,
+      windowsHide: true,
+    });
 
     await fsp.writeFile(
       path.join(gitRepoDir, "src", "app.js"),
@@ -751,6 +755,10 @@ app.post("/api/__test/push-peer-commit", async (req, res) => {
       windowsHide: true,
     });
     await execFileAsync("git", ["config", "user.email", "peer@covai.test"], {
+      cwd: tmpClone,
+      windowsHide: true,
+    });
+    await execFileAsync("git", ["config", "commit.gpgsign", "false"], {
       cwd: tmpClone,
       windowsHide: true,
     });
