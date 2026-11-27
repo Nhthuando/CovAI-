@@ -17,6 +17,7 @@ import {
   fetchGithubAuthorizeUrlApi,
 } from "../../services/auth.service";
 import { consumeAuthReturn } from "../../lib/authReturn";
+import { consumeAuthNotice } from "../../lib/authSession";
 import { queryClient } from "../../lib/queryClient";
 import {
   EMAIL_REGEX,
@@ -61,11 +62,13 @@ export default function AuthForm({
   const [status, setStatus] = useState("idle");
   const [githubLoading, setGithubLoading] = useState(false);
   const [serverError, setServerError] = useState(null);
+  const [sessionNotice, setSessionNotice] = useState(() => consumeAuthNotice());
 
   const update = (field) => (e) => {
     setFormData((d) => ({ ...d, [field]: e.target.value }));
     if (errors[field]) setErrors((prev) => ({ ...prev, [field]: "" }));
     if (serverError) setServerError(null);
+    if (sessionNotice) setSessionNotice(null);
   };
 
   function validate() {
@@ -243,6 +246,17 @@ export default function AuthForm({
               or with email
             </span>
           </div>
+
+          {isLogin && sessionNotice && !serverError && (
+            <div
+              role="status"
+              id="auth-session-notice"
+              className="p-3 rounded-lg border border-[var(--lp-signal-border)] bg-[var(--lp-signal-bg)] text-[var(--lp-ink)] flex items-start gap-2 mb-4 text-xs"
+            >
+              <AlertCircle className="w-4 h-4 text-[var(--lp-signal)] shrink-0 mt-0.5" />
+              <span>{sessionNotice}</span>
+            </div>
+          )}
 
           {serverError && (
             <div

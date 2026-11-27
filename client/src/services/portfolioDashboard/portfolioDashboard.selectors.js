@@ -1,10 +1,31 @@
+import {
+  PORTFOLIO_FILTER_SCOPE_LABELS,
+  PORTFOLIO_GRADE_THRESHOLDS,
+  PORTFOLIO_RISK_QUADRANT_CUTOFFS,
+  PORTFOLIO_ROI_BASELINE,
+  isKpiIncludedLifecycleStatus,
+  isOpenWorkspaceLifecycleStatus,
+  computePassRatePct,
+  computeNormalizedWeightedAverage,
+  classifyRiskQuadrant,
+  roundMetric,
+} from "../../../../shared/portfolioGovernance.js";
 import { PORTFOLIO_CONFIG } from "./portfolioDashboard.config.js";
 
-function toFixedPct(val, fallback = 0) {
-  if (val === null || val === undefined || val === "") return fallback;
-  const num = Number(val);
-  if (Number.isNaN(num)) return fallback;
-  return Number(num.toFixed(1));
+function isLayerMeasured(layer) {
+  if (!layer) return false;
+  if (layer.coverageMeasured === true) return true;
+  if (layer.coverageMeasured === false) return false;
+  if (
+    layer.coveragePct === null ||
+    layer.coveragePct === undefined ||
+    layer.coveragePct === ""
+  ) {
+    return false;
+  }
+  const cov = Number(layer.coveragePct);
+  if (!Number.isFinite(cov)) return false;
+  return (Number(layer.totalTests) || 0) > 0 || cov > 0;
 }
 
 function formatAutoDurationCompact(ms = 0) {
@@ -87,7 +108,9 @@ export function aggregatePortfolioTimeAndRoi(projects = []) {
     totalManualHours: Number((totalManualDurationMs / 3_600_000).toFixed(1)),
     totalManualExecutionHours: Number((totalManualDurationMs / 3_600_000).toFixed(1)),
     totalManualHoursStr: formatPortfolioHours(totalManualDurationMs / 3_600_000),
-    totalManualExecutionDurationFormatted: formatPortfolioHours(totalManualDurationMs / 3_600_000),
+    totalManualExecutionDurationFormatted: formatPortfolioHours(
+      totalManualDurationMs / 3_600_000,
+    ),
     executionHoursSaved,
     aiAuthoringHoursSaved,
     totalQaHoursSaved,
@@ -97,6 +120,9 @@ export function aggregatePortfolioTimeAndRoi(projects = []) {
     speedupStr: speedupMultiplier > 0 ? `${speedupMultiplier}x Faster` : "—",
     projectsWithExecutions,
     activeProjectsCount: projects.length,
+    isHeuristicEstimate: PORTFOLIO_ROI_BASELINE.isHeuristicEstimate,
+    baselineLabel: PORTFOLIO_ROI_BASELINE.label,
+    methodologyNote: PORTFOLIO_ROI_BASELINE.methodologyNote,
   };
 }
 
@@ -122,7 +148,10 @@ export function computePortfolioLifecycleCounts(projects = []) {
   return {
     total: projects.length,
     all: projects.length,
-    active: DOING + NOT_STARTED,
+    open: DOING + NOT_STARTED,
+    active: DOING,
+    isolated: PAUSED + COMPLETED + CANCELLED,
+    excludedFromKpis: NOT_STARTED + PAUSED + COMPLETED + CANCELLED,
     doing: DOING,
     notStarted: NOT_STARTED,
     paused: PAUSED,
@@ -137,7 +166,7 @@ export function computePortfolioLifecycleCounts(projects = []) {
 }
 
 /**
- * Compute Portfolio Executive KPI cards (Zone 2)
+ * Compute Portfolio Executive KPI cards (Zone 2) matching BE computeExecutiveKpis SSOT.
  */
 export function computePortfolioExecutiveKpis(projects = []) {
   const totalProjects = projects.length;
@@ -151,9 +180,11 @@ export function computePortfolioExecutiveKpis(projects = []) {
   let testedProjectsCount = 0;
 
   let sumUnitCoverage = 0;
+  let unitCovCount = 0;
   let sumIntCoverage = 0;
+  let intCovCount = 0;
   let sumSysCoverage = 0;
-  let activeCoverageProjectsCount = 0;
+  let sysCovCount = 0;
 
   let totalUnitTests = 0;
   let passedUnitTests = 0;
@@ -182,7 +213,7 @@ export function computePortfolioExecutiveKpis(projects = []) {
     else if (gate === "BLOCKED") blockedProjects++;
     else untestedProjects++;
 
-    const isTested = gate !== "UNTESTED";
+    const isTested = gate !== "UNTESTED" && p.healthScore !== null && p.healthScore !== undefined;
     if (isTested) {
       sumHealth += Number(p.healthScore) || 0;
       testedProjectsCount++;
@@ -192,42 +223,55 @@ export function computePortfolioExecutiveKpis(projects = []) {
     const int = p.pillars?.integration || {};
     const sys = p.pillars?.system || {};
 
-    const pUnitCov = Number(unit.coveragePct ?? 0);
-    const pIntCov = Number(int.coveragePct ?? 0);
-    const pSysCov = Number(sys.coveragePct ?? 0);
-
-    if (isTested) {
-      sumUnitCoverage += pUnitCov;
-      sumIntCoverage += pIntCov;
-      sumSysCoverage += pSysCov;
-      activeCoverageProjectsCount++;
+    if (isLayerMeasured(unit)) {
+      sumUnitCoverage += Number(unit.coveragePct);
+      unitCovCount++;
+    }
+    if (isLayerMeasured(int)) {
+      sumIntCoverage += Number(int.coveragePct);
+      intCovCount++;
+    }
+    if (isLayerMeasured(sys)) {
+      sumSysCoverage += Number(sys.coveragePct);
+      sysCovCount++;
     }
 
-    // Scale metrics
     totalUnitTests += Number(unit.totalTests) || 0;
     passedUnitTests += Number(unit.passedTests) || 0;
     totalIntTests += Number(int.totalTests) || 0;
     passedIntTests += Number(int.passedTests) || 0;
 
-    totalApis += Number(int.totalApis) || (Number(int.coveredApis) || 0) + (Number(int.uncoveredApis) || 0);
+    totalApis +=
+      Number(int.totalApis) ||
+      (Number(int.coveredApis) || 0) + (Number(int.uncoveredApis) || 0);
     coveredApis += Number(int.coveredApis) || 0;
 
     totalJourneys += Number(sys.totalJourneys) || Number(sys.totalTests) || 0;
     verifiedJourneys += Number(sys.coveredJourneys) || Number(sys.passedTests) || 0;
 
-    const pTotalTests = (Number(unit.totalTests) || 0) + (Number(int.totalTests) || 0) + (Number(sys.totalTests) || 0);
-    const pPassedTests = (Number(unit.passedTests) || 0) + (Number(int.passedTests) || 0) + (Number(sys.passedTests) || 0);
-    const pFailedTests = (Number(unit.failedTests) || 0) + (Number(int.failedTests) || 0) + (Number(sys.failedTests) || 0);
+    const pTotalTests =
+      (Number(unit.totalTests) || 0) +
+      (Number(int.totalTests) || 0) +
+      (Number(sys.totalTests) || 0);
+    const pPassedTests =
+      (Number(unit.passedTests) || 0) +
+      (Number(int.passedTests) || 0) +
+      (Number(sys.passedTests) || 0);
+    const pFailedTests =
+      (Number(unit.failedTests) || 0) +
+      (Number(int.failedTests) || 0) +
+      (Number(sys.failedTests) || 0);
     const pDuration =
       Number(p.timeRoi?.actualAutoDurationMs) ||
-      (Number(unit.durationMs) || 0) + (Number(int.durationMs) || 0) + (Number(sys.durationMs) || 0);
+      (Number(unit.durationMs) || 0) +
+        (Number(int.durationMs) || 0) +
+        (Number(sys.durationMs) || 0);
 
     totalExecutedTests += pTotalTests;
     totalPassedTests += pPassedTests;
     totalFailedTests += pFailedTests;
     cumulativeDurationMs += pDuration;
 
-    // AI & Gaps
     const ai = p.aiMetrics || {};
     totalAiGenerated += Number(ai.aiGeneratedTests) || 0;
     totalAiRepaired += Number(ai.aiRepairedTests) || 0;
@@ -235,41 +279,30 @@ export function computePortfolioExecutiveKpis(projects = []) {
   }
 
   const avgHealthScore =
-    testedProjectsCount > 0 ? Math.round(sumHealth / testedProjectsCount) : 0;
+    testedProjectsCount > 0 ? Math.round(sumHealth / testedProjectsCount) : null;
 
   let portfolioGrade = "—";
-  if (testedProjectsCount > 0) {
-    if (avgHealthScore >= PORTFOLIO_CONFIG.grades.A) portfolioGrade = "A";
-    else if (avgHealthScore >= PORTFOLIO_CONFIG.grades.B) portfolioGrade = "B";
-    else if (avgHealthScore >= PORTFOLIO_CONFIG.grades.C) portfolioGrade = "C";
+  if (avgHealthScore !== null) {
+    if (avgHealthScore >= PORTFOLIO_GRADE_THRESHOLDS.A) portfolioGrade = "A";
+    else if (avgHealthScore >= PORTFOLIO_GRADE_THRESHOLDS.B) portfolioGrade = "B";
+    else if (avgHealthScore >= PORTFOLIO_GRADE_THRESHOLDS.C) portfolioGrade = "C";
     else portfolioGrade = "D";
   }
 
   const avgUnitCoverage =
-    activeCoverageProjectsCount > 0
-      ? toFixedPct(sumUnitCoverage / activeCoverageProjectsCount)
-      : 0;
+    unitCovCount > 0 ? roundMetric(sumUnitCoverage / unitCovCount, 1) : null;
   const avgIntegrationCoverage =
-    activeCoverageProjectsCount > 0
-      ? toFixedPct(sumIntCoverage / activeCoverageProjectsCount)
-      : 0;
+    intCovCount > 0 ? roundMetric(sumIntCoverage / intCovCount, 1) : null;
   const avgSystemCoverage =
-    activeCoverageProjectsCount > 0
-      ? toFixedPct(sumSysCoverage / activeCoverageProjectsCount)
-      : 0;
+    sysCovCount > 0 ? roundMetric(sumSysCoverage / sysCovCount, 1) : null;
 
-  const weights = PORTFOLIO_CONFIG.weights;
-  const weightedUnifiedCoverage = toFixedPct(
-    avgUnitCoverage * weights.unit +
-      avgIntegrationCoverage * weights.integration +
-      avgSystemCoverage * weights.system
-  );
+  const unifiedAgg = computeNormalizedWeightedAverage({
+    unit: avgUnitCoverage,
+    integration: avgIntegrationCoverage,
+    system: avgSystemCoverage,
+  });
 
-  const overallPassRate =
-    totalExecutedTests > 0
-      ? toFixedPct((totalPassedTests / totalExecutedTests) * 100)
-      : 0;
-
+  const overallPassRate = computePassRatePct(totalPassedTests, totalFailedTests);
   const timeRoi = aggregatePortfolioTimeAndRoi(projects);
 
   return {
@@ -280,22 +313,40 @@ export function computePortfolioExecutiveKpis(projects = []) {
       atRisk: atRiskProjects,
       blocked: blockedProjects,
       untested: untestedProjects,
-      passedPct: totalProjects > 0 ? toFixedPct((passedProjects / totalProjects) * 100) : 0,
+      passedPct: totalProjects > 0 ? roundMetric((passedProjects / totalProjects) * 100, 1) : 0,
     },
     card1Health: {
       avgHealthScore,
       grade: portfolioGrade,
       totalProjects,
+      testedProjects: testedProjectsCount,
       passedProjects,
       atRiskProjects,
       blockedProjects,
       untestedProjects,
     },
     card2Coverage: {
-      unifiedCoveragePct: weightedUnifiedCoverage,
+      unifiedCoveragePct: unifiedAgg.value,
       avgUnitCoveragePct: avgUnitCoverage,
       avgIntegrationCoveragePct: avgIntegrationCoverage,
       avgSystemCoveragePct: avgSystemCoverage,
+      layerCoverageMeta: {
+        unit: {
+          avgPct: avgUnitCoverage,
+          measuredCount: unitCovCount,
+          totalKpiProjects: totalProjects,
+        },
+        integration: {
+          avgPct: avgIntegrationCoverage,
+          measuredCount: intCovCount,
+          totalKpiProjects: totalProjects,
+        },
+        system: {
+          avgPct: avgSystemCoverage,
+          measuredCount: sysCovCount,
+          totalKpiProjects: totalProjects,
+        },
+      },
     },
     card3Scale: {
       totalExecutedTests,
@@ -320,75 +371,75 @@ export function computePortfolioExecutiveKpis(projects = []) {
 }
 
 /**
- * Compute benchmark bars & scatter plot quadrant matrix (Zone 3)
+ * Compute benchmark bars & scatter plot quadrant matrix (Zone 3) using shared classification
  */
 export function computeBenchmarkAndQuadrantData(projects = []) {
-  const { coverageCutoff, passRateCutoff, definitions } = PORTFOLIO_CONFIG.riskQuadrants;
+  const { coverageCutoff, passRateCutoff } = PORTFOLIO_RISK_QUADRANT_CUTOFFS;
+  const definitions = PORTFOLIO_CONFIG.riskQuadrants.definitions;
 
   const benchmarkItems = projects.map((p) => {
-    const unitPct = Number(p.pillars?.unit?.coveragePct ?? 0);
-    const intPct = Number(p.pillars?.integration?.coveragePct ?? 0);
-    const sysPct = Number(p.pillars?.system?.coveragePct ?? 0);
+    const unitPct = isLayerMeasured(p.pillars?.unit)
+      ? Number(p.pillars.unit.coveragePct)
+      : null;
+    const intPct = isLayerMeasured(p.pillars?.integration)
+      ? Number(p.pillars.integration.coveragePct)
+      : null;
+    const sysPct = isLayerMeasured(p.pillars?.system)
+      ? Number(p.pillars.system.coveragePct)
+      : null;
 
-    const allValues = [unitPct, intPct, sysPct];
+    const unitNum = unitPct ?? 0;
+    const intNum = intPct ?? 0;
+    const sysNum = sysPct ?? 0;
+    const allValues = [unitNum, intNum, sysNum];
     const maxVal = Math.max(...allValues);
     const minVal = Math.min(...allValues);
-    const hasImbalance = (maxVal - minVal >= 40 && (unitPct === 0 || intPct === 0 || sysPct === 0)) || (unitPct > 0 && intPct === 0);
+    const hasImbalance =
+      (maxVal - minVal >= 40 && minVal === 0) || (unitNum > 0 && intNum === 0);
 
     return {
       projectId: p.id,
       name: p.name,
       gateStatus: p.gateStatus,
-      healthScore: p.healthScore,
+      healthScore: p.healthScore ?? null,
       unitPct,
       intPct,
       sysPct,
       hasImbalance,
       imbalanceReason: hasImbalance
-        ? `Layer deficit: ${unitPct}% Unit vs ${intPct}% API coverage`
+        ? `Layer deficit: ${unitPct ?? "N/A"}% Unit vs ${intPct ?? "N/A"}% API`
         : null,
     };
   });
 
+  const quadrantColorById = {
+    "healthy-stars": "var(--ud-pass)",
+    "false-security": "var(--ud-warn)",
+    "active-regressions": "#fb8500",
+    "critical-risk": "var(--ud-fail)",
+    untested: "var(--ps-neutral)",
+  };
+
   const quadrantNodes = projects.map((p) => {
-    const x = Number(p.unifiedCoveragePct ?? 0);
-    const y = p.passRatePct !== null && p.passRatePct !== undefined ? Number(p.passRatePct) : 0;
-
-    let quadrantId;
-    if (x >= coverageCutoff && y >= passRateCutoff) {
-      quadrantId = "healthy-stars";
-    } else if (x < coverageCutoff && y >= passRateCutoff) {
-      quadrantId = "false-security";
-    } else if (x >= coverageCutoff && y < passRateCutoff) {
-      quadrantId = "active-regressions";
-    } else {
-      quadrantId = "critical-risk";
-    }
-
-    const def =
-      definitions[
-        quadrantId === "healthy-stars"
-          ? "healthyStars"
-          : quadrantId === "false-security"
-          ? "falseSecurity"
-          : quadrantId === "active-regressions"
-          ? "activeRegressions"
-          : "criticalRisk"
-      ];
+    const classification = classifyRiskQuadrant({
+      unifiedCoveragePct: p.unifiedCoveragePct,
+      passRatePct: p.passRatePct,
+      gateStatus: p.gateStatus,
+    });
 
     return {
       projectId: p.id,
       name: p.name,
-      x,
-      y,
+      x: classification.isUntested ? null : (p.unifiedCoveragePct ?? null),
+      y: classification.isUntested ? null : (p.passRatePct ?? null),
       gateStatus: p.gateStatus,
       gateLabel: p.gateLabel || p.gateStatus,
-      healthScore: p.healthScore,
+      healthScore: p.healthScore ?? null,
       grade: p.grade || "—",
-      quadrantId,
-      quadrantLabel: def.label,
-      color: def.color,
-      isUntested: (p.gateStatus || "").toUpperCase() === "UNTESTED",
+      quadrantId: classification.quadrantId,
+      quadrantLabel: classification.quadrantLabel,
+      color: quadrantColorById[classification.quadrantId] || "var(--ps-neutral)",
+      isUntested: classification.isUntested,
     };
   });
 
@@ -412,7 +463,7 @@ export function filterAndSortPortfolioProjects(
     layerDeficit = "all",
     sortBy = "health-desc",
     favorites = [],
-  } = {}
+  } = {},
 ) {
   let list = [...projects];
 
@@ -435,36 +486,33 @@ export function filterAndSortPortfolioProjects(
     list = list.filter((p) => favorites.includes(p.id) || p.isPinned);
   } else if (statusFilter && statusFilter !== "all") {
     list = list.filter(
-      (p) => (p.gateStatus || "").toUpperCase() === statusFilter.toUpperCase()
+      (p) => (p.gateStatus || "").toUpperCase() === statusFilter.toUpperCase(),
     );
   }
 
-  // 3. Layer Deficit Filter
+  // 3. Layer Deficit Filter (null/unmeasured coverage counts as < 20)
   if (layerDeficit === "deficit-unit") {
-    list = list.filter((p) => Number(p.pillars?.unit?.coveragePct ?? 0) < 20);
+    list = list.filter((p) => (p.pillars?.unit?.coveragePct ?? 0) < 20);
   } else if (layerDeficit === "deficit-integration") {
-    list = list.filter(
-      (p) => Number(p.pillars?.integration?.coveragePct ?? 0) < 20
-    );
+    list = list.filter((p) => (p.pillars?.integration?.coveragePct ?? 0) < 20);
   } else if (layerDeficit === "deficit-system") {
-    list = list.filter((p) => Number(p.pillars?.system?.coveragePct ?? 0) < 20);
+    list = list.filter((p) => (p.pillars?.system?.coveragePct ?? 0) < 20);
   }
 
   // 4. Sort Selector
   list.sort((a, b) => {
-    // Pinned always bubble up if sorting by health or recent
     const aFav = favorites.includes(a.id) || a.isPinned ? 1 : 0;
     const bFav = favorites.includes(b.id) || b.isPinned ? 1 : 0;
 
     if (sortBy === "health-desc") {
       if (bFav !== aFav) return bFav - aFav;
-      return (b.healthScore ?? 0) - (a.healthScore ?? 0);
+      return (b.healthScore ?? -1) - (a.healthScore ?? -1);
     }
     if (sortBy === "health-asc") {
       return (a.healthScore ?? 0) - (b.healthScore ?? 0);
     }
     if (sortBy === "coverage-desc") {
-      return (b.unifiedCoveragePct ?? 0) - (a.unifiedCoveragePct ?? 0);
+      return (b.unifiedCoveragePct ?? -1) - (a.unifiedCoveragePct ?? -1);
     }
     if (sortBy === "gaps-desc") {
       const aGaps = a.aiMetrics?.uncoveredGaps ?? 0;
@@ -474,7 +522,6 @@ export function filterAndSortPortfolioProjects(
     if (sortBy === "name-asc") {
       return (a.name || "").localeCompare(b.name || "");
     }
-    // "recent" default
     if (bFav !== aFav) return bFav - aFav;
     return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
   });
@@ -482,39 +529,23 @@ export function filterAndSortPortfolioProjects(
   return list;
 }
 
-const LIFECYCLE_FILTER_TAG_LABELS = {
-  all: "State: All",
-  DOING: "State: Doing",
-  NOT_STARTED: "State: Not Started",
-  COMPLETED: "State: Completed",
-  PAUSED: "State: Paused",
-  CANCELLED: "State: Cancelled",
-};
-
 /**
- * Filter projects by portfolio lifecycle scope ("active" = DOING + NOT_STARTED, "all", or specific state)
+ * Filter projects by portfolio lifecycle scope ("open" / "active" = DOING + NOT_STARTED, "all", or specific state)
  */
-export function filterProjectsByLifecycle(projects = [], lifecycleTab = "active") {
-  if (lifecycleTab === "active") {
-    return projects.filter(
-      (p) =>
-        p.lifecycleStatus === "DOING" ||
-        p.lifecycleStatus === "NOT_STARTED" ||
-        !p.lifecycleStatus
-    );
+export function filterProjectsByLifecycle(projects = [], lifecycleTab = "open") {
+  if (lifecycleTab === "open" || lifecycleTab === "active") {
+    return projects.filter((p) => isOpenWorkspaceLifecycleStatus(p.lifecycleStatus));
   }
   if (lifecycleTab === "all") return projects;
-  return projects.filter(
-    (p) => (p.lifecycleStatus || "NOT_STARTED") === lifecycleTab
-  );
+  return projects.filter((p) => (p.lifecycleStatus || "NOT_STARTED") === lifecycleTab);
 }
 
 /**
- * Reuse server attention queue items for matching projects and synthesize items for non-DOING subsets
+ * Reuse server attention queue items for matching KPI-scope projects and synthesize fallback items
  */
 export function synthesizePortfolioAttentionQueue(
   projects = [],
-  serverAttentionQueue = []
+  serverAttentionQueue = [],
 ) {
   const byProject = new Map();
   for (const item of serverAttentionQueue || []) {
@@ -588,7 +619,7 @@ export function synthesizePortfolioAttentionQueue(
         category: "missing-deps",
         pillar: "integration",
         title: `${int.uncoveredApis} uncovered API endpoints in ${p.name}`,
-        description: `${int.coveredApis || 0}/${int.totalApis || 0} APIs covered (${int.coveragePct || 0}%). Synthesize integration tests to close gaps.`,
+        description: `${int.coveredApis || 0}/${int.totalApis || 0} APIs covered (${int.coveragePct ?? 0}%). Synthesize integration tests to close gaps.`,
         ctaLabel: "Synthesize API Tests ↗",
         targetPillar: "integration",
         targetFocus: {},
@@ -600,24 +631,33 @@ export function synthesizePortfolioAttentionQueue(
 }
 
 /**
- * Derive a complete PortfolioVM scoped to current UI filter criteria in realtime
+ * Derive PortfolioVM:
+ * - Directory project list respects UI filters (searchQuery, lifecycleTab, statusFilter, layerDeficit, sortBy)
+ * - Executive KPIs & Portfolio Analytics stay strictly locked to Active KPI Scope (DOING only) per D2
  */
 export function deriveFilteredPortfolioVm(
   vm,
   {
     searchQuery = "",
-    lifecycleTab = "active",
+    lifecycleTab = "open",
     statusFilter = "all",
     layerDeficit = "all",
     sortBy = "health-desc",
     favorites = [],
-  } = {}
+  } = {},
 ) {
   const allProjects = vm?.projects || [];
   const allLifecycleCounts = computePortfolioLifecycleCounts(allProjects);
+
+  // Strict D2 KPI Scope: ONLY DOING projects feed Executive KPIs & Portfolio Analytics
+  const kpiScopeProjects = allProjects.filter((p) =>
+    isKpiIncludedLifecycleStatus(p.lifecycleStatus),
+  );
+
+  // Directory list filtering (never leaks isolated/filtered states into Executive KPIs)
   const lifecycleFilteredProjects = filterProjectsByLifecycle(
     allProjects,
-    lifecycleTab
+    lifecycleTab,
   );
   const filteredProjects = filterAndSortPortfolioProjects(
     lifecycleFilteredProjects,
@@ -627,28 +667,27 @@ export function deriveFilteredPortfolioVm(
       layerDeficit,
       sortBy,
       favorites,
-    }
+    },
   );
 
   const filteredIdSet = new Set(filteredProjects.map((p) => p.id));
-  const kpis = computePortfolioExecutiveKpis(filteredProjects);
+
+  const kpis = computePortfolioExecutiveKpis(kpiScopeProjects);
   const timeRoiAnalytics = kpis.timeRoi;
-  const benchmarkAndQuadrant =
-    computeBenchmarkAndQuadrantData(filteredProjects);
-  const lifecycleCounts = computePortfolioLifecycleCounts(filteredProjects);
+  const benchmarkAndQuadrant = computeBenchmarkAndQuadrantData(kpiScopeProjects);
+  const directoryLifecycleCounts = computePortfolioLifecycleCounts(filteredProjects);
   const attentionQueue = synthesizePortfolioAttentionQueue(
-    filteredProjects,
-    vm?.attentionQueue || []
-  );
-  const activityFeed = (vm?.activityFeed || []).filter((evt) =>
-    filteredIdSet.has(evt.projectId)
+    kpiScopeProjects,
+    vm?.attentionQueue || [],
   );
 
   const activeFilterTags = [];
-  if (lifecycleTab && lifecycleTab !== "active") {
+  if (lifecycleTab && lifecycleTab !== "open" && lifecycleTab !== "active") {
+    const scopeLabel =
+      PORTFOLIO_FILTER_SCOPE_LABELS[lifecycleTab] || lifecycleTab;
     activeFilterTags.push({
       key: "lifecycle",
-      label: LIFECYCLE_FILTER_TAG_LABELS[lifecycleTab] || `State: ${lifecycleTab}`,
+      label: `State: ${scopeLabel}`,
     });
   }
   const trimmedSearch = searchQuery.trim();
@@ -671,7 +710,7 @@ export function deriveFilteredPortfolioVm(
   }
   if (layerDeficit && layerDeficit !== "all") {
     const opt = PORTFOLIO_CONFIG.layerDeficitOptions.find(
-      (o) => o.value === layerDeficit
+      (o) => o.value === layerDeficit,
     );
     activeFilterTags.push({
       key: "layerDeficit",
@@ -680,13 +719,18 @@ export function deriveFilteredPortfolioVm(
   }
 
   const isFiltered = activeFilterTags.length > 0;
+  const activityFeed = isFiltered
+    ? (vm?.activityFeed || []).filter((evt) => filteredIdSet.has(evt.projectId))
+    : vm?.activityFeed || [];
 
   const filteredVm = {
     ...(vm || {}),
     projects: filteredProjects,
+    kpiProjects: kpiScopeProjects,
     kpis,
     timeRoiAnalytics,
-    lifecycleCounts,
+    lifecycleCounts: allLifecycleCounts,
+    directoryLifecycleCounts,
     analytics: {
       ...(vm?.analytics || {}),
       ...benchmarkAndQuadrant,
@@ -696,18 +740,22 @@ export function deriveFilteredPortfolioVm(
     activityFeed,
     metadata: {
       ...(vm?.metadata || {}),
-      activeProjectsCount: filteredProjects.filter(
-        (p) => p.lifecycleStatus === "DOING"
-      ).length,
+      activeProjectsCount: kpiScopeProjects.length,
+      doingProjectsCount: allLifecycleCounts.DOING,
+      openProjectsCount: allLifecycleCounts.open,
+      isolatedProjectsCount: allLifecycleCounts.isolated,
       matchingProjectsCount: filteredProjects.length,
       totalProjectsCount: allProjects.length,
-      totalSnapshotsCount: filteredProjects.filter((p) => p.snapshotId).length,
+      totalSnapshotsCount: allProjects.filter((p) => p.snapshotId).length,
+      isFiltered,
+      kpiScopeLabel: "Active KPI Scope (Doing only)",
     },
   };
 
   return {
     filteredVm,
     filteredProjects,
+    kpiScopeProjects,
     lifecycleFilteredProjects,
     allLifecycleCounts,
     isFiltered,

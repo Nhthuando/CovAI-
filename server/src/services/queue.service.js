@@ -391,6 +391,17 @@ worker?.on('error', (err) => {
   }
 });
 
+export const getQueueRuntimeTelemetry = () => {
+  const redisReady = Boolean(isRedisConnected && connection?.status === 'ready');
+  const workerActive = Boolean(workerConfig?.enabled && worker);
+  return {
+    isRedisConnected: redisReady,
+    workerEnabled: workerActive,
+    activeWorkers: workerActive ? workerConfig.concurrency : 0,
+    runnerStatus: redisReady ? (workerActive ? 'READY' : 'API_ONLY') : 'DEGRADED',
+  };
+};
+
 export const addJobToQueue = async (type, jobId, customData = {}, jobOptions = {}) => {
   if (['AI_EVALUATION', 'AI_EVALUATION_PREPARE'].includes(type) && connection.status !== 'ready') {
     throw new ServiceError('Redis must be ready before evaluation can be queued', 503, 'DEPENDENCY_UNAVAILABLE');

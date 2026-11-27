@@ -8,9 +8,11 @@ import {
   GitBranch,
   ExternalLink,
   FolderGit2,
+  SlidersHorizontal,
 } from "lucide-react";
+import { PORTFOLIO_FILTER_SCOPE_LABELS } from "../../../../../../shared/portfolioGovernance.js";
 import { ProjectQualityCard } from "../cards/ProjectQualityCard.jsx";
-import LifecycleStatusSelect from "../primitives/LifecycleStatusSelect.jsx";
+import LifecycleStatusBadge from "../primitives/LifecycleStatusBadge.jsx";
 import {
   computePortfolioLifecycleCounts,
   filterAndSortPortfolioProjects,
@@ -42,10 +44,9 @@ function ProjectDirectoryWorkspaceZoneComponent({
   onTogglePin,
   onOpenOverview,
   onNavigateWorkspace,
+  onOpenProjectSettings = null,
   onDeleteProject,
   onAskAiAboutProject,
-  onLifecycleStatusChange = null,
-  onLifecycleStatusCommitted = null,
   onAddProject,
   className = "",
 }) {
@@ -54,7 +55,7 @@ function ProjectDirectoryWorkspaceZoneComponent({
     typeof onLifecycleTabChange === "function";
 
   const [localSearch, setLocalSearch] = useState("");
-  const [localLifecycleTab, setLocalLifecycleTab] = useState("active");
+  const [localLifecycleTab, setLocalLifecycleTab] = useState("open");
   const [localLayerDeficit, setLocalLayerDeficit] = useState("all");
   const [localSortBy, setLocalSortBy] = useState("health-desc");
   const [viewMode, setViewMode] = useState("grid");
@@ -142,7 +143,7 @@ function ProjectDirectoryWorkspaceZoneComponent({
           searchQuery.trim() ||
             statusFilter !== "all" ||
             layerDeficit !== "all" ||
-            lifecycleTab !== "active"
+            (lifecycleTab !== "open" && lifecycleTab !== "active")
         );
 
   const handleReset = () => {
@@ -150,11 +151,15 @@ function ProjectDirectoryWorkspaceZoneComponent({
       onResetFilters();
     } else {
       handleSearchChange("");
-      handleLifecycleChange("active");
+      handleLifecycleChange("open");
       onStatusFilterChange?.("all");
       handleLayerDeficitChange("all");
     }
   };
+
+  const openCount =
+    lifecycleCounts.open ??
+    (lifecycleCounts.DOING || 0) + (lifecycleCounts.NOT_STARTED || 0);
 
   return (
     <section
@@ -200,26 +205,34 @@ function ProjectDirectoryWorkspaceZoneComponent({
             )}
           </div>
 
-          {/* Scope Dropbox */}
+          {/* Scope Dropbox (D2 labels: Open (Doing & Not Started) vs Doing (KPI Scope)) */}
           <select
             aria-label="Filter by lifecycle state"
             value={lifecycleTab}
             onChange={(e) => handleLifecycleChange(e.target.value)}
             className="ps-select"
           >
-            <option value="active">Active ({lifecycleCounts.active})</option>
-            <option value="DOING">Doing ({lifecycleCounts.DOING})</option>
+            <option value="open">
+              {PORTFOLIO_FILTER_SCOPE_LABELS.open} ({openCount})
+            </option>
+            <option value="DOING">
+              {PORTFOLIO_FILTER_SCOPE_LABELS.DOING} ({lifecycleCounts.DOING || 0})
+            </option>
             <option value="NOT_STARTED">
-              Not Started ({lifecycleCounts.NOT_STARTED})
+              {PORTFOLIO_FILTER_SCOPE_LABELS.NOT_STARTED} ({lifecycleCounts.NOT_STARTED || 0})
             </option>
             <option value="COMPLETED">
-              Completed ({lifecycleCounts.COMPLETED})
+              {PORTFOLIO_FILTER_SCOPE_LABELS.COMPLETED} ({lifecycleCounts.COMPLETED || 0})
             </option>
-            <option value="PAUSED">Paused ({lifecycleCounts.PAUSED})</option>
+            <option value="PAUSED">
+              {PORTFOLIO_FILTER_SCOPE_LABELS.PAUSED} ({lifecycleCounts.PAUSED || 0})
+            </option>
             <option value="CANCELLED">
-              Cancelled ({lifecycleCounts.CANCELLED})
+              {PORTFOLIO_FILTER_SCOPE_LABELS.CANCELLED} ({lifecycleCounts.CANCELLED || 0})
             </option>
-            <option value="all">All States ({lifecycleCounts.all})</option>
+            <option value="all">
+              {PORTFOLIO_FILTER_SCOPE_LABELS.all} ({lifecycleCounts.all || 0})
+            </option>
           </select>
 
           {/* Pinned Filter Dropbox */}
@@ -346,16 +359,15 @@ function ProjectDirectoryWorkspaceZoneComponent({
               onTogglePin={onTogglePin}
               onOpenOverview={onOpenOverview}
               onNavigateWorkspace={onNavigateWorkspace}
+              onOpenProjectSettings={onOpenProjectSettings}
               onDeleteProject={onDeleteProject}
               onAskAiAboutProject={onAskAiAboutProject}
-              onLifecycleStatusChange={onLifecycleStatusChange}
-              onLifecycleStatusCommitted={onLifecycleStatusCommitted}
             />
           ))}
         </div>
       ) : (
         <div className="ps-panel overflow-x-auto">
-          <table className="w-full text-left ps-mono text-xs border-collapse">
+          <table className="w-full text-left ps-mono text-xs tabular-nums border-collapse">
             <thead>
               <tr className="border-b border-[var(--ps-line)] bg-[var(--ps-surface-2)]/60 text-[10px] text-[var(--ps-ink-muted)] uppercase tracking-wider">
                 <th className="py-2.5 px-3 w-8 text-center">★</th>
@@ -367,7 +379,7 @@ function ProjectDirectoryWorkspaceZoneComponent({
                 <th className="py-2.5 px-3 text-right">E2E</th>
                 <th className="py-2.5 px-3 text-center">Pass / Fail</th>
                 <th className="py-2.5 px-3 text-right">Saved</th>
-                <th className="py-2.5 px-3 text-center">Open</th>
+                <th className="py-2.5 px-3 text-center">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--ps-line)]">
@@ -382,9 +394,16 @@ function ProjectDirectoryWorkspaceZoneComponent({
                 const intPass = p.pillars?.integration?.passedTests ?? 0;
                 const sysPass = p.pillars?.system?.passedTests ?? 0;
                 const totalPass = unitPass + intPass + sysPass;
-                const totalFail = totalTests - totalPass;
+
+                const unitFail = p.pillars?.unit?.failedTests ?? 0;
+                const intFail = p.pillars?.integration?.failedTests ?? 0;
+                const sysFail = p.pillars?.system?.failedTests ?? 0;
+                const totalFail = unitFail + intFail + sysFail;
 
                 const hours = p.timeRoi?.totalHoursSaved || 0;
+                const unitCov = p.pillars?.unit?.coveragePct;
+                const intCov = p.pillars?.integration?.coveragePct;
+                const sysCov = p.pillars?.system?.coveragePct;
 
                 return (
                   <tr
@@ -419,40 +438,40 @@ function ProjectDirectoryWorkspaceZoneComponent({
                       </button>
                       <div className="flex items-center gap-1 text-[10px] text-[var(--ps-ink-muted)] ps-mono mt-0.5">
                         <GitBranch size={10} className="text-[var(--ps-cobalt)]" />
-                        <span>{p.branch || "main"}</span>
+                        <span>{p.branch || "local"}</span>
                       </div>
                     </td>
 
                     <td className="py-2.5 px-3 text-center font-sans">
-                      <LifecycleStatusSelect
-                        projectId={p.id}
-                        currentStatus={p.lifecycleStatus || "NOT_STARTED"}
-                        onStatusChange={(newStatus) =>
-                          onLifecycleStatusChange?.(p.id, newStatus)
-                        }
-                        onStatusCommitted={(newStatus) =>
-                          onLifecycleStatusCommitted?.(p.id, newStatus)
-                        }
+                      <LifecycleStatusBadge
+                        status={p.lifecycleStatus || "NOT_STARTED"}
+                        size="sm"
                       />
                     </td>
 
                     <td className="py-2.5 px-3 text-center">
-                      <span className="font-bold text-[var(--ps-ink)]">
-                        {p.healthScore}
-                      </span>
-                      <span className="text-[10px] text-[var(--ps-ink-muted)]">
-                        /100
-                      </span>
+                      {p.healthScore !== null && p.healthScore !== undefined ? (
+                        <>
+                          <span className="font-bold text-[var(--ps-ink)]">
+                            {p.healthScore}
+                          </span>
+                          <span className="text-[10px] text-[var(--ps-ink-muted)]">
+                            /100
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-[var(--ps-ink-muted)]">—</span>
+                      )}
                     </td>
 
                     <td className="py-2.5 px-3 text-right text-[var(--ps-cobalt)]">
-                      {p.pillars?.unit?.coveragePct ?? 0}%
+                      {unitCov !== null && unitCov !== undefined ? `${unitCov}%` : "—"}
                     </td>
                     <td className="py-2.5 px-3 text-right text-[var(--ps-indigo)]">
-                      {p.pillars?.integration?.coveragePct ?? 0}%
+                      {intCov !== null && intCov !== undefined ? `${intCov}%` : "—"}
                     </td>
                     <td className="py-2.5 px-3 text-right text-[var(--ps-teal)]">
-                      {p.pillars?.system?.coveragePct ?? 0}%
+                      {sysCov !== null && sysCov !== undefined ? `${sysCov}%` : "—"}
                     </td>
 
                     <td className="py-2.5 px-3 text-center">
@@ -482,14 +501,26 @@ function ProjectDirectoryWorkspaceZoneComponent({
                     </td>
 
                     <td className="py-2.5 px-3 text-center">
-                      <button
-                        type="button"
-                        onClick={() => onOpenOverview?.(p.id, p)}
-                        className="p-1 rounded text-[var(--ps-cobalt)] hover:bg-[var(--ps-surface-2)] transition-colors cursor-pointer"
-                        title="Open Overview"
-                      >
-                        <ExternalLink size={13} />
-                      </button>
+                      <div className="inline-flex items-center justify-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => onOpenProjectSettings?.(p)}
+                          className="p-1 rounded text-[var(--ps-ink-muted)] hover:text-[var(--ps-ink)] hover:bg-[var(--ps-surface-2)] transition-colors cursor-pointer"
+                          title="Project settings"
+                          aria-label={`Project settings for ${p.name}`}
+                        >
+                          <SlidersHorizontal size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onOpenOverview?.(p.id, p)}
+                          className="p-1 rounded text-[var(--ps-cobalt)] hover:bg-[var(--ps-surface-2)] transition-colors cursor-pointer"
+                          title="Open Overview"
+                          aria-label={`Open overview for ${p.name}`}
+                        >
+                          <ExternalLink size={13} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );

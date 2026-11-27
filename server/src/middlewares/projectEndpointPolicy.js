@@ -1,4 +1,5 @@
 import { editorEnabled } from '../../../shared/editorProtocol.js';
+import { LIFECYCLE_MANAGE_CAPABILITY } from '../../../shared/portfolioGovernance.js';
 import { editorSnapshotStatus, checkpointEditorDocuments } from '../services/projectEditorCheckpoint.service.js';
 import { withEditorCheckpoint } from '../services/projectEditorRequestContext.service.js';
 import {
@@ -47,7 +48,7 @@ export const projectEndpointRule = (family, method, path, input = {}) => {
             else if (parts[1] === "snapshots" && parts.length === 2 && method === "POST") capability = "vcs.local";
             else if (["upload-zip", "import-github", "snapshots"].includes(parts[1])) capability = "integrations.write";
             else if (["file-content", "files", "folders", "entries"].includes(parts[1])) capability = "files.write";
-            else if (parts[1] === "status") capability = "files.write";
+            else if (parts[1] === "status") capability = LIFECYCLE_MANAGE_CAPABILITY;
             else if (parts[1] === "ai-context") capability = parts[2] === "preview" ? "project.read" : method === "DELETE" && parts.length === 3 ? "chat.delete" : "memory.write";
             else if (parts[1] === "chat") capability = method === "DELETE" ? "chat.delete" : "chat.write";
             else if (parts[1] === "integration" && parts[2] === "install-dependencies") capability = "integrations.write";

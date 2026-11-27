@@ -18,6 +18,10 @@ import {
   getNormalizedMatchKey,
   resolveSnapshotRootDir,
 } from "./unitCoverageSummary.service.js";
+import {
+  computeProjectHealthAndCoverage,
+  safeParseMetaJson,
+} from "../../../shared/portfolioGovernance.js";
 
 function toFixedNum(val, fallback = 0) {
   if (val === null || val === undefined || val === "") return fallback;
@@ -1673,6 +1677,7 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
   const {
     systemPillar,
     sysFlowCoveragePct,
+    sysCoverageAvailable,
     sysPassed,
     sysFailed,
     sysTotal,
@@ -1684,19 +1689,25 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
 
   // 6. Aggregate Real AI Telemetry
   const startAi = Date.now();
-  let aiGeneratedCount = aiSystemScenariosCount + aiSuggestionsCount;
+  let aiGeneratedCount = aiSystemScenariosCount;
   let aiRepairedCount = aiSystemProposalsApplied;
 
   for (const rec of aiTestsList) {
-    const requests = Array.isArray(rec.metaJson?.requests) ? rec.metaJson.requests : [];
+    const parsedMeta = safeParseMetaJson(rec.metaJson);
+    const requests = Array.isArray(parsedMeta?.requests) ? parsedMeta.requests : [];
     if (requests.length > 0) {
-      aiGeneratedCount += requests.filter((r) => r.origin === "AI_GENERATED" || !r.origin).length;
-      aiRepairedCount += requests.filter((r) => r.repaired || r.healed || r.regenerated).length;
+      const repairedReqs = requests.filter(
+        (r) => r.repaired || r.healed || r.regenerated,
+      ).length;
+      const generatedReqs = requests.filter(
+        (r) =>
+          !(r.repaired || r.healed || r.regenerated) &&
+          (r.origin === "AI_GENERATED" || !r.origin),
+      ).length;
+      aiGeneratedCount += generatedReqs;
+      aiRepairedCount += repairedReqs;
     } else {
       aiGeneratedCount += 1;
-    }
-    if (rec.status === "APPROVED") {
-      aiRepairedCount += 1;
     }
   }
 
@@ -1913,48 +1924,30 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
     healthDelta = toFixedNum(currHealth - prevHealth);
   }
 
-  // Multi-tier Quality Health Score (Weights: Unit 50%, Integration 30%, System 20%)
-  const unitScore = unitTotal > 0 ? 0.5 * unitPassRate + 0.5 * unitLinesPct : 0;
-  const intScore = intTotalExecuted > 0 ? 0.5 * intPassRate + 0.5 * epCovPct : 0;
-  const sysScore = sysTotal > 0 ? 0.5 * sysPassRate + 0.5 * (sysFlowCoveragePct ?? 0) : 0;
+  const canonicalHealth = computeProjectHealthAndCoverage({
+    unit: {
+      totalTests: unitTotal,
+      passedTests: unitPassed,
+      failedTests: unitFailed,
+      coveragePct: unitTotal > 0 ? unitLinesPct : null,
+    },
+    integration: {
+      totalTests: intTotalExecuted,
+      passedTests: intPassed,
+      failedTests: intFailed,
+      coveragePct: intHasRuns && totalApis > 0 ? epCovPct : null,
+    },
+    system: {
+      totalTests: sysTotal,
+      passedTests: sysPassed,
+      failedTests: sysFailed,
+      coveragePct: sysCoverageAvailable ? sysFlowCoveragePct : null,
+    },
+  });
 
-  // Unexecuted or uncovered targets still count in the denominator to avoid artificial inflation
-  const weightedSum = unitScore * 0.5 + intScore * 0.3 + sysScore * 0.2;
-  let healthScore = Math.round(weightedSum);
-
-  // Failure penalty: reduce score when tests fail
-  const totalFailures = unitFailed + intFailed + sysFailed;
-  if (totalFailures > 0) {
-    healthScore = Math.max(0, healthScore - Math.min(15, totalFailures * 2));
-  }
-
-  const totalExecutedTests = unitTotal + intTotalExecuted + sysTotal;
-  let healthGrade = "—";
-  if (totalExecutedTests > 0) {
-    if (healthScore >= 80) healthGrade = "A";
-    else if (healthScore >= 65) healthGrade = "B";
-    else if (healthScore >= 50) healthGrade = "C";
-    else healthGrade = "D";
-  }
-
-  const hasProjectActivity =
-    unitTotal + intTotalExecuted + sysTotal > 0 ||
-    aiGeneratedCount > 0 ||
-    aiRepairedCount > 0 ||
-    projectSnapshots.length > 1 ||
-    historyRuns.length > 0 ||
-    Boolean(unitSummaryRecord);
-
-  let effectiveLifecycleStatus = snapshot.project?.lifecycleStatus || "NOT_STARTED";
-  if (effectiveLifecycleStatus === "NOT_STARTED" && hasProjectActivity) {
-    effectiveLifecycleStatus = "DOING";
-    prisma.project
-      .updateMany({
-        where: { id: snapshot.projectId, lifecycleStatus: "NOT_STARTED" },
-        data: { lifecycleStatus: "DOING", lifecycleUpdatedAt: new Date() },
-      })
-      .catch(() => {});
-  }
+  const healthScore = canonicalHealth.healthScore ?? 0;
+  const healthGrade = canonicalHealth.grade;
+  const effectiveLifecycleStatus = snapshot.project?.lifecycleStatus || "NOT_STARTED";
 
   const activeSuiteRun = activeJob
     ? {

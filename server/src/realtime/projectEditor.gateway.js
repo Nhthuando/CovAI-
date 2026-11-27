@@ -25,9 +25,10 @@ import { rememberEditorCommit, catchUpEditorOpen } from '../services/projectEdit
 
 let namespace;
 const colors = ['#a78bfa', '#38bdf8', '#fbbf24', '#34d399', '#fb7185', '#f472b6'];
+const rawSocketToken = socket => socket?.data?.token || socket?.handshake?.auth?.token;
 const identity = socket => {
     let claims;
-    try { claims = jwt.verify(socket.handshake.auth?.token, process.env.JWT_SECRET); }
+    try { claims = jwt.verify(rawSocketToken(socket), process.env.JWT_SECRET); }
     catch { throw Object.assign(new Error('Authentication required. Sign in again.'), { statusCode: 401, code: 'AUTH_REQUIRED' }); }
     if (typeof claims.userId !== 'string' || !claims.userId) throw new Error('Invalid identity');
     return claims.userId;
@@ -113,13 +114,31 @@ export function attachProjectEditorGateway(io, services = {}) {
     const open = services.open || openEditorDocument, apply = services.apply || applyEditorUpdate, sync = services.sync || syncEditorDocument;
     namespace.use(async (socket, next) => {
         try {
+            const initialToken = rawSocketToken(socket);
             const userId = identity(socket), user = await prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } });
             if (!user) throw new Error('Missing account');
-            socket.data = { userId, name: user.name || user.email, color: colors[[...userId].reduce((n, char) => n + char.charCodeAt(0), 0) % colors.length], documents: new Map(), suspendedProjects: new Set(), seen: Date.now(), rates: new Map() };
+            socket.data = { userId, token: initialToken, name: user.name || user.email, color: colors[[...userId].reduce((n, char) => n + char.charCodeAt(0), 0) % colors.length], documents: new Map(), suspendedProjects: new Set(), seen: Date.now(), rates: new Map() };
             next();
         } catch { next(new Error('Authentication required.')); }
     });
     namespace.on('connection', socket => {
+        socket.on('editor:auth', (input = {}, ack) => {
+            try {
+                const nextToken = typeof input?.token === 'string' ? input.token : '';
+                let claims;
+                try { claims = jwt.verify(nextToken, process.env.JWT_SECRET); }
+                catch { throw Object.assign(new Error('Authentication required. Sign in again.'), { statusCode: 401, code: 'AUTH_REQUIRED' }); }
+                if (!claims?.userId || claims.userId !== socket.data.userId) {
+                    throw Object.assign(new Error('Authentication identity mismatch.'), { statusCode: 403, code: 'AUTH_IDENTITY_MISMATCH' });
+                }
+                socket.data.token = nextToken;
+                if (socket.handshake?.auth) socket.handshake.auth.token = nextToken;
+                socket.data.seen = Date.now();
+                if (typeof ack === 'function') ack({ ok: true });
+            } catch (error) {
+                if (typeof ack === 'function') ack(errorDto(error));
+            }
+        });
         const bind = (event, run, limit = 20) => socket.on(event, async (input = {}, ack) => {
             try {
                 identity(socket);

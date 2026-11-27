@@ -893,9 +893,15 @@ const UnitFileMatrixTable = forwardRef(function UnitFileMatrixTable(
                         <tr className="bg-[var(--color-bg)]">
                           <td colSpan={6} className="p-0">
                             <div className="px-6 py-4 border-l-2 border-[var(--color-primary)] space-y-3.5">
-                              {/* Metadata & Quick Source Controls */}
-                              <div className="flex flex-wrap items-center justify-between gap-3 text-[11px] font-mono text-[var(--color-text-muted)] pb-2.5 border-b border-[var(--color-border)]/70">
+                              {/* Code Coverage Metrics & Quick Source Controls */}
+                              <div className="flex flex-wrap items-center justify-between gap-3 text-[11px] font-mono tabular-nums text-[var(--color-text-muted)] pb-2.5 border-b border-[var(--color-border)]/70">
                                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                                  <span
+                                    className="px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]"
+                                    title="Code execution metrics measured when running tests (S · B · F · L)"
+                                  >
+                                    Coverage Metrics
+                                  </span>
                                   <span>
                                     Statements:{" "}
                                     <span className="text-[var(--color-text-secondary)]">
@@ -1040,86 +1046,131 @@ const UnitFileMatrixTable = forwardRef(function UnitFileMatrixTable(
                                 );
                               })()}
 
-                              {/* Business Logic Functions Coverage Strip */}
-                              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
-                                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                                  <span className="font-mono text-[var(--color-text-muted)] mr-1">
-                                    Unit Functions ({coveredFnCount}/{fnCount}):
-                                  </span>
-                                  {(entry.caseCov.functionCoverage?.functions || []).length > 0 ? (
-                                    entry.caseCov.functionCoverage.functions.map((fn) => (
-                                      <button
-                                        key={fn.key}
-                                        type="button"
-                                        onClick={() =>
-                                          toggleSourceCodePreview(
-                                            entry.filePath,
-                                            fn.startLine || 1,
-                                          )
-                                        }
-                                        title={`Inspect ${fn.name}() inline at line ${fn.startLine || 1} (${fn.hit || 0} hits)`}
-                                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border font-mono text-[10px] cursor-pointer transition-colors ${
-                                          fn.failed
-                                            ? "bg-rose-500/[0.07] text-rose-400/90 border-rose-500/20 hover:bg-rose-500/15"
-                                            : fn.passed
-                                              ? "bg-emerald-500/[0.07] text-emerald-300/90 border-emerald-500/25 hover:bg-emerald-500/15"
-                                              : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"
-                                        }`}
-                                      >
-                                        <span
-                                          className={
-                                            fn.passed
-                                              ? "text-emerald-400/80"
-                                              : fn.failed
-                                                ? "text-rose-400/85"
-                                                : "text-[var(--color-text-muted)]"
-                                          }
-                                        >
-                                          {fn.passed
-                                            ? "✓"
-                                            : fn.failed
-                                              ? "✕"
-                                              : fn.hasDraftTest
-                                                ? "•"
-                                                : "○"}
-                                        </span>
-                                        <span>
-                                          {fn.name}() :{fn.startLine || 1}
-                                        </span>
-                                      </button>
-                                    ))
-                                  ) : (
-                                    <span className="font-mono text-[10px] text-[var(--color-text-secondary)]">
-                                      {Number(entry.linesPct ?? 0) >= 100
-                                        ? "✓ Module top-level logic covered (100%)"
-                                        : "Module top-level logic"}
+                              {/* Business Logic Functions & Test Design Techniques Overview */}
+                              <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]/70">
+                                <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                                  <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                                    <span className="font-mono tabular-nums text-[var(--color-text-muted)] mr-1">
+                                      Unit Functions ({coveredFnCount}/{fnCount}):
                                     </span>
-                                  )}
+                                    {(entry.caseCov.functionCoverage?.functions || []).length > 0 ? (
+                                      entry.caseCov.functionCoverage.functions.map((fn) => (
+                                        <button
+                                          key={fn.key}
+                                          type="button"
+                                          onClick={() =>
+                                            toggleSourceCodePreview(
+                                              entry.filePath,
+                                              fn.startLine || 1,
+                                            )
+                                          }
+                                          title={
+                                            fn.startLine
+                                              ? `Inspect ${fn.name}() inline at line ${fn.startLine} (${fn.hit || 0} hits)`
+                                              : `Inspect ${fn.name}() inline (${fn.testCount || 0} mapped scenarios)`
+                                          }
+                                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border font-mono tabular-nums text-[10px] cursor-pointer transition-colors duration-150 ${
+                                            fn.failed
+                                              ? "bg-rose-500/[0.07] text-rose-400/90 border-rose-500/20 hover:bg-rose-500/15"
+                                              : fn.passed
+                                                ? "bg-emerald-500/[0.07] text-emerald-300/90 border-emerald-500/25 hover:bg-emerald-500/15"
+                                                : "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"
+                                          }`}
+                                        >
+                                          <span
+                                            className={
+                                              fn.passed
+                                                ? "text-emerald-400/80"
+                                                : fn.failed
+                                                  ? "text-rose-400/85"
+                                                  : "text-[var(--color-text-muted)]"
+                                            }
+                                          >
+                                            {fn.passed
+                                              ? "✓"
+                                              : fn.failed
+                                                ? "✕"
+                                                : fn.hasDraftTest
+                                                  ? "•"
+                                                  : "○"}
+                                          </span>
+                                          <span>
+                                            {fn.name}()
+                                            {fn.startLine ? ` :${fn.startLine}` : ""}
+                                          </span>
+                                        </button>
+                                      ))
+                                    ) : (
+                                      <span className="font-mono text-[10px] text-[var(--color-text-secondary)]">
+                                        {Number(entry.linesPct ?? 0) >= 100
+                                          ? "✓ Module top-level logic covered (100%)"
+                                          : "Module top-level logic"}
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono tabular-nums text-[var(--color-text-muted)]">
+                                    {entry.caseCov.passedCount > 0 && (
+                                      <span className="text-emerald-400">
+                                        {entry.caseCov.passedCount} passed
+                                      </span>
+                                    )}
+                                    {entry.caseCov.failedCount > 0 && (
+                                      <span className="text-rose-400">
+                                        {entry.caseCov.failedCount} failed
+                                      </span>
+                                    )}
+                                    {entry.caseCov.notRunCount > 0 && (
+                                      <span>{entry.caseCov.notRunCount} pending</span>
+                                    )}
+                                    {entry.caseCov.redundantCount > 0 && (
+                                      <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/25">
+                                        {entry.caseCov.redundantCount} duplicate
+                                      </span>
+                                    )}
+                                    <span className="px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)]">
+                                      {testCount} {testCount === 1 ? "scenario" : "scenarios"}
+                                    </span>
+                                  </div>
                                 </div>
 
-                                <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono tabular-nums text-[var(--color-text-muted)]">
-                                  {entry.caseCov.passedCount > 0 && (
-                                    <span className="text-emerald-400">
-                                      {entry.caseCov.passedCount} passed
+                                {(entry.caseCov.techniqueSummary || []).length > 0 && (
+                                  <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 bg-[var(--color-bg)]/40 text-[10px] font-mono tabular-nums">
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      <span
+                                        className="text-[var(--color-text-muted)] mr-1"
+                                        title="Test design techniques used across scenarios to drive Statement, Branch, Function, and Line coverage"
+                                      >
+                                        Design Techniques:
+                                      </span>
+                                      {entry.caseCov.techniqueSummary.map((tech) => (
+                                        <span
+                                          key={tech.key}
+                                          title={tech.description}
+                                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${
+                                            tech.count > 0
+                                              ? "bg-[var(--color-surface-secondary)] text-[var(--color-text-secondary)] border-[var(--color-border)]"
+                                              : "bg-transparent text-[var(--color-text-muted)]/60 border-[var(--color-border)]/50"
+                                          }`}
+                                        >
+                                          <span>{tech.label}</span>
+                                          <span
+                                            className={
+                                              tech.count > 0
+                                                ? "text-[var(--color-text)]"
+                                                : "text-[var(--color-text-muted)]/60"
+                                            }
+                                          >
+                                            {tech.count}
+                                          </span>
+                                        </span>
+                                      ))}
+                                    </div>
+                                    <span className="text-[var(--color-text-muted)] hidden sm:inline">
+                                      Techniques drive S · B · F · L coverage
                                     </span>
-                                  )}
-                                  {entry.caseCov.failedCount > 0 && (
-                                    <span className="text-rose-400">
-                                      {entry.caseCov.failedCount} failed
-                                    </span>
-                                  )}
-                                  {entry.caseCov.notRunCount > 0 && (
-                                    <span>{entry.caseCov.notRunCount} pending</span>
-                                  )}
-                                  {entry.caseCov.redundantCount > 0 && (
-                                    <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/25">
-                                      {entry.caseCov.redundantCount} duplicate
-                                    </span>
-                                  )}
-                                  <span className="px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)]">
-                                    {testCount} {testCount === 1 ? "scenario" : "scenarios"}
-                                  </span>
-                                </div>
+                                  </div>
+                                )}
                               </div>
 
                               {/* Test Cases List */}
@@ -1202,10 +1253,10 @@ const UnitFileMatrixTable = forwardRef(function UnitFileMatrixTable(
                                                   <span
                                                     title={
                                                       ann.badgeType === "DUPLICATE"
-                                                        ? `Another test already targets "${ann.functionLabel || "this module"}" — safe to delete if redundant.`
+                                                        ? `Duplicate scenario intent for "${ann.functionLabel || ann.caseLabel || "this module"}" — safe to delete if redundant.`
                                                         : ann.functionLabel
-                                                          ? `Tests unit function ${ann.functionLabel}`
-                                                          : "Tests top-level module logic"
+                                                          ? `Targets unit function ${ann.functionLabel}`
+                                                          : `Covers ${ann.caseLabel || "module logic"}`
                                                     }
                                                     className={`px-1.5 py-0.5 rounded border ${
                                                       ann.badgeType === "DUPLICATE"
@@ -1220,6 +1271,15 @@ const UnitFileMatrixTable = forwardRef(function UnitFileMatrixTable(
                                                     {ann.badgeLabel}
                                                   </span>
                                                 )}
+                                                {ann?.techniqueLabel &&
+                                                  ann.badgeLabel !== `Case: ${ann.techniqueLabel}` && (
+                                                    <span
+                                                      title={`Test design technique: ${ann.techniqueLabel}`}
+                                                      className="px-1.5 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-secondary)]"
+                                                    >
+                                                      {ann.techniqueLabel}
+                                                    </span>
+                                                  )}
                                                 <span className="px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-text-secondary)]">
                                                   {isDraft ? "AI_DRAFT" : tc.origin || "PROJECT_EXISTING"}
                                                 </span>

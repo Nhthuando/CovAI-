@@ -109,11 +109,119 @@ export function isUnitTestFailed(tc) {
   return status === "FAIL" || status === "FAILED";
 }
 
+export const UNIT_TECHNIQUE_DEFINITIONS = {
+  HAPPY: {
+    key: "HAPPY",
+    label: "Happy Path",
+    shortLabel: "Happy Path",
+    description: "Standard valid inputs exercising core expected behavior.",
+  },
+  EQUIVALENCE: {
+    key: "EQUIVALENCE",
+    label: "Equivalence Partition",
+    shortLabel: "Equivalence",
+    description: "Representative valid and invalid input classes/formats.",
+  },
+  BOUNDARY: {
+    key: "BOUNDARY",
+    label: "Boundary Value",
+    shortLabel: "Boundary",
+    description: "Min/max limits, zero, negative, empty, null, or blank edges.",
+  },
+  BRANCH: {
+    key: "BRANCH",
+    label: "Decision / Branch",
+    shortLabel: "Decision / Branch",
+    description: "Conditional combinations, fallbacks, and alternate paths.",
+  },
+  ERROR: {
+    key: "ERROR",
+    label: "Error Guessing",
+    shortLabel: "Error Guessing",
+    description: "Rejected dependencies, thrown exceptions, and fault states.",
+  },
+};
+
+const RESERVED_BRACKET_CATEGORY_RE =
+  /^(?:happy(?:\s*path)?|boundary(?:\s*\/\s*edge|\s*values?)?|edge(?:\s*cases?)?|equivalence(?:\s*partition(?:ing)?)?|decision(?:\s*table)?|branch(?:\s*paths?|\s*toggling|\s*coverage)?|error(?:\s*handling|\s*guessing|\s*&\s*exception)?|category\s*[a-e]|tc[-_\s])/i;
+
+/**
+ * Extracts an explicit leading `[functionName]` tag from a unit test title when present
+ * (ignoring category tags such as `[Happy Path]`, `[Boundary / Edge]`, etc.).
+ */
+export function extractLeadingFunctionTag(rawTitle = "") {
+  const match = String(rawTitle || "")
+    .trim()
+    .match(/^\[\s*([A-Za-z_$][A-Za-z0-9_$.]*)\s*\]/);
+  if (!match || !match[1]) return null;
+  const candidate = match[1].trim();
+  if (RESERVED_BRACKET_CATEGORY_RE.test(candidate)) return null;
+  const methodName = candidate.split(".").pop().trim();
+  if (!methodName || isTrivialCallbackFunctionName(methodName)) return null;
+  if (methodName === "defaultExport" || methodName === "default") return null;
+  return methodName;
+}
+
+/**
+ * Classifies the specific Test Design Technique used by a unit test scenario
+ * (Happy Path, Equivalence Partition, Boundary Value, Decision / Branch, Error Guessing).
+ */
+export function classifyUnitTestTechnique(tc = {}) {
+  const explicitTech = String(tc.technique || tc.techniqueKey || "").trim().toUpperCase();
+  if (explicitTech && UNIT_TECHNIQUE_DEFINITIONS[explicitTech]) {
+    return UNIT_TECHNIQUE_DEFINITIONS[explicitTech];
+  }
+
+  const rawTitle = String(tc.title || tc.testName || tc.name || "").trim();
+  const cleanTitle = rawTitle.replace(
+    /^\[\s*(?!(?:happy|boundary|edge|equivalence|decision|branch|error|category\s+[a-e]|tc[-_]))[A-Za-z_$][A-Za-z0-9_$.]*\s*\]\s*/i,
+    "",
+  );
+  const lower = cleanTitle.toLowerCase();
+
+  if (
+    /\b(equivalence|partition|unsupported|unrecognized|unknown\s+type|invalid\s+(?:type|format|plan|card|mode|role|currency|enum|status|event_type)|valid\s+(?:plan|card|mode|role|currency|format)|preset|tier|class)\b/.test(
+      lower,
+    ) ||
+    (/\b400\b/.test(lower) && /\b(validation|schema|invalid|unsupported|format)\b/.test(lower))
+  ) {
+    return UNIT_TECHNIQUE_DEFINITIONS.EQUIVALENCE;
+  }
+
+  if (
+    /\b(boundary|edge|null|undefined|empty|zero|negative|min|max|limit|overflow|nan|blank|whitespace|single|truncated|large|exceed|cap|caps|threshold)\b/.test(
+      lower,
+    )
+  ) {
+    return UNIT_TECHNIQUE_DEFINITIONS.BOUNDARY;
+  }
+
+  if (
+    /\b(decision|branch|fallback|when\s+.*\s+(?:is|are)\s+(?:missing|absent|omitted|present|provided)|toggle|alternate|already|existing|else|switch|without)\b/.test(
+      lower,
+    )
+  ) {
+    return UNIT_TECHNIQUE_DEFINITIONS.BRANCH;
+  }
+
+  if (
+    /\b(error|errors|throw|throws|exception|reject|rejects|catch|fail|fails|failed|failure|timeout|abort|crash|corrupt|500)\b/.test(
+      lower,
+    )
+  ) {
+    return UNIT_TECHNIQUE_DEFINITIONS.ERROR;
+  }
+
+  const baseCase = classifyUnitTestCase(tc);
+  return UNIT_TECHNIQUE_DEFINITIONS[baseCase.key] || UNIT_TECHNIQUE_DEFINITIONS.HAPPY;
+}
+
 /**
  * Extracts and normalizes testable business logic functions for a unit source file.
- * Prioritizes named business functions while retaining full Istanbul function telemetry.
+ * Prioritizes named business functions while retaining full Istanbul function telemetry,
+ * and falls back to explicit `[fnName]` tags in mapped test cases when Istanbul telemetry is not yet available.
  */
-export function getTestableUnitFunctions(file = {}, fileFunctions = []) {
+export function getTestableUnitFunctions(file = {}, fileFunctions = [], testCases = []) {
   const rawList = Array.isArray(fileFunctions) ? fileFunctions : [];
   const normalized = [];
   const seenKeys = new Set();
@@ -145,7 +253,41 @@ export function getTestableUnitFunctions(file = {}, fileFunctions = []) {
   }
 
   const namedBusinessFns = normalized.filter((f) => !f.isCallback);
-  return namedBusinessFns.length > 0 ? namedBusinessFns : normalized;
+  if (namedBusinessFns.length > 0) return namedBusinessFns;
+  if (normalized.length > 0) return normalized;
+
+  // Fallback when Istanbul function telemetry hasn't run yet: infer target functions from `[fnName]` scenario prefixes
+  if (Array.isArray(testCases) && testCases.length > 0) {
+    const inferredByLower = new Map();
+    for (let i = 0; i < testCases.length; i++) {
+      const tc = testCases[i];
+      const tagFn = extractLeadingFunctionTag(tc?.title || tc?.testName || tc?.name || "");
+      if (!tagFn) continue;
+      const lower = tagFn.toLowerCase();
+      const passed = isUnitTestPassed(tc);
+      const existing = inferredByLower.get(lower);
+      if (existing) {
+        if (passed) {
+          existing.hit += 1;
+          existing.coveredByExecution = true;
+        }
+        continue;
+      }
+      inferredByLower.set(lower, {
+        key: `FN:${tagFn}:${inferredByLower.size + 1}`,
+        name: tagFn,
+        startLine: null,
+        hit: passed ? 1 : 0,
+        cyclomatic: 1,
+        isCallback: false,
+        inferredFromTests: true,
+        coveredByExecution: passed,
+      });
+    }
+    if (inferredByLower.size > 0) return [...inferredByLower.values()];
+  }
+
+  return normalized;
 }
 
 /**
@@ -437,7 +579,7 @@ export function getFileUnitFunctionCoverage(
   fileFunctions = [],
   testCases = [],
 ) {
-  const testableFunctions = getTestableUnitFunctions(file, fileFunctions);
+  const testableFunctions = getTestableUnitFunctions(file, fileFunctions, testCases);
   const allFunctions = Array.isArray(fileFunctions) ? fileFunctions : [];
   const fileFuncsPct = Number(file?.funcsPct ?? file?.functionsPct ?? 0);
   const fileLinesPct = Number(file?.linesPct ?? 0);
@@ -504,17 +646,32 @@ export function getFileUnitFunctionCoverage(
 export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases = []) {
   const requiredCases = getRequiredUnitCasesForFile(file, fileFunctions);
   const requiredByKey = new Map(requiredCases.map((c) => [c.key, c]));
-  const testableFunctions = getTestableUnitFunctions(file, fileFunctions);
+  const testableFunctions = getTestableUnitFunctions(file, fileFunctions, testCases);
   const useFunctionSlots = testableFunctions.length > 1;
+
+  const normalizeScenarioIntent = (rawTitle = "") =>
+    String(rawTitle || "")
+      .trim()
+      .replace(/^\[\s*[^\]]+\s*\]\s*[:\-]?\s*/i, "")
+      .replace(/^should\s+/i, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
 
   const orderedEntries = (testCases || []).map((tc, index) => {
     const def = classifyUnitTestCase(tc);
+    const technique = classifyUnitTestTechnique(tc);
     const matchedFns = matchUnitTestToFunctions(
       tc,
       testableFunctions,
       file?.functionCallees || null,
     );
-    const matchedFn = matchedFns[0] || null;
+    const explicitTagFn = extractLeadingFunctionTag(tc?.title || tc?.testName || tc?.name || "");
+    const matchedFn =
+      matchedFns[0] ||
+      (explicitTagFn ? { key: `FN:${explicitTagFn}:0`, name: explicitTagFn } : null);
+    const effectiveMatchedFns =
+      matchedFns.length > 0 ? matchedFns : matchedFn ? [matchedFn] : [];
     const passed = isUnitTestPassed(tc);
     const failed = isUnitTestFailed(tc);
     const isProjectExisting = isUserOrExistingUnitTest(tc);
@@ -528,35 +685,45 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
     } else {
       score = 20;
     }
-    const normTitle = String(tc.title || tc.testName || "")
-      .trim()
-      .toLowerCase()
-      .replace(/\s+/g, " ");
+    const rawTitleStr = String(tc.title || tc.testName || "").trim();
+    const normTitle = rawTitleStr.toLowerCase().replace(/\s+/g, " ");
+    const normIntent = normalizeScenarioIntent(rawTitleStr);
     const isRedundantFile = /(?:^|\/)[^/]*\.redundant\./i.test(
       String(tc.testFile || tc.filePath || "").replace(/\\/g, "/"),
     );
     const fnKeyPrefix = matchedFn ? matchedFn.name.toLowerCase() : "module";
-    const categorySlotKey =
-      matchedFn && (useFunctionSlots || /^\[\s*[A-Za-z_$]/.test(String(tc.title || "").trim()))
-        ? `FN::${fnKeyPrefix}::${def.key}`
-        : def.key;
-    // Distinct existing tests (e.g. multiple edge cases for 1 business function) get unique slots
-    // by normalized title so they are not falsely flagged Duplicate against one another.
-    const slotKey =
-      isProjectExisting && !isRedundantFile
-        ? `EXISTING::${fnKeyPrefix}::${normTitle || index}`
-        : categorySlotKey;
+    const hasFunctionTarget = Boolean(
+      matchedFn && (useFunctionSlots || Boolean(explicitTagFn)),
+    );
+    const categorySlotKey = hasFunctionTarget
+      ? `FN::${fnKeyPrefix}::${def.key}`
+      : def.key;
+    // Distinct scenarios targeting different intents/branches/boundaries/error codes (e.g. 400 validation vs 500 error)
+    // get distinct scenario slots so they are NEVER falsely flagged Duplicate against each other;
+    // only scenarios with the same normalized intent/title (or superseded by an existing project test in the same category) are flagged Duplicate.
+    let slotKey;
+    if (isRedundantFile) {
+      slotKey = categorySlotKey;
+    } else if (isProjectExisting) {
+      slotKey = `EXISTING::${fnKeyPrefix}::${normTitle || index}`;
+    } else if (hasFunctionTarget && normIntent) {
+      slotKey = `SCENARIO::${fnKeyPrefix}::${normIntent}`;
+    } else {
+      slotKey = categorySlotKey;
+    }
     return {
       tc,
       index,
       id: unitTestIdentity(tc, index),
       key: def.key,
+      technique,
       slotKey,
       categorySlotKey,
       normTitle,
+      normIntent,
       isRedundantFile,
       matchedFn,
-      matchedFns,
+      matchedFns: effectiveMatchedFns,
       def,
       passed,
       failed,
@@ -567,6 +734,8 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
 
   const bestForSlot = new Map();
   const coveredExistingCategorySlots = new Map();
+  const coveredExistingIntents = new Map();
+  const passingAiCategorySlots = new Map();
   for (const entry of orderedEntries) {
     const isFnSlot = entry.categorySlotKey.startsWith("FN::");
     if (!isFnSlot && !requiredByKey.has(entry.key)) continue;
@@ -574,6 +743,18 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
       const prevExisting = coveredExistingCategorySlots.get(entry.categorySlotKey);
       if (!prevExisting || entry.score > prevExisting.score) {
         coveredExistingCategorySlots.set(entry.categorySlotKey, entry);
+      }
+      if (entry.normIntent) {
+        const intentKey = `${entry.matchedFn ? entry.matchedFn.name.toLowerCase() : "module"}::${entry.normIntent}`;
+        const prevIntent = coveredExistingIntents.get(intentKey);
+        if (!prevIntent || entry.score > prevIntent.score) {
+          coveredExistingIntents.set(intentKey, entry);
+        }
+      }
+    } else if (!entry.isProjectExisting && !entry.failed) {
+      const prevAi = passingAiCategorySlots.get(entry.categorySlotKey);
+      if (!prevAi || entry.score > prevAi.score) {
+        passingAiCategorySlots.set(entry.categorySlotKey, entry);
       }
     }
     const prev = bestForSlot.get(entry.slotKey);
@@ -594,6 +775,7 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
   for (const entry of orderedEntries) {
     const isFnSlot = entry.categorySlotKey.startsWith("FN::");
     const reqDef = requiredByKey.get(entry.key) || entry.def;
+    const techDef = entry.technique || UNIT_TECHNIQUE_DEFINITIONS.HAPPY;
     const matchedNames = (entry.matchedFns || []).map((f) => f.name);
     const fnLabel =
       matchedNames.length > 0
@@ -605,9 +787,11 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
       extraCount++;
       annotations[entry.id] = {
         badgeType: "OPTIONAL",
-        badgeLabel: fnPrefix || "Module Logic",
+        badgeLabel: fnPrefix || `Case: ${reqDef.label}`,
         caseKey: entry.key,
-        caseLabel: fnLabel || "Module Logic",
+        caseLabel: fnLabel || reqDef.label,
+        techniqueKey: techDef.key,
+        techniqueLabel: techDef.label,
         targetFunction: entry.matchedFn?.name || null,
         targetFunctions: matchedNames,
         functionLabel: fnLabel,
@@ -616,12 +800,28 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
       continue;
     }
 
+    const intentKey = `${entry.matchedFn ? entry.matchedFn.name.toLowerCase() : "module"}::${entry.normIntent}`;
+    const existingWinnerForIntent = entry.normIntent
+      ? coveredExistingIntents.get(intentKey)
+      : null;
     const existingWinnerForCategory = coveredExistingCategorySlots.get(entry.categorySlotKey);
+    const existingWinner = isFnSlot && !entry.isRedundantFile
+      ? existingWinnerForIntent
+      : existingWinnerForCategory;
     const isSupersededByExisting =
-      (!entry.isProjectExisting || entry.isRedundantFile) && Boolean(existingWinnerForCategory);
-    const winner = existingWinnerForCategory || bestForSlot.get(entry.slotKey);
-    const isPrimary = !isSupersededByExisting && primaryBySlot.get(entry.slotKey) === entry.id;
-    const displayTarget = fnPrefix || "Module Logic";
+      (!entry.isProjectExisting || entry.isRedundantFile) && Boolean(existingWinner);
+    const aiReplacement =
+      entry.isProjectExisting && entry.failed
+        ? passingAiCategorySlots.get(entry.categorySlotKey) || null
+        : null;
+    const winner = isSupersededByExisting
+      ? existingWinner
+      : aiReplacement || bestForSlot.get(entry.slotKey);
+    const isPrimary =
+      !isSupersededByExisting &&
+      !aiReplacement &&
+      primaryBySlot.get(entry.slotKey) === entry.id;
+    const displayTarget = fnPrefix || `Case: ${reqDef.label}`;
 
     if (isPrimary) {
       const passed = entry.passed;
@@ -634,7 +834,9 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
             : "PRIMARY_PENDING",
         badgeLabel: displayTarget,
         caseKey: reqDef.key,
-        caseLabel: fnLabel || "Module Logic",
+        caseLabel: fnLabel || reqDef.label,
+        techniqueKey: techDef.key,
+        techniqueLabel: techDef.label,
         targetFunction: entry.matchedFn?.name || null,
         targetFunctions: matchedNames,
         functionLabel: fnLabel,
@@ -649,9 +851,11 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
     ) {
       annotations[entry.id] = {
         badgeType: "PRIMARY_FAIL",
-        badgeLabel: fnLabel ? `Failed · ${fnLabel}` : "Failed · Module Logic",
+        badgeLabel: fnLabel ? `Failed · ${fnLabel}` : `Failed · ${reqDef.label}`,
         caseKey: reqDef.key,
-        caseLabel: fnLabel || "Module Logic",
+        caseLabel: fnLabel || reqDef.label,
+        techniqueKey: techDef.key,
+        techniqueLabel: techDef.label,
         targetFunction: entry.matchedFn?.name || null,
         targetFunctions: matchedNames,
         functionLabel: fnLabel,
@@ -662,9 +866,11 @@ export function annotateFileUnitTests(file = {}, fileFunctions = [], testCases =
       redundantCount++;
       annotations[entry.id] = {
         badgeType: "DUPLICATE",
-        badgeLabel: fnLabel ? `Duplicate · ${fnLabel}` : "Duplicate · Module Logic",
+        badgeLabel: fnLabel ? `Duplicate · ${fnLabel}` : `Duplicate · ${reqDef.label}`,
         caseKey: reqDef.key,
-        caseLabel: fnLabel || "Module Logic",
+        caseLabel: fnLabel || reqDef.label,
+        techniqueKey: techDef.key,
+        techniqueLabel: techDef.label,
         targetFunction: entry.matchedFn?.name || null,
         targetFunctions: matchedNames,
         functionLabel: fnLabel,
@@ -716,6 +922,13 @@ export function getFileUnitCaseCoverage(
     annotateFileUnitTests(file, fileFunctions, testCases);
   const functionCoverage = getFileUnitFunctionCoverage(file, fileFunctions, testCases);
 
+  const techniqueSummary = Object.values(UNIT_TECHNIQUE_DEFINITIONS).map((tech) => {
+    const count = Object.values(scenarioAnnotations).filter(
+      (a) => a.techniqueKey === tech.key && a.badgeType !== "DUPLICATE",
+    ).length;
+    return { ...tech, count };
+  });
+
   return {
     cases,
     coveredCount,
@@ -731,6 +944,7 @@ export function getFileUnitCaseCoverage(
       passedCasesCount === cases.length &&
       failedCount === 0,
     scenarioAnnotations,
+    techniqueSummary,
     redundantCount,
     extraCount,
     functionCoverage,

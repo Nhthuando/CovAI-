@@ -15,66 +15,72 @@ import {
   DEMO_PORTFOLIO_ACTIVITY_FEED,
 } from "./portfolioDashboard.mock.js";
 
-test("computePortfolioExecutiveKpis calculates accurate portfolio totals from demo projects", () => {
+test("computePortfolioExecutiveKpis calculates accurate portfolio totals & measured layer metadata", () => {
   const kpis = computePortfolioExecutiveKpis(DEMO_PORTFOLIO_PROJECTS);
 
-  // Total projects = 6
   assert.equal(kpis.totalProjects, 6);
-
-  // Gate breakdown: 2 Passed, 2 At Risk, 1 Blocked, 1 Untested
   assert.equal(kpis.gateBreakdown.passed, 2);
   assert.equal(kpis.gateBreakdown.atRisk, 2);
   assert.equal(kpis.gateBreakdown.blocked, 1);
   assert.equal(kpis.gateBreakdown.untested, 1);
 
-  // Health score (tested projects average)
   assert.ok(kpis.card1Health.avgHealthScore >= 70 && kpis.card1Health.avgHealthScore <= 85);
   assert.ok(["A", "B", "C"].includes(kpis.card1Health.grade));
 
+  // Measured layer counts exclude unmeasured 0-test layers (merchant-admin-portal has 0 integration tests)
+  assert.equal(kpis.card2Coverage.layerCoverageMeta.unit.measuredCount, 5);
+  assert.equal(kpis.card2Coverage.layerCoverageMeta.integration.measuredCount, 4);
+  assert.equal(kpis.card2Coverage.layerCoverageMeta.system.measuredCount, 5);
+  assert.equal(kpis.card2Coverage.layerCoverageMeta.unit.totalKpiProjects, 6);
+
   // Card 3 Scale totals
-  // Sum of executed tests across projects: 210+24+8 (payment-gw: 242) + 164+12+6 (auth-sso: 182) + 144+25+13 (covai-core: 182) + 116+0+8 (merchant: 124) + 94+15+10 (order: 119) = 849
   assert.equal(kpis.card3Scale.totalExecutedTests, 849);
   assert.equal(kpis.card3Scale.totalPassedTests, 821);
   assert.equal(kpis.card3Scale.totalFailedTests, 28);
   assert.equal(kpis.card3Scale.overallPassRatePct, 96.7);
 
   // Card 4 AI Impact totals
-  assert.ok(kpis.card4AiImpact.totalAiTests > 0);
+  assert.ok(kpis.card4AiImpact.aiGeneratedCount > 0);
+  assert.ok(kpis.card4AiImpact.aiRepairedCount > 0);
+  assert.equal(
+    kpis.card4AiImpact.totalAiTests,
+    kpis.card4AiImpact.aiGeneratedCount + kpis.card4AiImpact.aiRepairedCount,
+  );
   assert.ok(kpis.card4AiImpact.uncoveredGapsCount > 0);
 });
 
-test("computeBenchmarkAndQuadrantData classifies projects into valid 4-quadrant categories", () => {
+test("computeBenchmarkAndQuadrantData classifies active nodes & isolates UNTESTED from Critical Risk", () => {
   const { quadrantNodes, benchmarkItems } = computeBenchmarkAndQuadrantData(DEMO_PORTFOLIO_PROJECTS);
 
   assert.equal(quadrantNodes.length, 6);
   assert.equal(benchmarkItems.length, 6);
 
-  // payment-gw (92.8% cov, 100% pass) -> healthy-stars
   const paymentNode = quadrantNodes.find((n) => n.projectId === "proj-payment-gw");
   assert.equal(paymentNode.quadrantId, "healthy-stars");
+  assert.equal(paymentNode.isUntested, false);
 
-  // merchant-admin-portal (53.5% cov, 97.6% pass) -> false-security (high pass, low cov)
   const merchantNode = quadrantNodes.find((n) => n.projectId === "proj-merchant-portal");
   assert.equal(merchantNode.quadrantId, "false-security");
+  assert.equal(merchantNode.isUntested, false);
 
-  // order-fulfillment-api (56.3% cov, 85.7% pass)
-  const orderNode = quadrantNodes.find((n) => n.projectId === "proj-order-api");
-  assert.ok(["active-regressions", "critical-risk", "false-security"].includes(orderNode.quadrantId));
+  const untestedNode = quadrantNodes.find((n) => n.projectId === "proj-inventory-sync");
+  assert.equal(untestedNode.quadrantId, "untested");
+  assert.equal(untestedNode.isUntested, true);
+  assert.equal(untestedNode.x, null);
+  assert.equal(untestedNode.y, null);
 
-  // merchant portal has 88.5% unit vs 0% api -> hasImbalance is true
   const merchantBench = benchmarkItems.find((b) => b.projectId === "proj-merchant-portal");
+  assert.equal(merchantBench.intPct, null);
   assert.equal(merchantBench.hasImbalance, true);
 });
 
 test("filterAndSortPortfolioProjects handles search, status, layer deficit, and sorting", () => {
-  // 1. Search filter
   const searchResults = filterAndSortPortfolioProjects(DEMO_PORTFOLIO_PROJECTS, {
     searchQuery: "payment",
   });
   assert.equal(searchResults.length, 1);
   assert.equal(searchResults[0].name, "payment-gateway-service");
 
-  // 2. Status filter
   const passedProjects = filterAndSortPortfolioProjects(DEMO_PORTFOLIO_PROJECTS, {
     statusFilter: "PASSED",
   });
@@ -86,19 +92,16 @@ test("filterAndSortPortfolioProjects handles search, status, layer deficit, and 
   assert.equal(blockedProjects.length, 1);
   assert.equal(blockedProjects[0].name, "order-fulfillment-api");
 
-  // 3. Layer deficit filter
   const missingInt = filterAndSortPortfolioProjects(DEMO_PORTFOLIO_PROJECTS, {
     layerDeficit: "deficit-integration",
   });
-  // merchant-admin-portal (0% int) and legacy-inventory-sync (0% int)
   assert.equal(missingInt.length, 2);
 
-  // 4. Sort by health ascending
   const sortedAsc = filterAndSortPortfolioProjects(DEMO_PORTFOLIO_PROJECTS, {
     sortBy: "health-asc",
   });
-  assert.equal(sortedAsc[0].healthScore, 0); // legacy-inventory-sync is 0
-  assert.equal(sortedAsc[sortedAsc.length - 1].healthScore, 94); // payment-gw is 94
+  assert.equal(sortedAsc[0].healthScore, 0);
+  assert.equal(sortedAsc[sortedAsc.length - 1].healthScore, 94);
 });
 
 test("formatPortfolioDuration handles milliseconds and minutes accurately", () => {
@@ -130,7 +133,8 @@ function buildLivePortfolioFixture() {
         actualAutoDurationMs: autoMs,
         estimatedManualDurationMs: manualMs,
         executionTimeSavedMs: Math.max(0, manualMs - autoMs),
-        aiAuthoringSavedMinutes: (p.aiMetrics.aiGeneratedTests + p.aiMetrics.aiRepairedTests) * 15,
+        aiAuthoringSavedMinutes:
+          (p.aiMetrics.aiGeneratedTests + p.aiMetrics.aiRepairedTests) * 15,
         totalHoursSaved: savedHours,
       },
     };
@@ -139,14 +143,14 @@ function buildLivePortfolioFixture() {
   return {
     projects,
     attentionQueue: DEMO_CROSS_PROJECT_ATTENTION_QUEUE.filter((a) =>
-      ["proj-order-api", "proj-covai-core"].includes(a.projectId)
+      ["proj-order-api", "proj-covai-core"].includes(a.projectId),
     ),
     activityFeed: DEMO_PORTFOLIO_ACTIVITY_FEED,
     metadata: { lastSyncedAt: "2026-10-28T22:20:00.000Z" },
   };
 }
 
-test("aggregatePortfolioTimeAndRoi sums metrics accurately across project subsets and handles empty arrays", () => {
+test("aggregatePortfolioTimeAndRoi attaches CovAI heuristic baseline metadata and handles empty arrays", () => {
   const fixture = buildLivePortfolioFixture();
   const subset = fixture.projects.slice(0, 2);
   const roi = aggregatePortfolioTimeAndRoi(subset);
@@ -157,8 +161,9 @@ test("aggregatePortfolioTimeAndRoi sums metrics accurately across project subset
   assert.ok(roi.totalManualDurationMs > 0);
   assert.ok(roi.totalQaHoursSaved > 0);
   assert.ok(roi.averageSpeedupMultiplier > 1);
-  assert.equal(typeof roi.totalAutoExecutionDurationFormatted, "string");
-  assert.equal(typeof roi.totalManualExecutionDurationFormatted, "string");
+  assert.equal(roi.isHeuristicEstimate, true);
+  assert.equal(roi.baselineLabel, "Est. (CovAI Baseline)");
+  assert.equal(/IEEE\s*829/i.test(roi.methodologyNote), false);
 
   const emptyRoi = aggregatePortfolioTimeAndRoi([]);
   assert.equal(emptyRoi.activeProjectsCount, 0);
@@ -168,111 +173,93 @@ test("aggregatePortfolioTimeAndRoi sums metrics accurately across project subset
   assert.equal(emptyRoi.speedupStr, "—");
 });
 
-test("computePortfolioExecutiveKpis attaches timeRoi and handles empty arrays safely", () => {
-  const kpis = computePortfolioExecutiveKpis(buildLivePortfolioFixture().projects.slice(0, 2));
-  assert.ok(kpis.timeRoi);
-  assert.equal(kpis.totalProjects, 2);
-  assert.ok(kpis.timeRoi.totalQaHoursSaved > 0);
-
+test("computePortfolioExecutiveKpis returns null metrics instead of fake zeros when empty", () => {
   const emptyKpis = computePortfolioExecutiveKpis([]);
   assert.equal(emptyKpis.totalProjects, 0);
-  assert.equal(emptyKpis.card1Health.avgHealthScore, 0);
+  assert.equal(emptyKpis.card1Health.avgHealthScore, null);
   assert.equal(emptyKpis.card1Health.grade, "—");
-  assert.equal(emptyKpis.card2Coverage.unifiedCoveragePct, 0);
+  assert.equal(emptyKpis.card2Coverage.unifiedCoveragePct, null);
+  assert.equal(emptyKpis.card2Coverage.avgUnitCoveragePct, null);
   assert.equal(emptyKpis.card3Scale.totalExecutedTests, 0);
-  assert.equal(emptyKpis.card3Scale.overallPassRatePct, 0);
+  assert.equal(emptyKpis.card3Scale.overallPassRatePct, null);
   assert.equal(emptyKpis.timeRoi.totalQaHoursSaved, 0);
 });
 
-test("deriveFilteredPortfolioVm updates KPIs, charts, lifecycle counts, attentionQueue, activityFeed, and metadata in realtime", () => {
+test("deriveFilteredPortfolioVm enforces D2 KPI Scope isolation across all 5 lifecycle states and directory filters", () => {
   const vm = buildLivePortfolioFixture();
 
-  // 1. Default active scope: DOING (3) + NOT_STARTED (1) = 4 projects
-  const activeRes = deriveFilteredPortfolioVm(vm, { lifecycleTab: "active" });
-  assert.equal(activeRes.isFiltered, false);
-  assert.equal(activeRes.filteredProjects.length, 4);
-  assert.equal(activeRes.allLifecycleCounts.all, 6);
-  assert.equal(activeRes.allLifecycleCounts.DOING, 3);
-  assert.equal(activeRes.allLifecycleCounts.COMPLETED, 1);
-  assert.equal(activeRes.filteredVm.lifecycleCounts.total, 4);
-  assert.equal(activeRes.filteredVm.lifecycleCounts.COMPLETED, 0);
-  assert.equal(activeRes.filteredVm.analytics.benchmarkItems.length, 4);
-  assert.equal(activeRes.filteredVm.analytics.quadrantNodes.length, 4);
-  assert.equal(activeRes.filteredVm.metadata.totalProjectsCount, 6);
-  assert.equal(activeRes.filteredVm.metadata.matchingProjectsCount, 4);
+  // 1. Default "open" scope shows DOING (3) + NOT_STARTED (1) in directory,
+  // while KPIs strictly measure DOING (3) projects
+  const openRes = deriveFilteredPortfolioVm(vm, { lifecycleTab: "open" });
+  assert.equal(openRes.isFiltered, false);
+  assert.equal(openRes.filteredProjects.length, 4);
+  assert.equal(openRes.kpiScopeProjects.length, 3);
+  assert.equal(openRes.allLifecycleCounts.all, 6);
+  assert.equal(openRes.allLifecycleCounts.open, 4);
+  assert.equal(openRes.allLifecycleCounts.active, 3);
+  assert.equal(openRes.allLifecycleCounts.DOING, 3);
+  assert.equal(openRes.allLifecycleCounts.NOT_STARTED, 1);
+  assert.equal(openRes.allLifecycleCounts.PAUSED, 1);
+  assert.equal(openRes.allLifecycleCounts.COMPLETED, 1);
+  assert.equal(openRes.allLifecycleCounts.CANCELLED, 0);
+  assert.equal(openRes.filteredVm.metadata.activeProjectsCount, 3);
+  assert.equal(openRes.filteredVm.metadata.matchingProjectsCount, 4);
+  assert.equal(openRes.filteredVm.metadata.totalProjectsCount, 6);
+  assert.equal(openRes.filteredVm.analytics.benchmarkItems.length, 3);
+  assert.equal(openRes.filteredVm.analytics.quadrantNodes.length, 3);
 
-  // 2. Search filter inside active scope: "order" -> matches only proj-order-api
+  const baselineKpisSnapshot = JSON.stringify(openRes.filteredVm.kpis);
+  const baselineAnalyticsSnapshot = JSON.stringify(openRes.filteredVm.analytics);
+
+  // 2. Filtering directory by COMPLETED, PAUSED, NOT_STARTED, CANCELLED, "all", or search
+  // MUST NOT leak excluded projects into Executive KPIs or Portfolio Analytics
+  for (const tab of ["COMPLETED", "PAUSED", "NOT_STARTED", "CANCELLED", "all"]) {
+    const res = deriveFilteredPortfolioVm(vm, { lifecycleTab: tab });
+    assert.equal(res.isFiltered, true);
+    assert.equal(JSON.stringify(res.filteredVm.kpis), baselineKpisSnapshot);
+    assert.equal(JSON.stringify(res.filteredVm.analytics), baselineAnalyticsSnapshot);
+    assert.equal(res.filteredVm.metadata.isFiltered, true);
+    assert.equal(res.filteredVm.lifecycleCounts.all, 6);
+  }
+
+  const completedRes = deriveFilteredPortfolioVm(vm, { lifecycleTab: "COMPLETED" });
+  assert.equal(completedRes.filteredProjects.length, 1);
+  assert.equal(completedRes.filteredProjects[0].id, "proj-auth-sso");
+  assert.equal(completedRes.activeFilterTags[0].label, "State: Completed");
+
   const searchRes = deriveFilteredPortfolioVm(vm, {
-    lifecycleTab: "active",
+    lifecycleTab: "open",
     searchQuery: "order",
   });
   assert.equal(searchRes.isFiltered, true);
   assert.equal(searchRes.filteredProjects.length, 1);
   assert.equal(searchRes.filteredProjects[0].id, "proj-order-api");
-  assert.equal(searchRes.filteredVm.kpis.card1Health.avgHealthScore, 54);
-  assert.equal(searchRes.filteredVm.kpis.card3Scale.totalExecutedTests, 119);
-  assert.equal(searchRes.filteredVm.analytics.benchmarkItems.length, 1);
-  assert.equal(searchRes.filteredVm.analytics.quadrantNodes.length, 1);
-  assert.ok(searchRes.filteredVm.timeRoiAnalytics.totalAutoDurationMs > 0);
-  assert.ok(searchRes.filteredVm.attentionQueue.every((a) => a.projectId === "proj-order-api"));
-  assert.ok(searchRes.filteredVm.activityFeed.every((e) => e.projectId === "proj-order-api"));
+  assert.equal(JSON.stringify(searchRes.filteredVm.kpis), baselineKpisSnapshot);
   assert.equal(searchRes.filteredVm.activityFeed.length, 1);
-  assert.equal(searchRes.allLifecycleCounts.all, 6);
 
-  // 3. COMPLETED lifecycle filter -> non-DOING project with 1 uncovered API synthesizes attention item
-  const completedRes = deriveFilteredPortfolioVm(vm, { lifecycleTab: "COMPLETED" });
-  assert.equal(completedRes.isFiltered, true);
-  assert.equal(completedRes.filteredProjects.length, 1);
-  assert.equal(completedRes.filteredProjects[0].id, "proj-auth-sso");
-  assert.equal(completedRes.filteredVm.kpis.card1Health.avgHealthScore, 91);
-  assert.equal(completedRes.filteredVm.lifecycleCounts.COMPLETED, 1);
-  assert.equal(completedRes.filteredVm.lifecycleCounts.DOING, 0);
-  assert.equal(completedRes.filteredVm.attentionQueue.length, 1);
-  assert.equal(completedRes.filteredVm.attentionQueue[0].category, "missing-deps");
-  assert.equal(completedRes.filteredVm.activityFeed.length, 1);
-  assert.equal(completedRes.filteredVm.activityFeed[0].projectId, "proj-auth-sso");
-
-  // 4. NOT_STARTED lifecycle filter -> synthesizes zero-test attention item
-  const notStartedRes = deriveFilteredPortfolioVm(vm, { lifecycleTab: "NOT_STARTED" });
-  assert.equal(notStartedRes.filteredProjects.length, 1);
-  assert.equal(notStartedRes.filteredVm.attentionQueue.length, 1);
-  assert.equal(notStartedRes.filteredVm.attentionQueue[0].category, "zero-test");
-
-  // 5. Pinned filter under "all" lifecycle scope
-  const pinnedRes = deriveFilteredPortfolioVm(vm, {
-    lifecycleTab: "all",
-    statusFilter: "pinned",
-  });
-  assert.equal(pinnedRes.filteredProjects.length, 2);
-  assert.ok(pinnedRes.activeFilterTags.some((t) => t.key === "lifecycle"));
-  assert.ok(pinnedRes.activeFilterTags.some((t) => t.key === "status"));
-
-  // 6. Layer deficit filter under "all" lifecycle scope
-  const deficitRes = deriveFilteredPortfolioVm(vm, {
-    lifecycleTab: "all",
-    layerDeficit: "deficit-integration",
-  });
-  assert.equal(deficitRes.filteredProjects.length, 2);
-  assert.equal(deficitRes.filteredVm.analytics.benchmarkItems.length, 2);
-
-  // 7. Zero-match search filter produces zeroed numeric fields without NaN
-  const emptyRes = deriveFilteredPortfolioVm(vm, {
-    lifecycleTab: "active",
+  const emptySearchRes = deriveFilteredPortfolioVm(vm, {
+    lifecycleTab: "open",
     searchQuery: "no-such-project-xyz",
   });
-  assert.equal(emptyRes.isFiltered, true);
-  assert.equal(emptyRes.filteredProjects.length, 0);
-  assert.equal(emptyRes.filteredVm.kpis.card1Health.avgHealthScore, 0);
-  assert.equal(emptyRes.filteredVm.kpis.card1Health.grade, "—");
-  assert.equal(emptyRes.filteredVm.kpis.card2Coverage.unifiedCoveragePct, 0);
-  assert.equal(emptyRes.filteredVm.kpis.card3Scale.totalExecutedTests, 0);
-  assert.equal(Number.isNaN(emptyRes.filteredVm.kpis.card3Scale.overallPassRatePct), false);
-  assert.equal(emptyRes.filteredVm.analytics.benchmarkItems.length, 0);
-  assert.equal(emptyRes.filteredVm.analytics.quadrantNodes.length, 0);
-  assert.equal(emptyRes.filteredVm.attentionQueue.length, 0);
-  assert.equal(emptyRes.filteredVm.activityFeed.length, 0);
-  assert.equal(emptyRes.filteredVm.metadata.matchingProjectsCount, 0);
-  assert.equal(emptyRes.filteredVm.metadata.totalProjectsCount, 6);
-  assert.equal(computePortfolioLifecycleCounts(emptyRes.filteredProjects).total, 0);
+  assert.equal(emptySearchRes.filteredProjects.length, 0);
+  assert.equal(emptySearchRes.filteredVm.metadata.matchingProjectsCount, 0);
+  assert.equal(JSON.stringify(emptySearchRes.filteredVm.kpis), baselineKpisSnapshot);
+  assert.equal(computePortfolioLifecycleCounts(emptySearchRes.filteredProjects).total, 0);
 });
 
+test("deriveFilteredPortfolioVm returns null KPIs when 0 DOING projects exist", () => {
+  const vm = buildLivePortfolioFixture();
+  const onlyNonDoing = {
+    ...vm,
+    projects: vm.projects.map((p) =>
+      p.lifecycleStatus === "DOING" ? { ...p, lifecycleStatus: "NOT_STARTED" } : p,
+    ),
+  };
+
+  const res = deriveFilteredPortfolioVm(onlyNonDoing, { lifecycleTab: "open" });
+  assert.equal(res.kpiScopeProjects.length, 0);
+  assert.equal(res.filteredVm.kpis.card1Health.avgHealthScore, null);
+  assert.equal(res.filteredVm.kpis.card2Coverage.unifiedCoveragePct, null);
+  assert.equal(res.filteredVm.kpis.card3Scale.totalExecutedTests, 0);
+  assert.equal(res.filteredVm.metadata.activeProjectsCount, 0);
+});

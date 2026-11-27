@@ -1,13 +1,15 @@
 import { editorAwareFetch } from './editorAwareRequest';
 import { getAIModelHeaders } from './aiModel.service.js';
-import { API_BASE, handleUnauthorizedResponse } from '../lib/authSession.js';
+import {
+  API_BASE,
+  getAccessToken,
+  handleUnauthorizedResponse,
+} from '../lib/authSession.js';
 
 const BASE_URL = API_BASE;
 
 function getAuthHeaders() {
-  const user = localStorage.getItem('user');
-  const userToken = user ? JSON.parse(user).token : null;
-  const token = localStorage.getItem('token') || userToken;
+  const token = getAccessToken();
   return {
     'Content-Type': 'application/json',
     ...getAIModelHeaders(),

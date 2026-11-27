@@ -4,11 +4,15 @@ import {
   chatErrorMessage,
 } from "./chatScreenContext";
 import { getAIModelHeaders } from "./aiModel.service.js";
-import { API_BASE, handleUnauthorizedResponse } from "../lib/authSession.js";
+import {
+  API_BASE,
+  getAccessToken,
+  handleUnauthorizedResponse,
+} from "../lib/authSession.js";
 const BASE_URL = API_BASE;
 
 function getAuthHeaders() {
-  const token = localStorage.getItem("token");
+  const token = getAccessToken();
   return {
     "Content-Type": "application/json",
     ...getAIModelHeaders(),
@@ -80,7 +84,7 @@ export async function getProjectTreeApi(projectId) {
 }
 
 export async function validateArchiveApi(file) {
-  const token = localStorage.getItem("token");
+  const token = getAccessToken();
   const formData = new FormData();
   formData.append("file", file);
 
@@ -98,7 +102,7 @@ export async function validateArchiveApi(file) {
 }
 
 export async function uploadZipApi(projectId, file) {
-  const token = localStorage.getItem("token");
+  const token = getAccessToken();
   const formData = new FormData();
   formData.append("file", file);
   formData.append("projectId", projectId);

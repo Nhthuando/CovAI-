@@ -5,13 +5,15 @@
  * AI test synthesis time savings, speedup multipliers, and radar efficiency metrics.
  */
 
+import { PORTFOLIO_ROI_BASELINE } from "../../../shared/portfolioGovernance.js";
+
 export const MANUAL_BENCHMARK_MS = Object.freeze({
-  unit: 120_000,        // 2 minutes per unit test case (logic check + assertions)
-  integration: 300_000, // 5 minutes per API integration test (setup DB, token, Postman verification)
-  system: 480_000,      // 8 minutes per E2E journey (browser walkthrough + DOM assertion)
+  unit: PORTFOLIO_ROI_BASELINE.unitMinutes * 60_000,
+  integration: PORTFOLIO_ROI_BASELINE.integrationMinutes * 60_000,
+  system: PORTFOLIO_ROI_BASELINE.systemMinutes * 60_000,
 });
 
-export const AI_AUTHORING_SAVED_MINUTES_PER_TEST = 15; // 15 mins saved per test generated or repaired by AI
+export const AI_AUTHORING_SAVED_MINUTES_PER_TEST = PORTFOLIO_ROI_BASELINE.aiAuthoringMinutesPerTest;
 
 /**
  * Format milliseconds into human-readable duration string (e.g. "3.8s", "2m 14s", "450ms")
@@ -59,8 +61,8 @@ export function computeProjectTimeAndRoiMetrics({
   const s = systemRun || sysStats || {};
 
   const unitTotal = Math.max(0, Number(u.totalTests) || 0);
-  const intTotal = Math.max(0, Number(i.totalTests) || Number(i.totalApis) || 0);
-  const sysTotal = Math.max(0, Number(s.totalTests) || Number(s.totalJourneys) || 0);
+  const intTotal = Math.max(0, Number(i.totalTests) || 0);
+  const sysTotal = Math.max(0, Number(s.totalTests) || 0);
 
   const unitDurationMs = Math.max(0, Number(u.durationMs) || 0);
   const intDurationMs = Math.max(0, Number(i.durationMs) || 0);
@@ -91,12 +93,25 @@ export function computeProjectTimeAndRoiMetrics({
   }
 
   // Automation Efficiency Score (0-100) for comparison radar axis 5
-  // Weighted by speedup (up to 200x) and execution coverage
+  // Weighted by speedup (up to 150x) and execution latency, scaled by pass ratio when available
   const speedupNorm = Math.min(100, (speedupMultiplier / 150) * 100);
   const totalTests = unitTotal + intTotal + sysTotal;
-  const efficiencyScore = totalTests > 0
-    ? Math.round(0.6 * speedupNorm + 0.4 * (actualAutoDurationMs < 60_000 ? 100 : 70))
+  const hasTierPassData =
+    u.passedTests !== undefined || u.failedTests !== undefined ||
+    i.passedTests !== undefined || i.failedTests !== undefined ||
+    s.passedTests !== undefined || s.failedTests !== undefined;
+  const tierPassed =
+    (Number(u.passedTests) || 0) + (Number(i.passedTests) || 0) + (Number(s.passedTests) || 0);
+  const tierFailed =
+    (Number(u.failedTests) || 0) + (Number(i.failedTests) || 0) + (Number(s.failedTests) || 0);
+  const passFactor =
+    hasTierPassData && tierPassed + tierFailed > 0
+      ? tierPassed / (tierPassed + tierFailed)
+      : 1;
+  const rawEfficiencyScore = totalTests > 0
+    ? (0.6 * speedupNorm + 0.4 * (actualAutoDurationMs < 60_000 ? 100 : 70)) * passFactor
     : 0;
+  const efficiencyScore = Math.round(rawEfficiencyScore);
 
   return {
     actualAutoDurationMs,
@@ -115,6 +130,9 @@ export function computeProjectTimeAndRoiMetrics({
     speedupMultiplier,
     speedupStr: speedupMultiplier > 0 ? `${speedupMultiplier}x` : "—",
     efficiencyScore: Math.min(100, Math.max(0, efficiencyScore)),
+    isHeuristicEstimate: PORTFOLIO_ROI_BASELINE.isHeuristicEstimate,
+    baselineLabel: PORTFOLIO_ROI_BASELINE.label,
+    methodologyNote: PORTFOLIO_ROI_BASELINE.methodologyNote,
     tiers: {
       unit: {
         total: unitTotal,
@@ -183,6 +201,9 @@ export function aggregatePortfolioTimeAndRoi(activeProjects = []) {
     speedupStr: speedupMultiplier > 0 ? `${speedupMultiplier}x Faster` : "—",
     projectsWithExecutions,
     activeProjectsCount: activeProjects.length,
+    isHeuristicEstimate: PORTFOLIO_ROI_BASELINE.isHeuristicEstimate,
+    baselineLabel: PORTFOLIO_ROI_BASELINE.label,
+    methodologyNote: PORTFOLIO_ROI_BASELINE.methodologyNote,
     formulaBreakdown: {
       unitBenchmarkMinutes: MANUAL_BENCHMARK_MS.unit / 60_000,
       integrationBenchmarkMinutes: MANUAL_BENCHMARK_MS.integration / 60_000,

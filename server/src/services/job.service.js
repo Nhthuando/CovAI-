@@ -1,4 +1,5 @@
 import { validateSelectedAiModel } from '../utils/selectedAiModel.js';
+import { AUTO_TRANSITION_DOING_JOB_TYPES } from '../../../shared/portfolioGovernance.js';
 /**
  * @file job.service.js
  * @description Core job lifecycle service — create, progress, state transitions,
@@ -34,6 +35,7 @@ const JOB_TYPES = Object.freeze([
   "INSTALL_DEPS",
   "RUN_TESTS",
   "SUPERTEST_COVERAGE",
+  "PLAYWRIGHT_API_COVERAGE",
   "PARSE_COVERAGE",
   "BUILD_CFG",
   "PERFORMANCE_ANALYSIS",
@@ -520,50 +522,73 @@ export const createIngestJobForSnapshot = async ({
   return job;
 };
 
-const TEST_AND_AI_JOB_TYPES = new Set([
-  'RUN_TESTS', 'RUN_VITEST_TESTS', 'VITEST_COVERAGE', 'SUPERTEST_COVERAGE',
-  'SYSTEM_TEST_ANALYSIS', 'SYSTEM_TEST_ASSESSMENT', 'SYSTEM_TEST_IMPROVEMENT', 'SYSTEM_TEST_MUTATION',
-  'AI_TESTS', 'AI_SUGGEST', 'UNIT_TEST_SUGGEST', 'UNIT_TEST_APPLY', 'AI_INTEGRATION_RUN', 'AI_SYSTEM_GENERATE', 'SYSTEM_COLD_START_GENERATE',
-  'CYPRESS_SYSTEM_TEST', 'CYPRESS_SYSTEM_COVERAGE', 'PLAYWRIGHT_SYSTEM_TEST', 'PLAYWRIGHT_SYSTEM_COVERAGE'
-]);
+const TEST_AND_AI_JOB_TYPES = new Set(AUTO_TRANSITION_DOING_JOB_TYPES);
 
-export const autoTransitionProjectToDoingIfNeeded = async (projectId) => {
+export const autoTransitionProjectToDoingIfNeeded = async (projectId, db = prisma) => {
   if (!projectId) return;
   try {
-    const proj = await prisma.project.findUnique({
+    const proj = await db.project.findUnique({
       where: { id: projectId },
       select: { id: true, lifecycleStatus: true, ownerId: true },
     });
     if (proj && proj.lifecycleStatus === 'NOT_STARTED') {
-      const updateResult = await prisma.project.updateMany({
+      const updateResult = await db.project.updateMany({
         where: { id: projectId, lifecycleStatus: 'NOT_STARTED' },
         data: { lifecycleStatus: 'DOING', lifecycleUpdatedAt: new Date() },
       });
       if (updateResult.count > 0) {
+        let memberIds = [];
+        try {
+          if (typeof db.projectMember?.findMany === 'function') {
+            const members = await db.projectMember.findMany({
+              where: { projectId },
+              select: { userId: true },
+            });
+            memberIds = members.map((m) => m.userId).filter(Boolean);
+          }
+        } catch (memberErr) {
+          console.warn('[autoTransitionProjectToDoingIfNeeded] Failed to load project members:', memberErr?.message || memberErr);
+        }
+        const affectedUserIds = [...new Set([proj.ownerId, ...memberIds].filter(Boolean))];
         try {
           const { clearPortfolioCache } = await import('./portfolioDashboard.service.js');
-          clearPortfolioCache(proj.ownerId);
-        } catch (_) {}
+          for (const uid of affectedUserIds) {
+            clearPortfolioCache(uid);
+          }
+        } catch (cacheErr) {
+          console.warn('[autoTransitionProjectToDoingIfNeeded] Portfolio cache clear failed:', cacheErr?.message || cacheErr);
+        }
         try {
           const { clearUnifiedDashboardCache } = await import('./unifiedQualityDashboard.service.js');
           clearUnifiedDashboardCache();
-        } catch (_) {}
+        } catch (unifiedErr) {
+          console.warn('[autoTransitionProjectToDoingIfNeeded] Unified cache clear failed:', unifiedErr?.message || unifiedErr);
+        }
         try {
           const { emitPortfolioProjectUpdated } = await import('../realtime/portfolioSocket.emitter.js');
           emitPortfolioProjectUpdated({
             projectId,
             userId: proj.ownerId,
+            userIds: affectedUserIds,
             lifecycleStatus: 'DOING',
             action: 'AUTO_TRANSITION',
           });
-        } catch (_) {}
+        } catch (emitErr) {
+          console.warn('[autoTransitionProjectToDoingIfNeeded] Portfolio socket emit failed:', emitErr?.message || emitErr);
+        }
         try {
           const { emitDashboardMetricsUpdated } = await import('./dashboardEvents.service.js');
-          emitDashboardMetricsUpdated(projectId, { reason: 'project-status-updated', lifecycleStatus: 'DOING' }).catch(() => {});
-        } catch (_) {}
+          emitDashboardMetricsUpdated(projectId, { reason: 'project-status-updated', lifecycleStatus: 'DOING' }).catch((dashErr) => {
+            console.warn('[autoTransitionProjectToDoingIfNeeded] Dashboard metrics emit failed:', dashErr?.message || dashErr);
+          });
+        } catch (dashImportErr) {
+          console.warn('[autoTransitionProjectToDoingIfNeeded] Dashboard events import failed:', dashImportErr?.message || dashImportErr);
+        }
       }
     }
-  } catch (_) {}
+  } catch (err) {
+    console.warn('[autoTransitionProjectToDoingIfNeeded] Transition check failed:', err?.message || err);
+  }
 };
 
 export const createSnapshotJob = async ({
@@ -1050,6 +1075,8 @@ export const createPlaywrightJob = async ({ projectId, snapshotId, userId, testD
   if (!projectId || !snapshotId) {
     throw new Error("projectId and snapshotId are required");
   }
+
+  void autoTransitionProjectToDoingIfNeeded(projectId);
 
   const job = await prisma.job.create({
     data: {

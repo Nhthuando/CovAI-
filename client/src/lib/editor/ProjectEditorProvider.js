@@ -2,6 +2,7 @@ import * as Y from 'yjs';
 import { MonacoBinding } from 'y-monaco';
 import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness';
 import { acquireEditorTransport } from './editorTransport';
+import { handleUnauthorizedResponse } from '../authSession';
 import { monaco } from '../monacoSetup';
 import { checkpointCurrentSnapshot, getEditorStatus, getEditorRecovery } from '../../services/projectEditor.service';
 import { EDITOR_LIMITS, editorBinaryBytes } from '../../../../shared/editorProtocol.js';
@@ -111,6 +112,19 @@ export class ProjectEditorProvider {
       this.rebind(); this.updateReadonly(); this.changed(); await this.pump();
     } catch (error) {
       if (candidate && candidate !== this.doc) candidate.destroy();
+      if (error?.code === 'AUTH_REQUIRED' && !this._retryingOpenAuth) {
+        this._retryingOpenAuth = true;
+        this.opening = false;
+        try {
+          const renewed = await this.recoverAuth();
+          if (renewed && !this.disposed) {
+            await this.open();
+            return;
+          }
+        } finally {
+          this._retryingOpenAuth = false;
+        }
+      }
       if (error.code === 'EDITOR_DOCUMENT_CLOSED' && !this.queue.length) {
         try {
           const state = await getEditorStatus(this.scope.projectId, this.scope.snapshotId);
@@ -121,6 +135,33 @@ export class ProjectEditorProvider {
       this.fail(error);
     }
     finally { this.opening = false; }
+  }
+  async recoverAuth() {
+    if (this.authRecovering) return this.authRecovering;
+    this.authRecovering = (async () => {
+      try {
+        const token = await handleUnauthorizedResponse();
+        if (!token || this.disposed) return null;
+        this.blocked = false;
+        this.error = null;
+        if (this.socket.connected) {
+          await new Promise(resolve => {
+            let settled = false;
+            const done = () => { if (!settled) { settled = true; resolve(); } };
+            const timer = setTimeout(done, 3000);
+            this.socket.emit('editor:auth', { token }, () => { clearTimeout(timer); done(); });
+          });
+        } else {
+          this.socket.connect();
+        }
+        this.updateReadonly();
+        this.changed();
+        return token;
+      } finally {
+        this.authRecovering = null;
+      }
+    })();
+    return this.authRecovering;
   }
   persist() {
     const text = this.doc?.getText('content').toString() ?? this.recovery ?? this.saved?.text;
@@ -140,8 +181,20 @@ export class ProjectEditorProvider {
       this.persist(); this.status = this.queue.length ? 'Saving changes' : 'Changes saved'; this.error = null;
     } catch (error) {
       this.persist(); this.error = error.message;
-      if (['AUTH_REQUIRED', 'EDITOR_GENERATION_CHANGED', 'EDITOR_DOCUMENT_CLOSED', 'CAPABILITY_DENIED', 'RESOURCE_NOT_FOUND', 'INVALID_EDITOR_UPDATE', 'EDITOR_LIMIT_EXCEEDED'].includes(error.code)) this.fail(error);
-      else { this.status = 'Changes not saved'; clearTimeout(this.retryTimer); this.retryTimer = setTimeout(() => { void this.pump(); }, 1500); }
+      if (error.code === 'AUTH_REQUIRED') {
+        const renewed = await this.recoverAuth();
+        if (!renewed) {
+          this.status = 'Changes not saved';
+          clearTimeout(this.retryTimer);
+          this.retryTimer = setTimeout(() => { void this.pump(); }, 1500);
+        }
+      } else if (['EDITOR_GENERATION_CHANGED', 'EDITOR_DOCUMENT_CLOSED', 'CAPABILITY_DENIED', 'RESOURCE_NOT_FOUND', 'INVALID_EDITOR_UPDATE', 'EDITOR_LIMIT_EXCEEDED'].includes(error.code)) {
+        this.fail(error);
+      } else {
+        this.status = 'Changes not saved';
+        clearTimeout(this.retryTimer);
+        this.retryTimer = setTimeout(() => { void this.pump(); }, 1500);
+      }
     } finally { this.inFlight = false; this.changed(); }
     if (this.queue.length && !this.error) void this.pump();
   }
@@ -153,15 +206,30 @@ export class ProjectEditorProvider {
       try { const result = await this.request('editor:sync', { documentId: identity.documentId, generation: identity.generation, stateVector: Y.encodeStateVector(doc) });
         if (this.disposed || this.doc !== doc || !this.matches(result)) return;
         Y.applyUpdate(doc, editorBinaryBytes(result.updateBytes), 'remote'); this.revision = Math.max(this.revision, result.revision); this.checkpointRevision = result.checkpointRevision; this.changed();
-      } catch (error) { if (!this.disposed && this.doc === doc) this.fail(error); }
+      } catch (error) {
+        if (!this.disposed && this.doc === doc) {
+          if (error?.code === 'AUTH_REQUIRED') {
+            const renewed = await this.recoverAuth();
+            if (renewed && !this.disposed && this.doc === doc) {
+              this.syncing = null;
+              void this.sync();
+              return;
+            }
+          }
+          this.fail(error);
+        }
+      }
       finally { this.syncing = null; }
     })();
     return this.syncing;
   }
   async flushPending() {
+    if (this.authRecovering) await this.authRecovering;
+    if (!this.queue.length && !this.inFlight) return;
     if (this.blocked || !this.socket.connected || !this.ready) throw new Error(this.error || 'Wait for the live editor to reconnect before saving.');
     const deadline = Date.now() + 15000;
     while (this.queue.length || this.inFlight) {
+      if (this.authRecovering) await this.authRecovering;
       if (this.blocked || Date.now() > deadline) throw new Error(this.error || 'Shared changes could not be saved. Your draft is preserved.');
       void this.pump(); await new Promise(resolve => setTimeout(resolve, 40));
     }

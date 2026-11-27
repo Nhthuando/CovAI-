@@ -6,6 +6,7 @@ import {
   MoreVertical,
   Trash2,
   Sparkles,
+  SlidersHorizontal,
   CheckCircle2,
   AlertCircle,
   Clock,
@@ -14,7 +15,7 @@ import {
 import { ProjectSparkline } from "../primitives/ProjectSparkline.jsx";
 import { PillarMiniProgressRow } from "../primitives/PillarMiniProgressRow.jsx";
 import RadialHealthGauge from "../primitives/RadialHealthGauge.jsx";
-import LifecycleStatusSelect from "../primitives/LifecycleStatusSelect.jsx";
+import LifecycleStatusBadge from "../primitives/LifecycleStatusBadge.jsx";
 
 function ProjectQualityCardComponent({
   project,
@@ -23,10 +24,9 @@ function ProjectQualityCardComponent({
   onTogglePin,
   onOpenOverview,
   onNavigateWorkspace,
+  onOpenProjectSettings = null,
   onDeleteProject,
   onAskAiAboutProject,
-  onLifecycleStatusChange = null,
-  onLifecycleStatusCommitted = null,
   className = "",
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -47,18 +47,20 @@ function ProjectQualityCardComponent({
   const {
     id,
     name,
-    branch = "main",
-    healthScore = 0,
+    branch = null,
+    healthScore = null,
     grade = "—",
     delta = 0,
-    unifiedCoveragePct = 0,
-    sparkline = [0, 0, 0, 0, 0],
+    hasDelta = false,
+    unifiedCoveragePct = null,
+    sparkline = [],
     lifecycleStatus = "NOT_STARTED",
     pillars = {},
     timeRoi = null,
     activeJob = null,
   } = project;
 
+  const displayBranch = branch || "local";
   const unit = pillars.unit || {};
   const int = pillars.integration || {};
   const sys = pillars.system || {};
@@ -67,16 +69,17 @@ function ProjectQualityCardComponent({
     (unit.totalTests || 0) + (int.totalTests || 0) + (sys.totalTests || 0);
   const totalFailed =
     (unit.failedTests || 0) + (int.failedTests || 0) + (sys.failedTests || 0);
-  const hasRuns = totalTests > 0 || healthScore > 0;
+  const hasRuns =
+    totalTests > 0 || (healthScore !== null && healthScore !== undefined);
 
-  const sparklineStroke =
-    healthScore >= 80
+  const numericHealth = healthScore ?? 0;
+  const sparklineStroke = !hasRuns
+    ? "var(--ps-neutral)"
+    : numericHealth >= 80
       ? "var(--ps-emerald)"
-      : healthScore >= 50
+      : numericHealth >= 50
         ? "var(--ps-amber)"
-        : healthScore > 0
-          ? "var(--ps-rose)"
-          : "var(--ps-neutral)";
+        : "var(--ps-rose)";
 
   const isRunning = Boolean(activeJob && activeJob.status === "RUNNING");
   let statusIcon = (
@@ -103,6 +106,7 @@ function ProjectQualityCardComponent({
 
   const speedup = timeRoi?.speedupMultiplier || 0;
   const hoursSaved = timeRoi?.totalHoursSaved || 0;
+  const showDelta = (hasDelta || delta !== 0) && delta !== 0;
 
   return (
     <article
@@ -143,24 +147,18 @@ function ProjectQualityCardComponent({
                 {name}
               </button>
 
-              <div className="flex items-center gap-1.5 mt-0.5 ps-mono text-[11px] text-[var(--ps-ink-muted)]">
+              <div
+                className="flex items-center gap-1.5 mt-0.5 ps-mono text-[11px] text-[var(--ps-ink-muted)]"
+                title={`Active branch: ${displayBranch}`}
+              >
                 <GitBranch size={10} className="text-[var(--ps-cobalt)] shrink-0" />
-                <span className="truncate">{branch}</span>
+                <span className="truncate">{displayBranch}</span>
               </div>
             </div>
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            <LifecycleStatusSelect
-              projectId={id}
-              currentStatus={lifecycleStatus}
-              onStatusChange={(newStatus) =>
-                onLifecycleStatusChange?.(id, newStatus)
-              }
-              onStatusCommitted={(newStatus) =>
-                onLifecycleStatusCommitted?.(id, newStatus)
-              }
-            />
+            <LifecycleStatusBadge status={lifecycleStatus} size="sm" />
 
             <div className="relative" ref={menuRef}>
               <button
@@ -176,7 +174,19 @@ function ProjectQualityCardComponent({
               </button>
 
               {menuOpen && (
-                <div className="absolute right-0 top-full mt-1 w-44 rounded-lg border border-[var(--ps-line-strong)] bg-[var(--ps-surface)] text-[var(--ps-ink)] shadow-xl z-30 py-1 text-xs">
+                <div className="absolute right-0 top-full mt-1 w-48 rounded-lg border border-[var(--ps-line-strong)] bg-[var(--ps-surface)] text-[var(--ps-ink)] shadow-xl z-30 py-1 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onOpenProjectSettings?.(project);
+                    }}
+                    className="w-full px-3 py-1.5 text-left flex items-center gap-2 hover:bg-[var(--ps-surface-2)] cursor-pointer text-[var(--ps-ink)]"
+                  >
+                    <SlidersHorizontal size={13} className="text-[var(--ps-cobalt)]" />
+                    <span>Project settings</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => {
@@ -212,20 +222,22 @@ function ProjectQualityCardComponent({
         <div className="flex items-center justify-between p-2.5 rounded-lg bg-[var(--ps-inset)] border border-[var(--ps-line)] mb-3.5">
           <div className="flex items-center gap-3">
             <RadialHealthGauge
-              score={healthScore}
+              score={healthScore ?? 0}
               grade={grade}
               isTested={hasRuns}
               size={44}
               strokeWidth={4}
             />
-            <div className="ps-mono">
+            <div className="ps-mono tabular-nums">
               <div className="text-[10px] text-[var(--ps-ink-muted)]">Health</div>
               <div className="flex items-baseline gap-1">
                 <span className="text-sm font-bold text-[var(--ps-ink)]">
-                  {healthScore}
+                  {healthScore !== null && healthScore !== undefined ? healthScore : "—"}
                 </span>
-                <span className="text-[11px] text-[var(--ps-ink-muted)]">/100</span>
-                {delta !== 0 && (
+                {healthScore !== null && healthScore !== undefined && (
+                  <span className="text-[11px] text-[var(--ps-ink-muted)]">/100</span>
+                )}
+                {showDelta && (
                   <span
                     className={`text-[10px] font-semibold ${
                       delta > 0 ? "text-[var(--ps-emerald)]" : "text-[var(--ps-rose)]"
@@ -239,10 +251,12 @@ function ProjectQualityCardComponent({
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="text-right ps-mono">
+            <div className="text-right ps-mono tabular-nums">
               <div className="text-[10px] text-[var(--ps-ink-muted)]">Coverage</div>
               <div className="text-xs font-bold text-[var(--ps-ink)]">
-                {unifiedCoveragePct}%
+                {unifiedCoveragePct !== null && unifiedCoveragePct !== undefined
+                  ? `${unifiedCoveragePct}%`
+                  : "—"}
               </div>
             </div>
             <ProjectSparkline
@@ -259,21 +273,21 @@ function ProjectQualityCardComponent({
           <PillarMiniProgressRow
             label="Unit"
             accentColor="var(--ps-cobalt)"
-            coveragePct={unit.coveragePct ?? 0}
+            coveragePct={unit.coveragePct}
             tooltipText={`${unit.passedTests ?? 0}/${unit.totalTests ?? 0} passed`}
           />
           <PillarMiniProgressRow
             label="API"
             subLabel={`${int.coveredApis ?? 0}/${int.totalApis ?? 0}`}
             accentColor="var(--ps-indigo)"
-            coveragePct={int.coveragePct ?? 0}
+            coveragePct={int.coveragePct}
             tooltipText={`${int.coveredApis ?? 0}/${int.totalApis ?? 0} endpoints`}
           />
           <PillarMiniProgressRow
             label="E2E"
             subLabel={`${sys.coveredJourneys ?? 0}/${sys.totalJourneys ?? 0}`}
             accentColor="var(--ps-teal)"
-            coveragePct={sys.coveragePct ?? 0}
+            coveragePct={sys.coveragePct}
             tooltipText={`${sys.coveredJourneys ?? 0}/${sys.totalJourneys ?? 0} flows`}
           />
         </div>
@@ -285,7 +299,7 @@ function ProjectQualityCardComponent({
           {statusIcon}
           <span className="truncate text-[var(--ps-ink-secondary)]">{statusText}</span>
           {speedup > 1 && (
-            <span className="text-[var(--ps-emerald)] font-semibold shrink-0">
+            <span className="text-[var(--ps-emerald)] font-semibold shrink-0 tabular-nums">
               · +{hoursSaved}h
             </span>
           )}
@@ -334,8 +348,7 @@ export const ProjectQualityCard = memo(
       prev.isPinned !== next.isPinned ||
       prev.isHighlighted !== next.isHighlighted ||
       prev.className !== next.className ||
-      prev.onLifecycleStatusChange !== next.onLifecycleStatusChange ||
-      prev.onLifecycleStatusCommitted !== next.onLifecycleStatusCommitted
+      prev.onOpenProjectSettings !== next.onOpenProjectSettings
     ) {
       return false;
     }
@@ -352,8 +365,13 @@ export const ProjectQualityCard = memo(
       a.healthScore === b.healthScore &&
       a.grade === b.grade &&
       a.delta === b.delta &&
+      a.hasDelta === b.hasDelta &&
       a.unifiedCoveragePct === b.unifiedCoveragePct &&
       a.lifecycleStatus === b.lifecycleStatus &&
+      a.currentUserRole === b.currentUserRole &&
+      a.canManageLifecycle === b.canManageLifecycle &&
+      a.hasLifecycleActivity === b.hasLifecycleActivity &&
+      a.isPinned === b.isPinned &&
       a.activeJob?.id === b.activeJob?.id &&
       a.activeJob?.status === b.activeJob?.status &&
       a.activeJob?.progress === b.activeJob?.progress &&
@@ -378,7 +396,7 @@ export const ProjectQualityCard = memo(
       a.pillars?.system?.totalTests === b.pillars?.system?.totalTests &&
       (a.sparkline || []).join(",") === (b.sparkline || []).join(",")
     );
-  }
+  },
 );
 
 export default ProjectQualityCard;

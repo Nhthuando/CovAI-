@@ -21,10 +21,16 @@ import QualityDashboard from "./QualityDashboard";
 import TrustworthinessWorkspace from "./trustworthiness/TrustworthinessWorkspace";
 import UnifiedDashboard from "./unified/UnifiedDashboard";
 import VersionControlWorkspace from "./VersionControlWorkspace";
-import LifecycleStatusSelect from "./portfolio/primitives/LifecycleStatusSelect";
+import LifecycleStatusBadge from "./portfolio/primitives/LifecycleStatusBadge";
 import { buildWorkspaceUrl } from "../../services/unifiedDashboard/workspaceNavigation";
 import SettingsSidebar from "./settings/SettingsSidebar";
 import ProjectMembersSettings from "./settings/ProjectMembersSettings";
+import ProjectGeneralSettings from "./settings/ProjectGeneralSettings";
+import { shouldShowTopbarLifecycleBadge } from "./settings/lifecycleSettings.utils";
+import {
+  applyProjectPatchToPortfolioCache,
+  applyProjectPatchToProjectsList,
+} from "../../services/portfolioDashboard/portfolioLifecycleCache";
 import { useProjectAccess } from "../../hooks/useProjectAccess";
 import { useProjectEvents } from "../../hooks/useProjectEvents";
 import { useVcsSync } from "../../hooks/useVcsSync";
@@ -269,6 +275,7 @@ function LayoutInner() {
     "notifications",
     "usage",
     "billing",
+    "project-general",
     "members",
   ];
   const selectedSetting = searchParams.get("setting");
@@ -955,8 +962,16 @@ function LayoutInner() {
       const { projectId, lifecycleStatus, isPinned } = event.detail || {};
       if (!projectId) return;
 
-      if (project?.id === projectId && lifecycleStatus !== undefined) {
-        setProject((prev) => (prev ? { ...prev, lifecycleStatus } : prev));
+      if (project?.id === projectId && (lifecycleStatus !== undefined || isPinned !== undefined)) {
+        setProject((prev) =>
+          prev
+            ? {
+                ...prev,
+                ...(lifecycleStatus !== undefined && { lifecycleStatus }),
+                ...(isPinned !== undefined && { isPinned }),
+              }
+            : prev,
+        );
       }
 
       setProjects((prev) => {
@@ -1511,57 +1526,21 @@ function LayoutInner() {
               >
                 {project.name}
               </span>
-              {project?.id && (
-                <LifecycleStatusSelect
-                  projectId={project.id}
-                  align="left"
-                  disabled={!projectAccess.can("files.write")}
-                  currentStatus={
-                    (project.lifecycleStatus &&
-                    project.lifecycleStatus !== "NOT_STARTED"
-                      ? project.lifecycleStatus
-                      : unifiedSummary?.projectId === project.id &&
-                          unifiedSummary?.lifecycleStatus
-                        ? unifiedSummary.lifecycleStatus
-                        : project.lifecycleStatus) || "NOT_STARTED"
-                  }
-                  onStatusChange={(newStatus) => {
-                    setProject((prev) =>
-                      prev ? { ...prev, lifecycleStatus: newStatus } : prev,
-                    );
-                    setProjects((prev) =>
-                      (prev || []).map((p) =>
-                        p.id === project.id
-                          ? { ...p, lifecycleStatus: newStatus }
-                          : p,
-                      ),
-                    );
-                    setUnifiedSummary((prev) =>
-                      prev && prev.projectId === project.id
-                        ? { ...prev, lifecycleStatus: newStatus }
-                        : prev,
-                    );
-                    queryClient.setQueriesData(
-                      { queryKey: ["projects"] },
-                      (old) => {
-                        if (!Array.isArray(old)) return old;
-                        return old.map((p) =>
-                          p.id === project.id
-                            ? { ...p, lifecycleStatus: newStatus }
-                            : p,
-                        );
-                      },
-                    );
-                    queryClient.invalidateQueries({
-                      queryKey: ["projectsPortfolio"],
-                    });
-                    queryClient.invalidateQueries({
-                      queryKey: ["unifiedDashboard"],
-                    });
-                  }}
-                  className="ml-1 shrink-0"
-                />
-              )}
+              {project?.id &&
+                shouldShowTopbarLifecycleBadge(project.lifecycleStatus) && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveSetting("project-general")}
+                    className="ml-1 shrink-0 cursor-pointer hover:opacity-85 transition-opacity"
+                    title="Isolated from Portfolio KPIs — Click to manage in General & Lifecycle settings"
+                    aria-label="Isolated project lifecycle status — open General and Lifecycle settings"
+                  >
+                    <LifecycleStatusBadge
+                      status={project.lifecycleStatus}
+                      size="xs"
+                    />
+                  </button>
+                )}
               {filePathSegments.map((segment, idx) => {
                 const isLast = idx === filePathSegments.length - 1;
                 return (
@@ -1866,6 +1845,61 @@ function LayoutInner() {
                 <Usage isActive={activeActivity === "settings"} />
               )}
               {activeSetting === "billing" && <Billing />}
+              {activeSetting === "project-general" && project?.id && (
+                <ProjectGeneralSettings
+                  key={project.id}
+                  project={project}
+                  vcsSummary={vcsSummary}
+                  unifiedSummary={unifiedSummary}
+                  access={projectAccess.access}
+                  loading={projectAccess.isPending}
+                  error={projectAccess.error}
+                  onRetry={projectAccess.refetch}
+                  onProjectUpdated={(saved) => {
+                    const nextStatus = saved?.lifecycleStatus;
+                    const nextPinned = saved?.isPinned;
+                    const patch = {
+                      ...(nextStatus !== undefined && {
+                        lifecycleStatus: nextStatus,
+                      }),
+                      ...(nextPinned !== undefined && {
+                        isPinned: nextPinned,
+                      }),
+                    };
+                    setProject((prev) =>
+                      prev && prev.id === project.id
+                        ? { ...prev, ...patch }
+                        : prev,
+                    );
+                    setProjects((prev) =>
+                      (prev || []).map((p) =>
+                        p.id === project.id ? { ...p, ...patch } : p,
+                      ),
+                    );
+                    if (nextStatus !== undefined) {
+                      setUnifiedSummary((prev) =>
+                        prev && prev.projectId === project.id
+                          ? { ...prev, lifecycleStatus: nextStatus }
+                          : prev,
+                      );
+                    }
+                    queryClient.setQueryData(
+                      ["projectsPortfolio", "live"],
+                      (old) =>
+                        applyProjectPatchToPortfolioCache(
+                          old,
+                          project.id,
+                          patch,
+                        ),
+                    );
+                    queryClient.setQueriesData(
+                      { queryKey: ["projects"] },
+                      (old) =>
+                        applyProjectPatchToProjectsList(old, project.id, patch),
+                    );
+                  }}
+                />
+              )}
               {activeSetting === "members" && project?.id && (
                 <ProjectMembersSettings
                   key={project.id}

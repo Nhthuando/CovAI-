@@ -9,6 +9,7 @@ import {
   LogOut,
   Settings,
   Users,
+  SlidersHorizontal,
 } from "lucide-react";
 import { useAuth } from "../../../hooks/useAuth";
 import { useNavigate } from "react-router-dom";
@@ -71,7 +72,19 @@ export default function SettingsSidebar({
   if (variant === "tabs") {
     return (
       <div ref={tabsRef} className="flex gap-1.5 p-2.5 overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-surface)] sticky top-0 z-10 font-sans">
-        {[...SETTINGS_OPTIONS, ...(project?.id ? [{ id: "members", label: "Members & access", icon: Users }] : [])].map((option) => {
+        {[
+          ...SETTINGS_OPTIONS,
+          ...(project?.id
+            ? [
+                {
+                  id: "project-general",
+                  label: "General & Lifecycle",
+                  icon: SlidersHorizontal,
+                },
+                { id: "members", label: "Members & access", icon: Users },
+              ]
+            : []),
+        ].map((option) => {
           const Icon = option.icon;
           const isActive = activeSetting === option.id;
           return (
@@ -157,6 +170,10 @@ export default function SettingsSidebar({
         </div>
         {project?.id && <div className="mt-5 px-2.5">
           <div className="px-0 pb-2 text-[11px] font-medium text-[var(--color-text-muted)] truncate" title={project.name}>PROJECT · {project.name}</div>
+          <button type="button" onClick={() => onSelectSetting("project-general")} className={`flex items-center gap-3 p-2.5 rounded-[var(--radius-md)] text-xs transition-colors cursor-pointer text-left w-full border mb-1 ${activeSetting === "project-general" ? "bg-[var(--color-primary)]/10 text-[var(--color-text)] border-[var(--color-primary)]/30 font-semibold" : "border-transparent text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-text)]"}`}>
+            <div className={`w-7 h-7 rounded-[var(--radius-md)] flex items-center justify-center shrink-0 ${activeSetting === "project-general" ? "bg-[var(--color-primary)]/20 text-[var(--color-primary)]" : "bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)]"}`}><SlidersHorizontal size={15} /></div>
+            <div><div className="text-xs font-semibold">General &amp; Lifecycle</div><div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 font-normal">Workspace info &amp; KPI lifecycle</div></div>
+          </button>
           <button type="button" onClick={() => onSelectSetting("members")} className={`flex items-center gap-3 p-2.5 rounded-[var(--radius-md)] text-xs transition-colors cursor-pointer text-left w-full border ${activeSetting === "members" ? "bg-[var(--color-primary)]/10 text-[var(--color-text)] border-[var(--color-primary)]/30 font-semibold" : "border-transparent text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-text)]"}`}>
             <div className={`w-7 h-7 rounded-[var(--radius-md)] flex items-center justify-center shrink-0 ${activeSetting === "members" ? "bg-[var(--color-primary)]/20 text-[var(--color-primary)]" : "bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)]"}`}><Users size={15} /></div>
             <div><div className="text-xs font-semibold">Members &amp; access</div><div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 font-normal">Invitations, roles &amp; access</div></div>

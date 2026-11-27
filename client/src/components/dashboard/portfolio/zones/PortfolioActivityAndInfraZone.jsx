@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Activity, Server, CheckCircle2 } from "lucide-react";
+import { Activity, Server, CheckCircle2, AlertTriangle } from "lucide-react";
 import { PillarBadge } from "../../unified/primitives/PillarBadge.jsx";
 
 export function PortfolioActivityAndInfraZone({
@@ -10,10 +10,11 @@ export function PortfolioActivityAndInfraZone({
 }) {
   const [filterType, setFilterType] = useState("all");
 
-  const activeWorkers = runnerInfrastructure?.activeWorkers ?? 3;
-  const runningJobs = runnerInfrastructure?.runningJobsCount ?? 0;
-  const queuedJobs = runnerInfrastructure?.queuedJobsCount ?? 0;
-  const isRedisConnected = runnerInfrastructure?.isRedisConnected ?? true;
+  const activeWorkers = Number(runnerInfrastructure?.activeWorkers ?? 0);
+  const runningJobs = Number(runnerInfrastructure?.runningJobsCount ?? 0);
+  const queuedJobs = Number(runnerInfrastructure?.queuedJobsCount ?? 0);
+  const isRedisConnected = Boolean(runnerInfrastructure?.isRedisConnected);
+  const isQueueHealthy = isRedisConnected && activeWorkers > 0;
 
   const filteredEvents = activityFeed.filter((evt) => {
     if (filterType === "test") return evt.type === "TEST_EXECUTION";
@@ -39,7 +40,7 @@ export function PortfolioActivityAndInfraZone({
               <h3 className="text-xs font-semibold text-[var(--ps-ink)]">
                 Recent Runs
               </h3>
-              <span className="text-xs ps-mono text-[var(--ps-ink-muted)]">
+              <span className="text-xs ps-mono text-[var(--ps-ink-muted)] tabular-nums">
                 ({filteredEvents.length})
               </span>
             </div>
@@ -58,14 +59,14 @@ export function PortfolioActivityAndInfraZone({
           </div>
 
           <div className="overflow-x-auto mt-3">
-            <table className="w-full text-left ps-mono text-xs border-collapse">
+            <table className="w-full text-left ps-mono text-xs tabular-nums border-collapse">
               <thead>
                 <tr className="border-b border-[var(--ps-line)] text-[10px] text-[var(--ps-ink-muted)] uppercase tracking-wider">
                   <th className="py-2 px-2">Run</th>
                   <th className="py-2 px-3 font-sans font-semibold">Project</th>
                   <th className="py-2 px-2">Layer</th>
                   <th className="py-2 px-2">Status</th>
-                  <th className="py-2 px-2 text-right">Delta</th>
+                  <th className="py-2 px-2 text-right">Cov</th>
                   <th className="py-2 px-2 text-right">Time</th>
                   <th className="py-2 px-2 text-center">View</th>
                 </tr>
@@ -108,18 +109,8 @@ export function PortfolioActivityAndInfraZone({
                             {evt.outcome}
                           </span>
                         </td>
-                        <td className="py-2.5 px-2 text-right">
-                          <span
-                            className={
-                              evt.coverageDelta?.startsWith("+")
-                                ? "text-[var(--ps-emerald)] font-semibold"
-                                : evt.coverageDelta?.startsWith("-")
-                                  ? "text-[var(--ps-rose)] font-semibold"
-                                  : "text-[var(--ps-ink-muted)]"
-                            }
-                          >
-                            {evt.coverageDelta || "0.0%"}
-                          </span>
+                        <td className="py-2.5 px-2 text-right text-[var(--ps-ink-secondary)]">
+                          {evt.coverageDelta || "—"}
                         </td>
                         <td className="py-2.5 px-2 text-right text-[var(--ps-ink-muted)]">
                           {evt.duration}
@@ -147,18 +138,36 @@ export function PortfolioActivityAndInfraZone({
         <div className="space-y-3">
           <div className="flex items-center justify-between pb-3 border-b border-[var(--ps-line)]">
             <div className="flex items-center gap-2">
-              <Server size={14} className="text-[var(--ps-emerald)]" />
+              <Server
+                size={14}
+                className={
+                  isQueueHealthy ? "text-[var(--ps-emerald)]" : "text-[var(--ps-amber)]"
+                }
+              />
               <h3 className="text-xs font-semibold text-[var(--ps-ink)]">
                 Runner Status
               </h3>
             </div>
-            <span className="inline-flex items-center gap-1 text-[11px] ps-mono text-[var(--ps-emerald)] font-semibold">
-              <CheckCircle2 size={12} />
-              {isRedisConnected ? "Online" : "Local"}
+            <span
+              className={`inline-flex items-center gap-1 text-[11px] ps-mono font-semibold ${
+                isQueueHealthy ? "text-[var(--ps-emerald)]" : "text-[var(--ps-amber)]"
+              }`}
+              title={
+                isRedisConnected
+                  ? "Redis + BullMQ queue active"
+                  : "Redis queue disconnected (Local / Offline mode)"
+              }
+            >
+              {isQueueHealthy ? (
+                <CheckCircle2 size={12} />
+              ) : (
+                <AlertTriangle size={12} />
+              )}
+              {isQueueHealthy ? "Online" : isRedisConnected ? "Idle" : "Offline"}
             </span>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 ps-mono text-center">
+          <div className="grid grid-cols-3 gap-2 ps-mono text-center tabular-nums">
             <div className="p-2.5 rounded-lg bg-[var(--ps-inset)] border border-[var(--ps-line)]">
               <div className="text-base font-bold text-[var(--ps-ink)]">
                 {activeWorkers}
@@ -179,7 +188,7 @@ export function PortfolioActivityAndInfraZone({
             </div>
           </div>
 
-          <div className="p-3 rounded-lg bg-[var(--ps-inset)] border border-[var(--ps-line)] space-y-2 ps-mono text-xs">
+          <div className="p-3 rounded-lg bg-[var(--ps-inset)] border border-[var(--ps-line)] space-y-2 ps-mono text-xs tabular-nums">
             <div className="flex items-center justify-between text-[11px]">
               <span className="text-[var(--ps-ink-muted)]">Feed Pass / Fail</span>
               <span>
@@ -210,8 +219,18 @@ export function PortfolioActivityAndInfraZone({
         </div>
 
         <div className="pt-2.5 border-t border-[var(--ps-line)] text-[11px] text-[var(--ps-ink-muted)] ps-mono flex items-center justify-between">
-          <span>Chromium + Node Sandbox</span>
-          <span className="text-[var(--ps-emerald)]">● Ready</span>
+          <span>{runnerInfrastructure?.mode === "bullmq" ? "Redis + BullMQ Worker" : "Chromium + Node Sandbox"}</span>
+          <span
+            className={
+              isQueueHealthy ? "text-[var(--ps-emerald)]" : "text-[var(--ps-amber)]"
+            }
+          >
+            {isQueueHealthy
+              ? "● Queue Ready"
+              : isRedisConnected
+                ? "● Workers Idle"
+                : "● Redis Offline"}
+          </span>
         </div>
       </div>
     </section>
