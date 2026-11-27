@@ -4,14 +4,13 @@ import { DEPENDENCY_INSTALL_REQUEST_TIMEOUT_MS } from "../../../shared/unitTestR
 import {
   API_BASE,
   authAwareFetch,
+  getAccessToken,
   handleUnauthorizedResponse,
 } from "../lib/authSession.js";
 const BASE_URL = API_BASE;
 
 function getAuthHeaders() {
-  const user = localStorage.getItem("user");
-  const userToken = user ? JSON.parse(user).token : null;
-  const token = localStorage.getItem("token") || userToken;
+  const token = getAccessToken();
 
   return {
     "Content-Type": "application/json",
@@ -700,7 +699,7 @@ export async function confirmBatchSystemScenarios(snapshotId) {
 
 export async function getUnitTestVersions(snapshotId, filePath = null) {
   const query = filePath ? `?filePath=${encodeURIComponent(filePath)}` : "";
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/coverage/${snapshotId}/unit-test-versions${query}`,
     {
       headers: getAuthHeaders(),
@@ -721,7 +720,7 @@ export async function switchUnitTestVersion(
     runTests = true,
   } = {},
 ) {
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/coverage/${snapshotId}/unit-test-versions/switch`,
     {
       method: "POST",
@@ -741,7 +740,7 @@ export async function switchUnitTestVersion(
 }
 
 export async function saveUnitTestVersions(snapshotId, payload = {}) {
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/coverage/${snapshotId}/unit-test-versions/save`,
     {
       method: "POST",
@@ -762,7 +761,7 @@ export async function getUnitTestSimulationSources(snapshotId, options = {}) {
     }
   }
   const queryString = params.toString() ? `?${params.toString()}` : "";
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/coverage/${snapshotId}/simulation/sources${queryString}`,
     {
       headers: getAuthHeaders(),
@@ -772,7 +771,7 @@ export async function getUnitTestSimulationSources(snapshotId, options = {}) {
 }
 
 export async function getUnitTestSimulationTrace(snapshotId, payload = {}) {
-  const res = await fetch(
+  const res = await editorAwareFetch(
     `${BASE_URL}/coverage/${snapshotId}/simulation/trace`,
     {
       method: "POST",

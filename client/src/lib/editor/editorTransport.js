@@ -1,23 +1,66 @@
 import { io } from 'socket.io-client';
 import { EDITOR_LIMITS } from '../../../../shared/editorProtocol.js';
-const URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
+import {
+  SOCKET_URL,
+  attachSocketAuthRecovery,
+  getAccessToken,
+  socketAuth,
+} from '../authSession.js';
+
 const transports = new Map();
 
 export function acquireEditorTransport(userId) {
-  const token = localStorage.getItem('token');
   let entry = transports.get(userId);
-  if (entry && entry.token !== token) { clearTimeout(entry.timer); clearInterval(entry.heartbeat); entry.socket.disconnect(); transports.delete(userId); entry = null; }
   if (!entry) {
-    entry = { socket: io(`${URL}/editor`, { auth: { token }, autoConnect: false }), token, refs: 0 };
-    const active = entry;
-    entry.heartbeat = setInterval(() => { if (active.socket.connected) active.socket.emit('editor:presence', {}); }, EDITOR_LIMITS.heartbeatMs);
-    transports.set(userId, entry);
+    const socket = io(`${SOCKET_URL}/editor`, {
+      auth: socketAuth,
+      autoConnect: false,
+      transports: ['websocket', 'polling'],
+    });
+    attachSocketAuthRecovery(socket, { authEventName: 'editor:auth' });
+    const active = {
+      socket,
+      token: getAccessToken(),
+      refs: 0,
+      timer: null,
+      heartbeat: null,
+      onTokenRefreshed: null,
+    };
+    active.onTokenRefreshed = (event) => {
+      const nextToken = event?.detail?.token || getAccessToken();
+      if (!nextToken) return;
+      active.token = nextToken;
+      if (!active.socket.connected && active.refs > 0) {
+        active.socket.connect();
+      }
+    };
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('covai:token-refreshed', active.onTokenRefreshed);
+    }
+    active.heartbeat = setInterval(() => {
+      if (active.socket.connected) active.socket.emit('editor:presence', {});
+    }, EDITOR_LIMITS.heartbeatMs);
+    transports.set(userId, active);
+    entry = active;
   }
-  clearTimeout(entry.timer); entry.refs++;
-  return { socket: entry.socket, release() {
-    entry.refs--;
-    if (!entry.refs) entry.timer = setTimeout(() => {
-      if (transports.get(userId) === entry && !entry.refs) { clearInterval(entry.heartbeat); entry.socket.disconnect(); transports.delete(userId); }
-    }, 1000);
-  } };
+  clearTimeout(entry.timer);
+  entry.refs++;
+  return {
+    socket: entry.socket,
+    release() {
+      entry.refs--;
+      if (!entry.refs) {
+        entry.timer = setTimeout(() => {
+          if (transports.get(userId) === entry && !entry.refs) {
+            clearInterval(entry.heartbeat);
+            if (typeof window !== 'undefined' && entry.onTokenRefreshed) {
+              window.removeEventListener('covai:token-refreshed', entry.onTokenRefreshed);
+            }
+            entry.socket.disconnect();
+            transports.delete(userId);
+          }
+        }, 1000);
+      }
+    },
+  };
 }

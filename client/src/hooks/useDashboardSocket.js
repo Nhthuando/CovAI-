@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import { io } from "socket.io-client";
 import { queryClient } from "../lib/queryClient";
-import { attachSocketAuthRecovery, socketAuth } from "../lib/authSession.js";
-
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
+import {
+  SOCKET_URL,
+  attachSocketAuthRecovery,
+  socketAuth,
+} from "../lib/authSession.js";
 
 /**
  * useDashboardSocket - Real-time Socket.IO telemetry for Unified Dashboard.
@@ -40,7 +42,13 @@ export function useDashboardSocket({
       reconnectionAttempts: 15,
       reconnectionDelay: 1000,
     });
-    attachSocketAuthRecovery(socket);
+    attachSocketAuthRecovery(socket, {
+      onReauthenticated: () => {
+        if (alive && socket.connected) {
+          socket.emit("project:subscribe", { projectId });
+        }
+      },
+    });
 
     socket.on("connect", () => {
       if (!alive) return;

@@ -2,11 +2,13 @@ import { useEffect, useRef } from "react";
 import { io } from "socket.io-client";
 import { queryClient } from "../lib/queryClient";
 import { collaborationRequest, projectPath } from "../services/collaborationHttp";
-import { attachSocketAuthRecovery, socketAuth } from "../lib/authSession.js";
+import {
+  SOCKET_URL,
+  attachSocketAuthRecovery,
+  socketAuth,
+} from "../lib/authSession.js";
 import { GIT_SOCKET_EVENTS } from "../../../shared/gitProtocol.js";
 import { SNAPSHOT_SOCKET_EVENTS } from "../../../shared/snapshotVcsProtocol.js";
-
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
 
 const VCS_SOCKET_EVENT_NAMES = [
   GIT_SOCKET_EVENTS.STATUS_UPDATED,
@@ -111,7 +113,13 @@ export function useProjectEvents(projectId, userId, onEvent) {
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
     });
-    attachSocketAuthRecovery(socket);
+    attachSocketAuthRecovery(socket, {
+      onReauthenticated: () => {
+        if (alive && socket.connected) {
+          socket.emit("project:subscribe", { projectId });
+        }
+      },
+    });
 
     socket.on("connect", async () => {
       socket.emit("project:subscribe", { projectId });

@@ -1,9 +1,11 @@
-import { attachSocketAuthRecovery, socketAuth } from "../lib/authSession.js";
+import {
+  SOCKET_URL,
+  attachSocketAuthRecovery,
+  socketAuth,
+} from "../lib/authSession.js";
 /* eslint-disable react-hooks/refs */
 import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
-
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
 
 /**
  * Custom hook for Socket.IO connection management
@@ -25,17 +27,17 @@ export const useSocket = (userId, onNotification) => {
   useEffect(() => {
     if (!userId) return;
 
-    let token = localStorage.getItem("token");
-    try {
-      token ||= JSON.parse(localStorage.getItem("user") || "null")?.token;
-    } catch { /* An expired session reconnects after login. */ }
     const socket = io(SOCKET_URL, {
       auth: socketAuth,
       transports: ["websocket", "polling"],
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
     });
-    attachSocketAuthRecovery(socket);
+    attachSocketAuthRecovery(socket, {
+      onReauthenticated: () => {
+        if (socket.connected) socket.emit("subscribe_notifications", userId);
+      },
+    });
     socketRef.current = socket;
 
     socket.on("connect", () => {

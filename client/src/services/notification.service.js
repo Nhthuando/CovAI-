@@ -1,5 +1,9 @@
 import axios from 'axios';
-import { API_BASE, installAxiosAuthRefresh } from '../lib/authSession.js';
+import {
+    API_BASE,
+    getAccessToken,
+    installAxiosAuthRefresh,
+} from '../lib/authSession.js';
 
 const API_URL = API_BASE;
 
@@ -8,22 +12,7 @@ const notificationApi = axios.create({
     withCredentials: true,
 });
 
-// Add auth token to requests
-notificationApi.interceptors.request.use(
-    (config) => {
-        const token = localStorage.getItem('token');
-        if (!token) {
-            delete config.headers?.Authorization;
-            return config;
-        }
-
-        config.headers.Authorization = `Bearer ${token}`;
-        return config;
-    },
-    (error) => Promise.reject(error)
-);
-
-// Handle token expiration: renew the session and retry before logging out.
+// Handle token attachment + expiration: renew the session and retry before logging out.
 installAxiosAuthRefresh(notificationApi);
 
 export const notificationService = {
@@ -36,7 +25,7 @@ export const notificationService = {
      */
     getNotifications: async (page = 1, limit = 20, unreadOnly = false) => {
         try {
-            const token = localStorage.getItem('token');
+            const token = getAccessToken();
             if (!token) {
                 return {
                     success: true,
@@ -59,7 +48,7 @@ export const notificationService = {
                     data: [],
                     meta: {
                         unreadCount: 0,
-                        pagination: { page, limit: 20, total: 0, totalPages: 0 },
+                        pagination: { page, limit, total: 0, totalPages: 0 },
                     },
                 };
             }
@@ -74,7 +63,7 @@ export const notificationService = {
      */
     getUnreadCount: async () => {
         try {
-            const token = localStorage.getItem('token');
+            const token = getAccessToken();
             if (!token) {
                 return 0;
             }

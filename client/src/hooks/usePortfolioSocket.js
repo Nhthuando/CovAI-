@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import { io } from "socket.io-client";
 import { useQueryClient } from "@tanstack/react-query";
-import { attachSocketAuthRecovery, socketAuth } from "../lib/authSession.js";
-
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
+import {
+  SOCKET_URL,
+  attachSocketAuthRecovery,
+  socketAuth,
+} from "../lib/authSession.js";
 
 /**
  * Throttle helper to limit high-frequency socket events
@@ -54,7 +56,11 @@ export function usePortfolioSocket(userId) {
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
     });
-    attachSocketAuthRecovery(socket);
+    attachSocketAuthRecovery(socket, {
+      onReauthenticated: () => {
+        if (socket.connected) socket.emit("subscribe_notifications", userId);
+      },
+    });
 
     socket.on("connect", () => {
       setIsConnected(true);

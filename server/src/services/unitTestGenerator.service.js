@@ -248,7 +248,7 @@ ${nativeHarnessExample}
   );
   const isDefaultObjectLiteral = Boolean(
     /\b(?:export\s+default|module\.exports\s*=)\s*\{/.test(sourceCode || "") ||
-      defaultRuntimeSym?.type === "object",
+    defaultRuntimeSym?.type === "object",
   );
   const isDefaultSingletonOrObject = Boolean(
     singletonInstanceMatch || isDefaultObjectLiteral,
@@ -2489,7 +2489,8 @@ export const verifyAndRefineUnitTestDraft = async ({
         );
         if (
           failedScenarios.length === 0 &&
-          (passedTests === 0 || (rawRunRes?.exitCode != null && rawRunRes.exitCode !== 0))
+          (passedTests === 0 ||
+            (rawRunRes?.exitCode != null && rawRunRes.exitCode !== 0))
         ) {
           const rawErrLog = String(
             rawRunRes?.stderr || rawRunRes?.stdout || parsedRun?.rawError || "",

@@ -21,7 +21,10 @@ import express from "express";
 import cors from "cors";
 import { createServer } from "http";
 import { Server } from "socket.io";
-import { subscribeToUserRoom } from "./src/utils/socketSubscription.js";
+import {
+  refreshSocketAuthToken,
+  subscribeToUserRoom,
+} from "./src/utils/socketSubscription.js";
 import authRoute from "./src/routes/auth.route.js";
 import refreshRoute from "./src/routes/refresh.route.js";
 import userRoute from "./src/routes/user.route.js";
@@ -70,18 +73,45 @@ import { fileURLToPath } from "url";
 import "./src/services/queue.service.js";
 import "./src/services/codeHygieneJob.service.js";
 
+function buildAllowedCorsOrigins() {
+  const configured = process.env.CLIENT_URL || "http://localhost:5173";
+  const extra = String(process.env.CORS_ORIGINS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const origins = new Set([
+    configured,
+    ...extra,
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:4173",
+    "http://[::1]:5173",
+    "http://[::1]:4173",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:4173",
+  ]);
+  try {
+    const parsed = new URL(configured);
+    if (/^https?:$/i.test(parsed.protocol) && !/^(localhost|127\.0\.0\.1|\[::1\])$/i.test(parsed.hostname)) {
+      const bareHost = parsed.hostname.replace(/^www\./i, "");
+      const portSuffix = parsed.port ? `:${parsed.port}` : "";
+      origins.add(`${parsed.protocol}//${bareHost}${portSuffix}`);
+      origins.add(`${parsed.protocol}//www.${bareHost}${portSuffix}`);
+    }
+  } catch {
+    // Keep configured string as-is
+  }
+  return [...origins];
+}
+
+const allowedCorsOrigins = buildAllowedCorsOrigins();
 const app = express();
 const PORT = process.env.PORT || 5000;
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   maxHttpBufferSize: 2 * 1024 * 1024 + 65536,
   cors: {
-    origin: [
-      process.env.CLIENT_URL || "http://localhost:5173",
-      "http://localhost:5174",
-      "http://[::1]:5173",
-      "http://127.0.0.1:5173",
-    ],
+    origin: allowedCorsOrigins,
     credentials: true,
   },
 });
@@ -90,12 +120,7 @@ const io = new Server(httpServer, {
 
 app.use(
   cors({
-    origin: [
-      process.env.CLIENT_URL || "http://localhost:5173",
-      "http://localhost:5174",
-      "http://[::1]:5173",
-      "http://127.0.0.1:5173",
-    ],
+    origin: allowedCorsOrigins,
     credentials: true,
     exposedHeaders: ["Content-Disposition"],
   }),
@@ -215,6 +240,11 @@ const __dirname = path.dirname(__filename);
 // Socket.IO connection handling
 io.on("connection", (socket) => {
   console.log(`[Socket.IO] User connected: ${socket.id}`);
+
+  socket.on("auth:refresh", (payload, ack) => {
+    const res = refreshSocketAuthToken(socket, payload?.token);
+    if (typeof ack === "function") ack(res);
+  });
 
   socket.on("subscribe_notifications", (userId) => {
     subscribeToUserRoom(socket, userId);

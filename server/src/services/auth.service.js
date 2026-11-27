@@ -15,8 +15,14 @@ import {
   normalizeAuthProvider,
 } from "../../../shared/versionControlMode.js";
 
-const JWT_TTL = process.env.JWT_ACCESS_EXPIRES_IN || "15m";
-const REFRESH_TTL = process.env.JWT_REFRESH_EXPIRES_IN || "30d";
+function getAccessTokenTtl() {
+  return process.env.JWT_ACCESS_EXPIRES_IN || "15m";
+}
+
+function getRefreshTokenTtl() {
+  return process.env.JWT_REFRESH_EXPIRES_IN || "30d";
+}
+
 const MAX_ACTIVE_REFRESH_TOKENS = 5;
 
 // Constant-time timing guard used when login email does not exist.
@@ -93,14 +99,14 @@ export const issueSessionTokensForUser = async (
       authProvider,
     },
     process.env.JWT_SECRET,
-    { expiresIn: JWT_TTL },
+    { expiresIn: getAccessTokenTtl() },
   );
 
   const refreshToken = jwt.sign(
     { userId: user.id, authProvider },
     getRefreshSecret(),
     {
-      expiresIn: REFRESH_TTL,
+      expiresIn: getRefreshTokenTtl(),
     },
   );
 

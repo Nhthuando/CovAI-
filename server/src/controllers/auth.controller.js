@@ -42,18 +42,25 @@ const REFRESH_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const OAUTH_STATE_COOKIE_NAME = "covai_oauth_state";
 
 function isSecureCookieRequest(req) {
+  const forwardedProto = String(req?.headers?.["x-forwarded-proto"] || "")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+  if (req?.secure || forwardedProto === "https") return true;
+  const origin = String(req?.headers?.origin || "").trim();
+  if (/^https:/i.test(origin)) return true;
+  if (/^http:/i.test(origin) || forwardedProto === "http") return false;
   return Boolean(
-    req?.secure ||
-    req?.headers?.["x-forwarded-proto"] === "https" ||
-    (/^https:/i.test(process.env.CLIENT_URL || "") &&
-      process.env.NODE_ENV === "production"),
+    /^https:/i.test(process.env.CLIENT_URL || "") &&
+      process.env.NODE_ENV === "production",
   );
 }
 
 function resolveCookieSameSite(req, secure) {
   if (!secure) return "lax";
   const origin = req?.headers?.origin;
-  const host = req?.headers?.["x-forwarded-host"] || req?.headers?.host;
+  const rawHost = req?.headers?.["x-forwarded-host"] || req?.headers?.host;
+  const host = typeof rawHost === "string" ? rawHost.split(",")[0].trim() : "";
   if (origin && host) {
     try {
       const originHost = new URL(origin).host;

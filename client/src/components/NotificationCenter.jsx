@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { notificationService } from "../services/notification.service";
 import { useSocket } from "../hooks/useSocket";
+import { getAccessToken } from "../lib/authSession";
 
 function getNotificationMeta(notification) {
   const title = String(notification?.title || "");
@@ -110,7 +111,7 @@ export const NotificationCenter = ({
 
   const fetchNotifications = useCallback(
     async (pageNum = 1, reset = false) => {
-      if (!userId || !localStorage.getItem("token")) {
+      if (!userId || !getAccessToken()) {
         setNotifications([]);
         setUnreadCount(0);
         return;
@@ -145,7 +146,7 @@ export const NotificationCenter = ({
 
   // Fetch unread count (polling fallback)
   const fetchUnreadCount = useCallback(async () => {
-    if (!userId || !localStorage.getItem("token")) {
+    if (!userId || !getAccessToken()) {
       setUnreadCount(0);
       return;
     }

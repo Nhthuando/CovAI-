@@ -4,8 +4,16 @@ import { closeProjectStreams } from './projectStreamRegistry.service.js';
 
 const projectSockets = new Map();
 const identity = socket => {
-    const claims = jwt.verify(socket.handshake.auth?.token, process.env.JWT_SECRET);
+    let claims;
+    try {
+        claims = jwt.verify(socket?.data?.token || socket?.handshake?.auth?.token, process.env.JWT_SECRET);
+    } catch {
+        socket?.emit?.('auth:expired');
+        throw Object.assign(new Error('Authentication required'), { code: 'AUTH_REQUIRED' });
+    }
     if (typeof claims.userId !== 'string' || !claims.userId) throw new Error('Missing socket identity');
+    socket.data ||= {};
+    socket.data.authenticatedUserId ||= claims.userId;
     return claims.userId;
 };
 

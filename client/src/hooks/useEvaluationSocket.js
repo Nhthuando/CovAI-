@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { io } from 'socket.io-client';
-import { attachSocketAuthRecovery, socketAuth } from '../lib/authSession.js';
+import {
+  SOCKET_URL,
+  attachSocketAuthRecovery,
+  socketAuth,
+} from '../lib/authSession.js';
 import { evaluationKey } from './useTrustworthinessQuery';
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
 const emptyState = (projectId, userId) => ({
   projectId,
   userId,
@@ -27,7 +30,13 @@ export function useEvaluationSocket({ projectId, userId }) {
       reconnectionAttempts: 15,
       reconnectionDelay: 1000,
     });
-    attachSocketAuthRecovery(socket);
+    attachSocketAuthRecovery(socket, {
+      onReauthenticated: () => {
+        if (alive && socket.connected) {
+          socket.emit('project:subscribe', { projectId });
+        }
+      },
+    });
     const update = change => {
       if (!alive) return;
       setState(previous => change(
