@@ -4,6 +4,7 @@ import Editor from "@monaco-editor/react";
 import { Download, FileCode2, History, RotateCcw, Search } from "lucide-react";
 import Button from "../../../common/Button";
 import ConfirmDialog from "../../../common/ConfirmDialog";
+import VcsInlineBanner from "../shared/VcsInlineBanner";
 import { snapshotVcsService } from "../../../../services/snapshotVcs.service";
 import { useTheme } from "../../../../contexts/ThemeContext";
 
@@ -117,8 +118,8 @@ export default function SnapshotBrowsePanel({
     : files;
 
   return (
-    <div className="space-y-3">
-      <div className="p-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] flex flex-wrap items-center justify-between gap-2.5 text-xs">
+    <div className="h-full min-h-0 flex flex-col gap-2.5">
+      <div className="shrink-0 p-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] flex flex-wrap items-center justify-between gap-2.5 text-xs">
         <div className="flex items-center gap-2">
           <History size={14} className="text-[var(--color-primary)]" />
           <span className="font-semibold uppercase text-[11px] tracking-wider text-[var(--color-text-muted)]">
@@ -163,20 +164,16 @@ export default function SnapshotBrowsePanel({
       </div>
 
       {msg && (
-        <div
-          className={`px-3.5 py-2 rounded-lg border text-xs ${
-            msg.type === "error"
-              ? "bg-rose-500/10 text-rose-400 border-rose-500/25"
-              : "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
-          }`}
-        >
-          {msg.text}
-        </div>
+        <VcsInlineBanner
+          tone={msg.type === "error" ? "danger" : "success"}
+          title={msg.text}
+          onDismiss={() => setMsg(null)}
+        />
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
-        <div className="lg:col-span-4 border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] flex flex-col max-h-[480px]">
-          <div className="p-2 border-b border-[var(--color-border)]">
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-3">
+        <div className="lg:col-span-4 min-h-0 border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] flex flex-col max-h-[320px] lg:max-h-none">
+          <div className="p-2 border-b border-[var(--color-border)] shrink-0">
             <div className="flex items-center gap-1.5 h-8 px-2 rounded bg-[var(--color-surface-secondary)] border border-[var(--color-border)]">
               <Search size={12} className="text-[var(--color-text-muted)]" />
               <input
@@ -188,7 +185,7 @@ export default function SnapshotBrowsePanel({
               />
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5 custom-scrollbar">
+          <div className="flex-1 min-h-0 overflow-y-auto p-1.5 space-y-0.5 custom-scrollbar">
             {loadingTree ? (
               <div className="p-4 text-xs text-[var(--color-text-muted)]">
                 Loading historical files...
@@ -220,7 +217,7 @@ export default function SnapshotBrowsePanel({
           </div>
         </div>
 
-        <div className="lg:col-span-8 border border-[var(--color-border)] rounded-lg bg-[var(--color-bg)] h-[480px] flex flex-col overflow-hidden">
+        <div className="lg:col-span-8 border border-[var(--color-border)] rounded-lg bg-[var(--color-bg)] min-h-[280px] h-full flex flex-col overflow-hidden">
           <div className="px-3.5 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center justify-between text-xs font-mono">
             <span className="truncate text-[var(--color-text)]">
               {selectedFilePath || "Select a historical file"}

@@ -121,11 +121,11 @@ export default function GitPullRequestsPanel({
         <div className="p-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             {checks.overallState === "success" ? (
-              <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+              <CheckCircle2 size={16} className="text-[var(--color-success)] shrink-0" />
             ) : checks.overallState === "failure" ? (
-              <XCircle size={16} className="text-rose-400 shrink-0" />
+              <XCircle size={16} className="text-[var(--color-danger)] shrink-0" />
             ) : (
-              <Clock size={16} className="text-amber-400 shrink-0" />
+              <Clock size={16} className="text-[var(--color-warning)] shrink-0" />
             )}
             <div>
               <div className="text-xs font-semibold text-[var(--color-text)] flex items-center gap-2">
@@ -314,10 +314,10 @@ export default function GitPullRequestsPanel({
                   <span
                     className={`px-1.5 py-0.5 rounded text-[10px] font-mono uppercase border ${
                       pr.mergedAt
-                        ? "bg-indigo-500/10 text-indigo-400 border-indigo-500/20"
+                        ? "bg-[var(--color-primary)]/10 text-[var(--color-primary)] border-[var(--color-primary)]/25"
                         : pr.state === "open"
-                          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                          : "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                          ? "bg-[var(--color-success)]/10 text-[var(--color-success)] border-[var(--color-success)]/25"
+                          : "bg-[var(--color-danger)]/10 text-[var(--color-danger)] border-[var(--color-danger)]/25"
                     }`}
                   >
                     {pr.mergedAt ? "merged" : pr.state}

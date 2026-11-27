@@ -85,7 +85,9 @@ import {
   createProjectFolderApi,
   renameProjectEntryApi,
   deleteProjectEntryApi,
+  invalidateFileContentCache,
 } from "../../services/project.service";
+import { reopenCleanProjectEditors } from "../../lib/editor/editorModelRegistry";
 import {
   insertNodeIntoTree,
   renameNodeInTree,
@@ -564,6 +566,8 @@ function LayoutInner() {
   const [isSubmittingAnalysis, setIsSubmittingAnalysis] = useState(false);
   const [editorRefreshTrigger, setEditorRefreshTrigger] = useState(0);
   const [coverageRunTrigger, setCoverageRunTrigger] = useState(0);
+  const dirtyEditorPathsRef = useRef(new Set());
+  const lastVcsWorkspaceSyncRef = useRef({ key: "", at: 0 });
   useEffect(() => {
     if (![403, 404].includes(projectAccess.error?.status)) return;
     queryClient.cancelQueries({
@@ -590,8 +594,10 @@ function LayoutInner() {
       });
       return;
     }
-    if (/file|workspace|snapshot/i.test(event.type || ""))
+    if (/file|workspace|snapshot/i.test(event.type || "")) {
+      if (project?.id) invalidateFileContentCache(project.id);
       setEditorRefreshTrigger((value) => value + 1);
+    }
   });
 
   const handleSelectCoverageType = (type) => {
@@ -614,52 +620,182 @@ function LayoutInner() {
     setCoverageRunTrigger((prev) => prev + 1);
   };
 
-  const handleVcsSync = async (options = {}) => {
-    const activeProjId = project?.id;
-    if (!activeProjId) return;
-    try {
-      const { invalidateFileContentCache } = await import(
-        "../../services/project.service"
-      );
-      invalidateFileContentCache(activeProjId);
+  const handleVcsSync = useCallback(
+    async (options = {}) => {
+      const activeProjId = project?.id;
+      if (!activeProjId) return;
 
-      if (options?.snapshotId) {
-        const nextSnapId = options.snapshotId;
-        localStorage.setItem(`latestSnapshot_${activeProjId}`, nextSnapId);
-        setProject((prev) =>
-          prev && prev.id === activeProjId
-            ? {
-                ...prev,
-                activeSnapshotId: nextSnapId,
-                latestSnapshotId: nextSnapId,
-              }
-            : prev,
-        );
-        const params = new URLSearchParams(location.search);
-        if (params.get("snapshotId") !== nextSnapId) {
-          params.set("snapshotId", nextSnapId);
-          navigate(`${location.pathname}?${params.toString()}`, {
-            replace: true,
-          });
+      const hasRevisionMarker =
+        options?.workspaceRevision != null || Boolean(options?.headOid);
+      if (hasRevisionMarker && !options?.force) {
+        const dedupeKey = `${activeProjId}:${options.workspaceRevision ?? ""}:${options.headOid ?? ""}`;
+        const now = Date.now();
+        if (
+          lastVcsWorkspaceSyncRef.current.key === dedupeKey &&
+          now - lastVcsWorkspaceSyncRef.current.at < 1200
+        ) {
+          return;
         }
+        lastVcsWorkspaceSyncRef.current = { key: dedupeKey, at: now };
       }
 
-      await Promise.all([
-        queryClient.invalidateQueries({
+      try {
+        invalidateFileContentCache(activeProjId);
+
+        const currParams = new URLSearchParams(locationRef.current?.search || "");
+        const resolvedSnapshotId =
+          options?.snapshotId ||
+          currParams.get("snapshotId") ||
+          project?.activeSnapshotId ||
+          project?.latestSnapshotId ||
+          project?.snapshots?.[0]?.id ||
+          null;
+
+        if (options?.snapshotId) {
+          const nextSnapId = options.snapshotId;
+          localStorage.setItem(`latestSnapshot_${activeProjId}`, nextSnapId);
+          setProject((prev) =>
+            prev && prev.id === activeProjId
+              ? {
+                  ...prev,
+                  activeSnapshotId: nextSnapId,
+                  latestSnapshotId: nextSnapId,
+                }
+              : prev,
+          );
+          if (currParams.get("snapshotId") !== nextSnapId) {
+            currParams.set("snapshotId", nextSnapId);
+            navigate(`${locationRef.current.pathname}?${currParams.toString()}`, {
+              replace: true,
+            });
+          }
+        }
+
+        // Trigger Editor reload + collaborative Yjs clean reopen immediately
+        setEditorRefreshTrigger((prev) => prev + 1);
+        reopenCleanProjectEditors(
+          activeProjId,
+          resolvedSnapshotId,
+          options?.updatedFiles,
+        );
+
+        await queryClient.invalidateQueries({
           queryKey: ["projectTree", user?.id, activeProjId],
-        }),
-        queryClient.invalidateQueries({ queryKey: ["projects"] }),
-        queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] }),
-      ]);
-      if (!options?.skipVcsRefetch) {
-        vcsSummary.invalidateAll();
+          refetchType: "none",
+        });
+
+        const treePromise = queryClient
+          .fetchQuery({
+            queryKey: ["projectTree", user?.id, activeProjId],
+            queryFn: async () => {
+              const res = await getProjectTreeApi(activeProjId);
+              if (res?.success === false) {
+                throw new Error(res.message || "Project snapshot not ready");
+              }
+              return {
+                tree: res?.data || [],
+                snapshotId: res?.snapshotId ?? null,
+                workspaceRevision: res?.workspaceRevision ?? null,
+              };
+            },
+            staleTime: 0,
+            retry: false,
+          })
+          .then((treeResult) => {
+            if (!isMountedRef.current) return;
+            const sourceTree = Array.isArray(treeResult)
+              ? treeResult
+              : treeResult?.tree || [];
+            const snapId = Array.isArray(treeResult)
+              ? resolvedSnapshotId
+              : (treeResult?.snapshotId ?? resolvedSnapshotId);
+            const wkRev = Array.isArray(treeResult)
+              ? null
+              : (treeResult?.workspaceRevision ?? null);
+
+            loadedTreeProjectIdRef.current = activeProjId;
+            setTreeVersion(
+              snapId !== null || wkRev !== null
+                ? {
+                    snapshotId: snapId,
+                    expectedWorkspaceRevision: wkRev,
+                  }
+                : null,
+            );
+            setFileTree(sourceTree);
+
+            if (sourceTree.length > 0) {
+              const fileExistsInTree = (nodes, targetPath) => {
+                for (const node of nodes) {
+                  if (node.id === targetPath) return true;
+                  if (node.children && fileExistsInTree(node.children, targetPath)) {
+                    return true;
+                  }
+                }
+                return false;
+              };
+              setTabs((prev) => {
+                const remaining = prev.filter(
+                  (t) =>
+                    dirtyEditorPathsRef.current.has(t.id) ||
+                    fileExistsInTree(sourceTree, t.id),
+                );
+                if (remaining.length !== prev.length) {
+                  setActiveTabId((currActive) => {
+                    if (remaining.some((t) => t.id === currActive)) {
+                      return currActive;
+                    }
+                    const nextId = remaining[0]?.id || null;
+                    setActiveFileId(nextId);
+                    return nextId;
+                  });
+                }
+                return remaining;
+              });
+            }
+          });
+
+        const backgroundTasks = [
+          treePromise,
+          queryClient.invalidateQueries({ queryKey: ["projects"] }),
+          queryClient.invalidateQueries({ queryKey: ["unifiedDashboard"] }),
+        ];
+        if (!options?.skipVcsRefetch) {
+          vcsSummary.invalidateAll();
+        }
+        await Promise.all(backgroundTasks);
+      } catch (err) {
+        console.error("Failed to sync after VCS operation", err);
       }
-      await loadData(activeProjId, 1, 0, { forceRefresh: true });
-      setEditorRefreshTrigger((prev) => prev + 1);
-    } catch (err) {
-      console.error("Failed to sync after VCS operation", err);
-    }
-  };
+    },
+    [
+      navigate,
+      project?.activeSnapshotId,
+      project?.id,
+      project?.latestSnapshotId,
+      project?.snapshots,
+      user?.id,
+      vcsSummary,
+    ],
+  );
+
+  useEffect(() => {
+    const onWorkspaceChanged = (evt) => {
+      const detail = evt?.detail;
+      if (!detail || !project?.id || detail.projectId !== project.id) return;
+      void handleVcsSync({
+        skipVcsRefetch: true,
+        updatedFiles: detail.updatedFiles,
+        workspaceRevision: detail.workspaceRevision,
+        headOid: detail.headOid,
+        fromSocket: true,
+      });
+    };
+    window.addEventListener("covai:vcs-workspace-changed", onWorkspaceChanged);
+    return () => {
+      window.removeEventListener("covai:vcs-workspace-changed", onWorkspaceChanged);
+    };
+  }, [project?.id, handleVcsSync]);
 
   useEffect(() => {
     const projectId = project?.id;
@@ -1940,7 +2076,7 @@ function LayoutInner() {
             <div
               className={
                 activeActivity === "version-control" || activeActivity === "git"
-                  ? "w-full h-full overflow-y-auto"
+                  ? "w-full h-full overflow-hidden flex flex-col min-h-0"
                   : "hidden"
               }
             >
@@ -2201,6 +2337,9 @@ function LayoutInner() {
                 onSuggestTestcase={handleSuggestTestcase}
                 refreshTrigger={editorRefreshTrigger}
                 jumpTarget={editorJumpTarget}
+                onDirtyPathsChange={(paths) => {
+                  dirtyEditorPathsRef.current = new Set(paths);
+                }}
               />
             </div>
           )}

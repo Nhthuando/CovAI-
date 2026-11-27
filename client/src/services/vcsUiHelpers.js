@@ -1,5 +1,9 @@
 import { VC_MODES } from "../../../shared/versionControlMode.js";
-import { GIT_REPO_OPERATION_STATE } from "../../../shared/gitProtocol.js";
+import {
+  computeBranchDivergence,
+  formatGitTrackingMessage,
+  GIT_REPO_OPERATION_STATE,
+} from "../../../shared/gitProtocol.js";
 import { roleAllows } from "../../../shared/projectAccess.js";
 
 const STATUS_META = Object.freeze({
@@ -691,4 +695,85 @@ export function applyOptimisticUnstage(vcMode, rawStatus, { files, folder } = {}
     staged: nextStaged,
     unstaged: nextUnstaged,
   };
+}
+
+/**
+ * Builds VS Code-grade behind/diverged banner metadata for Git & GitHub Workbench.
+ */
+export function buildRemoteSyncBannerState(status) {
+  if (!status?.hasGit || status.detached || status.isUnborn) return null;
+  const behind = Number(status.behind || 0);
+  if (behind <= 0) return null;
+
+  const ahead = Number(status.ahead || 0);
+  const branch = status.branch || status.defaultBranch || "main";
+  const remoteRef = status.remoteRef || status.tracking || `origin/${branch}`;
+  const divergence = computeBranchDivergence({
+    ahead,
+    behind,
+    tracking: remoteRef,
+    detached: status.detached,
+    isUnborn: status.isUnborn,
+  });
+
+  const commitWord = divergence.behind === 1 ? "commit" : "commits";
+  const cliHint =
+    status.trackingMessage ||
+    formatGitTrackingMessage({
+      branch,
+      tracking: remoteRef,
+      ahead: divergence.ahead,
+      behind: divergence.behind,
+    });
+
+  if (divergence.diverged) {
+    return {
+      kind: "diverged",
+      branch,
+      remoteRef,
+      ahead: divergence.ahead,
+      behind: divergence.behind,
+      canFastForward: false,
+      title: `Branch '${branch}' diverged from '${remoteRef}' (${divergence.ahead} ahead, ${divergence.behind} behind)`,
+      subtitle: `Remote has ${divergence.behind} newer ${commitWord} and local has ${divergence.ahead} unpushed commits.`,
+      cliHint,
+      primaryAction: "sync",
+      primaryLabel: `Sync (↓${divergence.behind} ↑${divergence.ahead})`,
+      secondaryAction: "pull",
+      secondaryLabel: `Pull (↓${divergence.behind})`,
+    };
+  }
+
+  return {
+    kind: "behind",
+    branch,
+    remoteRef,
+    ahead: 0,
+    behind: divergence.behind,
+    canFastForward: divergence.canFastForward,
+    title: `Your branch '${branch}' is behind '${remoteRef}' by ${divergence.behind} ${commitWord}`,
+    subtitle: "Can be fast-forwarded — run \"git pull\" to update your local branch.",
+    cliHint,
+    primaryAction: "pull",
+    primaryLabel: `Pull (↓${divergence.behind})`,
+    secondaryAction: "sync",
+    secondaryLabel: "Sync",
+  };
+}
+
+/**
+ * Formats an ISO timestamp into a compact relative age ("just now", "2m ago", etc.).
+ */
+export function formatRemoteCheckedAgo(isoTimestamp, nowMs = Date.now()) {
+  if (!isoTimestamp) return null;
+  const parsed = Date.parse(isoTimestamp);
+  if (!Number.isFinite(parsed)) return null;
+  const diffSec = Math.max(0, Math.floor((nowMs - parsed) / 1000));
+  if (diffSec < 15) return "just now";
+  if (diffSec < 60) return `${diffSec}s ago`;
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  return `${Math.floor(diffHr / 24)}d ago`;
 }

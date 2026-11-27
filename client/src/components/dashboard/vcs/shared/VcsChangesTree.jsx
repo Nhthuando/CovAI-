@@ -169,7 +169,7 @@ function ChangeTreeNode({
                 disabled={!canLocalWrite || isStagingFolder}
                 title={canLocalWrite ? `Stage folder ${node.path}` : disabledReason}
                 onClick={() => onStageFolder(node.path)}
-                className="p-1 rounded hover:bg-emerald-500/15 text-[var(--color-text-muted)] hover:text-emerald-400 cursor-pointer disabled:opacity-40"
+                className="p-1 rounded hover:bg-[var(--color-success)]/12 text-[var(--color-text-muted)] hover:text-[var(--color-success)] cursor-pointer disabled:opacity-40"
               >
                 {isStagingFolder ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
               </button>
@@ -367,7 +367,7 @@ function ChangeSection({
       </div>
 
       {expanded && (
-        <div className="p-1.5 space-y-0.5 max-h-64 overflow-y-auto custom-scrollbar">
+        <div className="p-1.5 space-y-0.5 max-h-72 overflow-y-auto custom-scrollbar">
           {items.length === 0 ? (
             <div className="flex items-center gap-2 px-2.5 py-3 text-xs text-[var(--color-text-muted)]">
               <Check size={13} className="text-[var(--color-success)] shrink-0" />

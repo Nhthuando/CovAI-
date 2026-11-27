@@ -2,6 +2,7 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import { Globe, Lock, UploadCloud, X } from "lucide-react";
 import Button from "../../../common/Button";
+import VcsInlineBanner from "../shared/VcsInlineBanner";
 import { validateGithubRepoName } from "../../../../../../shared/gitProtocol.js";
 
 export default function GitPublishModal({
@@ -75,11 +76,7 @@ export default function GitPublishModal({
         </div>
 
         <form onSubmit={handleSubmit} className="p-5 space-y-3.5 text-xs">
-          {error && (
-            <div className="px-3 py-2 rounded-md bg-rose-500/10 border border-rose-500/25 text-rose-400">
-              {error}
-            </div>
-          )}
+          {error && <VcsInlineBanner tone="danger" title={error} />}
 
           <div>
             <label className="block text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
