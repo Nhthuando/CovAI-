@@ -1149,6 +1149,10 @@ export async function createRun(db, projectId, userId, input, { enqueue = enqueu
 
         try {
             await enqueue('AI_EVALUATION', run.jobId);
+            const { autoTransitionProjectToDoingIfNeeded } = await import('../job.service.js');
+            void autoTransitionProjectToDoingIfNeeded(projectId, db).catch((err) => {
+                console.warn('[aiEvaluation] Auto-transition to DOING failed:', err?.message || err);
+            });
         } catch {
             if (llmKeyRef) destroyEphemeralSecret(llmKeyRef);
             if (targetTokenRef) destroyEphemeralSecret(targetTokenRef);

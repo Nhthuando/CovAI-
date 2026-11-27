@@ -12,6 +12,7 @@ it.each([
     ["projects", "POST", "/p1/run-analysis", {}, "tests.run"],
     ["projects", "POST", "/p1/upload-zip", {}, "integrations.write"],
     ["projects", "PUT", "/p1/file-content", {}, "files.write"],
+    ["projects", "PATCH", "/p1/status", {}, "project.lifecycle.manage"],
     ["coverage", "POST", "/s1/system/catalog/c1/confirm-expected", {}, "evidence.approve"],
     ["coverage", "GET", "/s1/system/setup", {}, "project.read"],
     ["coverage", "POST", "/s1/system/setup/apply", {}, "evidence.approve"],
