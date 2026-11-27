@@ -121,10 +121,18 @@ export function emitPortfolioRunCompleted({
 export function emitPortfolioProjectUpdated({
   projectId,
   userId = null,
+  userIds = [],
   lifecycleStatus = null,
   isPinned = null,
   action = "UPDATED",
 }) {
+  const targetUsers = [
+    ...new Set([userId, ...(Array.isArray(userIds) ? userIds : [])].filter(Boolean)),
+  ];
+  for (const uid of targetUsers) {
+    invalidatePortfolioCache(uid);
+  }
+
   const io = getIo();
   if (!io) return;
 
@@ -136,10 +144,9 @@ export function emitPortfolioProjectUpdated({
     updatedAt: new Date().toISOString(),
   };
 
-  if (userId) {
-    io.to(`user:${userId}`).emit("portfolio:project_updated", payload);
+  for (const uid of targetUsers) {
+    io.to(`user:${uid}`).emit("portfolio:project_updated", payload);
   }
   io.to(`project:${projectId}`).emit("portfolio:project_updated", payload);
-  invalidatePortfolioCache(userId);
 }
 

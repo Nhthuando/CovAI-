@@ -16,7 +16,8 @@ export function PortfolioCommandHeader({
   const { addToast } = useToast?.() || {};
 
   const metadata = vm?.metadata || {};
-  const activeProjectsCount = metadata.activeProjectsCount ?? 0;
+  const doingProjectsCount =
+    metadata.doingProjectsCount ?? metadata.activeProjectsCount ?? 0;
   const totalSnapshotsCount = metadata.totalSnapshotsCount ?? 0;
   const matchingProjectsCount =
     metadata.matchingProjectsCount ?? vm?.projects?.length ?? 0;
@@ -47,13 +48,13 @@ export function PortfolioCommandHeader({
             {isFiltered && (
               <>
                 <span className="text-[var(--ps-cobalt)] font-semibold tabular-nums">
-                  Showing {matchingProjectsCount} of {totalProjectsCount}
+                  Directory: {matchingProjectsCount} of {totalProjectsCount}
                 </span>
                 <span>·</span>
               </>
             )}
             <span className="text-[var(--ps-ink-secondary)] font-medium tabular-nums">
-              {activeProjectsCount} active
+              {doingProjectsCount} doing (in KPI) · {totalProjectsCount} total projects
             </span>
             <span>·</span>
             <span className="tabular-nums">{totalSnapshotsCount} snapshots</span>
@@ -96,7 +97,7 @@ export function PortfolioCommandHeader({
           className="flex flex-wrap items-center gap-1.5 pt-0.5"
         >
           <span className="text-[11px] ps-mono text-[var(--ps-ink-muted)] mr-1">
-            Filtered scope:
+            Directory filter:
           </span>
           {activeFilterTags.map((tag) => (
             <button

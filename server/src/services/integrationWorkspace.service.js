@@ -1095,6 +1095,20 @@ export const discoverProjectIntegrationTests = async (rootDir) => {
   return results;
 };
 
+export const getCachedIntegrationSummary = (snapshotId) => {
+  if (!snapshotId) return null;
+  const cached = integrationWorkspacePayloadCache.get(snapshotId);
+  if (!cached || !cached.data) return null;
+  if (Date.now() - (cached.cachedAt || 0) >= INTEGRATION_MAX_TTL_MS) {
+    return null;
+  }
+  return {
+    summary: cached.data.summary || {},
+    framework: cached.data.snapshot?.framework || "Supertest",
+    endpoints: Array.isArray(cached.data.endpoints) ? cached.data.endpoints : [],
+  };
+};
+
 export const buildIntegrationWorkspace = async (snapshotId, options = {}) => {
   if (!snapshotId) return null;
 

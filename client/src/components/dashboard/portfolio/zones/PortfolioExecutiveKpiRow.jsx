@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { PORTFOLIO_ROI_BASELINE } from "../../../../../../shared/portfolioGovernance.js";
 import RadialHealthGauge from "../primitives/RadialHealthGauge.jsx";
 
 export function PortfolioExecutiveKpiRow({
@@ -6,7 +7,6 @@ export function PortfolioExecutiveKpiRow({
   lifecycleCounts = null,
   scopeBadge = null,
   excludedCount = 0,
-  isFiltered = false,
   className = "",
 }) {
   const card1 = kpis.card1Health || {};
@@ -33,22 +33,51 @@ export function PortfolioExecutiveKpiRow({
       ? Math.max(0, 100 - doingPct - notStartedPct - completedPct)
       : 0;
 
-  const unitCov = card2.avgUnitCoveragePct ?? 0;
-  const intCov = card2.avgIntegrationCoveragePct ?? 0;
-  const sysCov = card2.avgSystemCoveragePct ?? 0;
+  const hasHealthScore =
+    card1.avgHealthScore !== null && card1.avgHealthScore !== undefined;
+  const unifiedCoveragePct = card2.unifiedCoveragePct;
+  const hasUnifiedCoverage =
+    unifiedCoveragePct !== null && unifiedCoveragePct !== undefined;
+
+  const layerMeta = card2.layerCoverageMeta || {};
+  const coverageLayers = [
+    {
+      key: "unit",
+      label: "Unit",
+      val: card2.avgUnitCoveragePct,
+      meta: layerMeta.unit,
+      color: "var(--ps-cobalt)",
+    },
+    {
+      key: "integration",
+      label: "API",
+      val: card2.avgIntegrationCoveragePct,
+      meta: layerMeta.integration,
+      color: "var(--ps-indigo)",
+    },
+    {
+      key: "system",
+      label: "E2E",
+      val: card2.avgSystemCoveragePct,
+      meta: layerMeta.system,
+      color: "var(--ps-teal)",
+    },
+  ];
 
   const totalTests = card3.totalExecutedTests ?? 0;
-  const passRate = card3.overallPassRatePct ?? 0;
+  const totalFailed = card3.totalFailedTests ?? 0;
+  const passRate = card3.overallPassRatePct;
+  const hasPassRate = passRate !== null && passRate !== undefined;
   const speedup = timeRoi.averageSpeedupMultiplier || 0;
   const autoDuration =
-    timeRoi.totalAutoExecutionDurationFormatted || card3.cumulativeDurationStr || "0s";
-  const manualDuration = timeRoi.totalManualExecutionDurationFormatted || "0s";
+    timeRoi.totalAutoExecutionDurationFormatted || card3.cumulativeDurationStr || "0ms";
+  const manualDuration = timeRoi.totalManualExecutionDurationFormatted || "0 mins";
 
   const totalQaHoursSaved = timeRoi.totalQaHoursSaved ?? 0;
-  const aiTests = card4.totalAiTests ?? 0;
+  const aiGenerated = card4.aiGeneratedCount ?? 0;
   const aiRepaired = card4.aiRepairedCount ?? 0;
   const aiGaps = card4.uncoveredGapsCount ?? 0;
-  const aiSum = Math.max(1, aiTests + aiRepaired + aiGaps);
+  const aiSum = Math.max(1, aiGenerated + aiRepaired + aiGaps);
 
   return (
     <section
@@ -70,17 +99,23 @@ export function PortfolioExecutiveKpiRow({
               </div>
             )}
             <div className="flex items-baseline gap-1.5 mt-1 ps-mono">
-              <span className="text-2xl font-bold text-[var(--ps-ink)]">
-                {card1.avgHealthScore ?? 0}
+              <span className="text-2xl font-bold text-[var(--ps-ink)] tabular-nums">
+                {hasHealthScore ? card1.avgHealthScore : "—"}
               </span>
-              <span className="text-xs text-[var(--ps-ink-muted)]">/ 100</span>
+              {hasHealthScore ? (
+                <span className="text-xs text-[var(--ps-ink-muted)]">/ 100</span>
+              ) : (
+                <span className="text-[11px] text-[var(--ps-ink-muted)]">
+                  No runs yet
+                </span>
+              )}
             </div>
           </div>
 
           <RadialHealthGauge
             score={card1.avgHealthScore ?? 0}
             grade={card1.grade || "—"}
-            isTested={(card1.totalProjects || 0) > 0 && (card1.avgHealthScore ?? 0) > 0}
+            isTested={hasHealthScore}
             size={48}
             strokeWidth={4}
           />
@@ -104,29 +139,39 @@ export function PortfolioExecutiveKpiRow({
 
           <div className="grid grid-cols-4 gap-1 text-center ps-mono text-[11px]">
             {[
-              { label: "Doing", val: doingCount, dot: "bg-[var(--ps-cobalt)]" },
+              {
+                label: "Doing",
+                val: doingCount,
+                dot: "bg-[var(--ps-cobalt)]",
+                title: "Included in Portfolio KPIs",
+              },
               {
                 label: "Done",
                 val: completedCount,
                 dot: "bg-[var(--ps-emerald)]",
                 title:
-                  !isFiltered && excludedCount > 0
-                    ? "Excluded from Active KPIs"
-                    : undefined,
+                  excludedCount > 0 ? "Completed — Excluded from Active KPIs" : undefined,
               },
-              { label: "New", val: notStartedCount, dot: "bg-[var(--ps-neutral)]" },
+              {
+                label: "New",
+                val: notStartedCount,
+                dot: "bg-[var(--ps-neutral)]",
+                title: "Not Started — Excluded from Active KPIs until executed",
+              },
               {
                 label: "Hold",
                 val: pausedOrCancelled,
                 dot: "bg-[var(--ps-amber)]",
                 title:
-                  !isFiltered && excludedCount > 0
-                    ? "Excluded from Active KPIs"
+                  excludedCount > 0
+                    ? "Paused / Cancelled — Excluded from Active KPIs"
                     : undefined,
               },
             ].map((item) => (
               <div key={item.label} title={item.title} className="py-0.5">
-                <div className="font-semibold text-[var(--ps-ink)]">{item.val}</div>
+                <div className="font-semibold text-[var(--ps-ink)] tabular-nums">
+                  {item.val}
+                </div>
                 <div className="text-[10px] text-[var(--ps-ink-muted)] inline-flex items-center gap-1">
                   <span className={`w-1.5 h-1.5 rounded-full ${item.dot}`} />
                   {item.label}
@@ -144,43 +189,67 @@ export function PortfolioExecutiveKpiRow({
             <span className="text-xs text-[var(--ps-ink-muted)]">
               Unified coverage
             </span>
-            <div className="text-2xl font-bold ps-mono text-[var(--ps-ink)] mt-1">
-              {card2.unifiedCoveragePct ?? 0}%
+            <div className="text-2xl font-bold ps-mono tabular-nums text-[var(--ps-ink)] mt-1">
+              {hasUnifiedCoverage ? `${unifiedCoveragePct}%` : "—"}
             </div>
           </div>
-          <span className="text-[11px] ps-mono text-[var(--ps-ink-muted)]">
+          <span
+            className="text-[11px] ps-mono text-[var(--ps-ink-muted)]"
+            title="Weighted average re-normalized over measured layers (Unit 50% / API 30% / E2E 20%)"
+          >
             80% goal
           </span>
         </div>
 
-        <div className="grid grid-cols-3 gap-3 items-end h-14 relative pt-1">
+        <div className="grid grid-cols-3 gap-3 items-end h-16 relative pt-1">
           <div
             style={{ bottom: "76%" }}
             className="absolute inset-x-0 border-t border-dashed border-[var(--ps-line-strong)] pointer-events-none"
           />
-          {[
-            { label: "Unit", val: unitCov, color: "var(--ps-cobalt)" },
-            { label: "API", val: intCov, color: "var(--ps-indigo)" },
-            { label: "E2E", val: sysCov, color: "var(--ps-teal)" },
-          ].map((col) => (
-            <div key={col.label} className="flex flex-col items-center gap-1 h-full justify-end">
-              <span className="text-[10px] ps-mono font-medium text-[var(--ps-ink-secondary)]">
-                {col.val}%
-              </span>
-              <div className="w-full max-w-[30px] h-8 rounded-sm bg-[var(--ps-surface-2)] overflow-hidden flex items-end">
-                <div
-                  style={{
-                    height: `${Math.max(5, Math.min(100, col.val))}%`,
-                    backgroundColor: col.color,
-                  }}
-                  className="w-full rounded-t-sm transition-all duration-300"
-                />
+          {coverageLayers.map((col) => {
+            const isMeasured = col.val !== null && col.val !== undefined;
+            const totalKpi = col.meta?.totalKpiProjects ?? card1.totalProjects ?? 0;
+            const measuredCount = col.meta?.measuredCount ?? 0;
+            const measuredHint =
+              totalKpi > 0 && measuredCount < totalKpi
+                ? `${measuredCount}/${totalKpi}`
+                : null;
+            const tooltip =
+              totalKpi > 0
+                ? `${col.label}: ${isMeasured ? `${col.val}%` : "Unmeasured"} (${measuredCount}/${totalKpi} active projects measured)`
+                : `${col.label}: ${isMeasured ? `${col.val}%` : "Unmeasured"}`;
+
+            return (
+              <div
+                key={col.label}
+                title={tooltip}
+                className="flex flex-col items-center gap-0.5 h-full justify-end"
+              >
+                <span className="text-[10px] ps-mono font-medium tabular-nums text-[var(--ps-ink-secondary)]">
+                  {isMeasured ? `${col.val}%` : "—"}
+                </span>
+                <div className="w-full max-w-[30px] h-7 rounded-sm bg-[var(--ps-surface-2)] overflow-hidden flex items-end">
+                  <div
+                    style={{
+                      height: isMeasured
+                        ? `${Math.max(4, Math.min(100, Number(col.val)))}%`
+                        : "0%",
+                      backgroundColor: col.color,
+                    }}
+                    className="w-full rounded-t-sm transition-all duration-300"
+                  />
+                </div>
+                <span className="text-[10px] ps-mono text-[var(--ps-ink-muted)] leading-none">
+                  {col.label}
+                </span>
+                {measuredHint && (
+                  <span className="text-[9px] ps-mono tabular-nums text-[var(--ps-ink-muted)] leading-none">
+                    {measuredHint}
+                  </span>
+                )}
               </div>
-              <span className="text-[10px] ps-mono text-[var(--ps-ink-muted)]">
-                {col.label}
-              </span>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -191,17 +260,17 @@ export function PortfolioExecutiveKpiRow({
             <span className="text-xs text-[var(--ps-ink-muted)]">
               Executed tests
             </span>
-            <div className="flex items-baseline gap-2 mt-1 ps-mono">
+            <div className="flex items-baseline gap-2 mt-1 ps-mono tabular-nums">
               <span className="text-2xl font-bold text-[var(--ps-ink)]">
                 {totalTests}
               </span>
               <span className="text-xs text-[var(--ps-ink-secondary)]">
-                {passRate}% pass
+                {hasPassRate ? `${passRate}% pass` : "No runs"}
               </span>
             </div>
           </div>
           {speedup > 1 && (
-            <span className="text-[11px] ps-mono text-[var(--ps-ink-secondary)]">
+            <span className="text-[11px] ps-mono tabular-nums text-[var(--ps-ink-secondary)]">
               {speedup}x faster
             </span>
           )}
@@ -209,45 +278,56 @@ export function PortfolioExecutiveKpiRow({
 
         <div className="space-y-2.5">
           <div className="h-1.5 w-full rounded-full bg-[var(--ps-surface-2)] overflow-hidden flex">
-            <div
-              style={{ width: `${Math.min(100, passRate)}%` }}
-              className="bg-[var(--ps-emerald)]"
-            />
-            {totalTests > 0 && passRate < 100 && (
+            {hasPassRate && (
               <div
-                style={{ width: `${Math.max(0, 100 - passRate)}%` }}
+                style={{ width: `${Math.min(100, passRate)}%` }}
+                className="bg-[var(--ps-emerald)]"
+              />
+            )}
+            {totalTests > 0 && totalFailed > 0 && (
+              <div
+                style={{ width: `${Math.max(0, 100 - (passRate ?? 0))}%` }}
                 className="bg-[var(--ps-rose)]"
               />
             )}
           </div>
 
-          <div className="flex items-center justify-between text-[11px] ps-mono">
+          <div className="flex items-center justify-between text-[11px] ps-mono tabular-nums">
             <span className="text-[var(--ps-ink-muted)]">
               Auto <strong className="text-[var(--ps-ink)]">{autoDuration}</strong>
             </span>
             <span className="text-[var(--ps-ink-muted)]">
-              Manual <strong className="text-[var(--ps-ink-secondary)]">{manualDuration}</strong>
+              Est. Manual{" "}
+              <strong className="text-[var(--ps-ink-secondary)]">{manualDuration}</strong>
             </span>
           </div>
         </div>
       </div>
 
-      {/* ── Col 4: QA Time Saved & Synthesis Breakdown ───────────────── */}
+      {/* ── Col 4: QA Time Saved (Est.) & Synthesis Breakdown ────────── */}
       <div className="p-4 sm:p-5 flex flex-col justify-between gap-4">
-        <div>
-          <span className="text-xs text-[var(--ps-ink-muted)]">
-            QA time saved
-          </span>
-          <div className="text-2xl font-bold ps-mono text-[var(--ps-ink)] mt-1">
-            +{totalQaHoursSaved.toFixed(1)}h
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <span className="text-xs text-[var(--ps-ink-muted)]">
+              QA time saved (Est.)
+            </span>
+            <div className="text-2xl font-bold ps-mono tabular-nums text-[var(--ps-ink)] mt-1">
+              +{totalQaHoursSaved.toFixed(1)}h
+            </div>
           </div>
+          <span
+            className="text-[10px] ps-mono text-[var(--ps-ink-muted)] px-1.5 py-0.5 rounded bg-[var(--ps-surface-2)] border border-[var(--ps-line)] shrink-0"
+            title={PORTFOLIO_ROI_BASELINE.methodologyNote}
+          >
+            {PORTFOLIO_ROI_BASELINE.label}
+          </span>
         </div>
 
         <div className="space-y-2.5">
           <div className="h-1.5 w-full rounded-full bg-[var(--ps-surface-2)] overflow-hidden flex gap-0.5">
-            {aiTests > 0 && (
+            {aiGenerated > 0 && (
               <div
-                style={{ width: `${(aiTests / aiSum) * 100}%` }}
+                style={{ width: `${(aiGenerated / aiSum) * 100}%` }}
                 className="bg-[var(--ps-cobalt)]"
               />
             )}
@@ -265,16 +345,16 @@ export function PortfolioExecutiveKpiRow({
             )}
           </div>
 
-          <div className="grid grid-cols-3 gap-1 text-center ps-mono text-[11px]">
-            <div>
-              <div className="font-semibold text-[var(--ps-ink)]">{aiTests}</div>
+          <div className="grid grid-cols-3 gap-1 text-center ps-mono text-[11px] tabular-nums">
+            <div title="AI-generated test specs & scenarios on active snapshot">
+              <div className="font-semibold text-[var(--ps-ink)]">{aiGenerated}</div>
               <div className="text-[10px] text-[var(--ps-ink-muted)]">Generated</div>
             </div>
-            <div>
+            <div title="Self-healed / regenerated tests & applied system proposals">
               <div className="font-semibold text-[var(--ps-ink)]">{aiRepaired}</div>
               <div className="text-[10px] text-[var(--ps-ink-muted)]">Healed</div>
             </div>
-            <div>
+            <div title="Uncovered API endpoints + low-branch unit files across Doing projects">
               <div className="font-semibold text-[var(--ps-ink)]">{aiGaps}</div>
               <div className="text-[10px] text-[var(--ps-ink-muted)]">Gaps</div>
             </div>

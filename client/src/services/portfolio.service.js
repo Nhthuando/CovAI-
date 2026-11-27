@@ -5,6 +5,10 @@ import {
   getAccessToken,
   handleUnauthorizedResponse,
 } from "../lib/authSession.js";
+import {
+  buildClientExportFilename,
+  parseContentDispositionFilename,
+} from "./portfolioDashboard/portfolioExport.utils.js";
 
 const BASE_URL = API_BASE;
 
@@ -69,19 +73,73 @@ export async function compareProjectsApi(projectIds = []) {
 }
 
 /**
- * Export portfolio report as JSON or CSV
+ * Export canonical Portfolio report as PDF, CSV, or JSON binary Blob.
  */
-export async function exportPortfolioReportApi({ format = 'json', scope = 'active' } = {}) {
+export async function exportPortfolioReportApi({
+  format = "pdf",
+  scope = "active_kpi",
+  projectIds = undefined,
+  sections = undefined,
+  filterSummary = undefined,
+} = {}) {
+  const payload = { format, scope };
+  if (Array.isArray(projectIds)) {
+    payload.projectIds = projectIds;
+  }
+  if (sections && typeof sections === "object") {
+    payload.sections = sections;
+  }
+  if (typeof filterSummary === "string" && filterSummary.trim()) {
+    payload.filterSummary = filterSummary.trim();
+  }
+
   const res = await editorAwareFetch(`${BASE_URL}/portfolio/export`, {
     method: "POST",
     headers: getAuthHeaders(),
-    body: JSON.stringify({ format, scope }),
+    body: JSON.stringify(payload),
   });
-  if (format === 'csv') {
-    const blob = await res.blob();
-    return blob;
+
+  if (!res.ok) {
+    if (res.status === 401) {
+      await handleUnauthorizedResponse();
+    }
+    const errData = await res.json().catch(() => ({}));
+    const err = new Error(errData.message || `Export failed (HTTP ${res.status})`);
+    err.status = res.status;
+    err.code = errData.code;
+    err.details = errData.details;
+    throw err;
   }
-  return handleResponse(res);
+
+  const blob = await res.blob();
+  const fallback = buildClientExportFilename({ scope, format });
+  const filename = parseContentDispositionFilename(
+    res.headers.get("content-disposition"),
+    fallback,
+  );
+
+  return {
+    blob,
+    filename,
+    contentType: res.headers.get("content-type") || "",
+  };
+}
+
+/**
+ * Trigger browser download for an exported Portfolio report Blob.
+ */
+export function triggerPortfolioFileDownload(blob, filename) {
+  if (!blob || typeof window === "undefined") return;
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = filename || "covai-portfolio-report.pdf";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => {
+    URL.revokeObjectURL(objectUrl);
+  }, 1000);
 }
 
 /**

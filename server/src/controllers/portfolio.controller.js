@@ -10,6 +10,22 @@ import { addJobToQueue } from "../services/queue.service.js";
 import { emitPortfolioRunStarted } from "../realtime/portfolioSocket.emitter.js";
 import prisma from "../config/prisma.js";
 import { membershipWhere } from "../services/projectAccess.service.js";
+import { roleAllows } from "../../../shared/projectAccess.js";
+import {
+  normalizePortfolioExportFormat,
+  normalizePortfolioExportScope,
+} from "../../../shared/portfolioGovernance.js";
+import {
+  buildPortfolioExportFilename,
+  buildPortfolioReportDto,
+  formatPortfolioReportCsv,
+  formatPortfolioReportJson,
+} from "../services/portfolioReport.service.js";
+import { renderPortfolioPdf } from "../services/portfolioPdf.service.js";
+import { ServiceError } from "../utils/serviceError.js";
+
+let activePortfolioExports = 0;
+const MAX_ACTIVE_PORTFOLIO_EXPORTS = 2;
 
 export async function getPortfolioOverviewController(req, res) {
   try {
@@ -44,18 +60,33 @@ export async function batchRunSuitesController(req, res) {
     const { projectIds, pillars = ["unit"] } = req.body || {};
 
     let targetProjects = [];
+    const batchProjectSelect = {
+      id: true,
+      name: true,
+      ownerId: true,
+      activeSnapshotId: true,
+      members: {
+        where: { userId },
+        select: { role: true },
+        take: 1,
+      },
+      snapshots: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { id: true },
+      },
+    };
+
     if (Array.isArray(projectIds) && projectIds.length > 0) {
       targetProjects = await prisma.project.findMany({
         where: {
           id: { in: projectIds },
           ...membershipWhere(userId),
         },
-        include: {
-          snapshots: { orderBy: { createdAt: "desc" }, take: 1, select: { id: true, rootDir: true } },
-        },
+        select: batchProjectSelect,
       });
     } else {
-      // Default: all active projects (DOING or NOT_STARTED)
+      // Default: all open projects (DOING or NOT_STARTED)
       targetProjects = await prisma.project.findMany({
         where: {
           ...membershipWhere(userId),
@@ -63,22 +94,23 @@ export async function batchRunSuitesController(req, res) {
         },
         orderBy: [{ isPinned: "desc" }, { updatedAt: "desc" }],
         take: 10,
-        include: {
-          snapshots: { orderBy: { createdAt: "desc" }, take: 1, select: { id: true, rootDir: true } },
-        },
+        select: batchProjectSelect,
       });
     }
 
     const scheduledJobs = [];
 
     for (const project of targetProjects) {
-      const snapshot = project.snapshots?.[0];
-      if (!snapshot) continue;
+      const role = project.ownerId === userId ? "OWNER" : (project.members?.[0]?.role || "VIEWER");
+      if (!roleAllows(role, "tests.run")) continue;
+
+      const snapshotId = project.activeSnapshotId || project.snapshots?.[0]?.id || null;
+      if (!snapshotId) continue;
 
       try {
         const job = await createRunTestsJob({
           projectId: project.id,
-          snapshotId: snapshot.id,
+          snapshotId,
           userId,
           mode: "FULL",
         });
@@ -90,7 +122,7 @@ export async function batchRunSuitesController(req, res) {
 
           emitPortfolioRunStarted({
             projectId: project.id,
-            snapshotId: snapshot.id,
+            snapshotId,
             jobId: job.id,
             jobType: "RUN_TESTS",
             pillar: "unit",
@@ -193,87 +225,101 @@ export async function compareProjectsController(req, res) {
 }
 
 export async function exportPortfolioReportController(req, res) {
+  let acquired = false;
   try {
     const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ success: false, message: "Unauthorized" });
     }
 
-    const { format = "json", scope = "active" } = req.method === "POST" ? req.body : req.query;
-
-    const overview = await buildPortfolioOverview({ userId });
-    let projects = overview.projects;
-    if (scope === "active") {
-      projects = projects.filter((p) => !p.isExcludedFromActiveKpis);
+    const input = req.method === "POST" ? (req.body || {}) : (req.query || {});
+    const format = normalizePortfolioExportFormat(input.format);
+    if (!format) {
+      return res.status(400).json({
+        success: false,
+        code: "INVALID_EXPORT_FORMAT",
+        message: "Invalid export format. Expected one of: pdf, csv, json.",
+      });
     }
 
-    if (format === "csv") {
-      const headers = [
-        "Project Name",
-        "Lifecycle Status",
-        "Health Score",
-        "Grade",
-        "Gate Status",
-        "Unified Cov %",
-        "Unit Cov %",
-        "API Cov %",
-        "System Cov %",
-        "Pass Rate %",
-        "Total Tests",
-        "Auto Duration (s)",
-        "Est. Manual (h)",
-        "QA Hours Saved",
-        "Speedup Multiplier",
-        "Pinned",
-        "Repo URL",
-        "Last Executed",
-      ];
-
-      const rows = projects.map((p) => [
-        `"${p.name.replace(/"/g, '""')}"`,
-        p.lifecycleStatus,
-        p.healthScore,
-        p.grade,
-        p.gateStatus,
-        p.unifiedCoveragePct,
-        p.pillars.unit.coveragePct,
-        p.pillars.integration.coveragePct,
-        p.pillars.system.coveragePct,
-        p.passRatePct !== null ? p.passRatePct : 0,
-        p.pillars.unit.totalTests + p.pillars.integration.totalTests + p.pillars.system.totalTests,
-        (p.timeRoi.actualAutoDurationMs / 1000).toFixed(1),
-        p.timeRoi.estimatedManualHours,
-        p.timeRoi.totalHoursSaved,
-        p.timeRoi.speedupStr,
-        p.isPinned ? "Yes" : "No",
-        p.repoUrl || "Local",
-        p.provenance.lastExecutedAt || "Never",
-      ]);
-
-      const csvContent = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
-
-      res.setHeader("Content-Type", "text/csv; charset=utf-8");
-      res.setHeader("Content-Disposition", `attachment; filename="covai-portfolio-report-${Date.now()}.csv"`);
-      return res.status(200).send(csvContent);
+    const scope = normalizePortfolioExportScope(input.scope);
+    if (!scope) {
+      return res.status(400).json({
+        success: false,
+        code: "INVALID_EXPORT_SCOPE",
+        message: "Invalid export scope. Expected one of: active_kpi, all, filtered.",
+      });
     }
 
-    // Default JSON
-    return res.status(200).json({
-      success: true,
-      data: {
-        exportedAt: new Date().toISOString(),
-        scope,
-        kpis: overview.activeKpis,
-        timeRoi: overview.analytics.timeRoiAnalytics,
-        projects,
-      },
+    if (activePortfolioExports >= MAX_ACTIVE_PORTFOLIO_EXPORTS) {
+      res.setHeader("Retry-After", "10");
+      return res.status(429).json({
+        success: false,
+        code: "EXPORT_BUSY",
+        message: "Other portfolio exports are currently being generated. Please try again shortly.",
+      });
+    }
+
+    activePortfolioExports += 1;
+    acquired = true;
+
+    let projectIds = null;
+    if (Array.isArray(input.projectIds)) {
+      projectIds = input.projectIds;
+    } else if (typeof input.projectIds === "string" && input.projectIds.trim()) {
+      projectIds = input.projectIds
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean);
+    }
+
+    const dto = await buildPortfolioReportDto({
+      userId,
+      scope,
+      projectIds,
+      sections: input.sections || null,
+      filterSummary: input.filterSummary || null,
     });
+
+    const filename = buildPortfolioExportFilename({ scope, format });
+    let buffer;
+    let contentType;
+
+    if (format === "pdf") {
+      buffer = await renderPortfolioPdf(dto);
+      contentType = "application/pdf";
+    } else if (format === "csv") {
+      buffer = Buffer.from(formatPortfolioReportCsv(dto), "utf8");
+      contentType = "text/csv; charset=utf-8";
+    } else {
+      buffer = Buffer.from(formatPortfolioReportJson(dto), "utf8");
+      contentType = "application/json; charset=utf-8";
+    }
+
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Length", buffer.length);
+
+    return res.status(200).send(buffer);
   } catch (error) {
+    if (error instanceof ServiceError) {
+      return res.status(error.statusCode || 400).json({
+        success: false,
+        code: error.code || "EXPORT_ERROR",
+        message: error.message,
+      });
+    }
     console.error("[exportPortfolioReportController] Error:", error);
     return res.status(500).json({
       success: false,
       message: error.message || "Failed to export portfolio report",
     });
+  } finally {
+    if (acquired) {
+      activePortfolioExports = Math.max(0, activePortfolioExports - 1);
+    }
   }
 }
 

@@ -34,105 +34,93 @@ export function MultiProjectCoverageChart({
       <div className="space-y-3.5">
         {benchmarkItems.length === 0 ? (
           <div className="py-10 text-center text-xs text-[var(--ud-text-muted)] font-mono border border-dashed border-[var(--ud-border)] rounded-lg">
-            No matching projects to compare
+            No active (Doing) projects in KPI scope
           </div>
         ) : (
           benchmarkItems.map((item) => {
-          const isSelected = selectedProjectId === item.projectId;
-          const { unitPct, intPct, sysPct, hasImbalance, imbalanceReason } = item;
+            const isSelected = selectedProjectId === item.projectId;
+            const { unitPct, intPct, sysPct, hasImbalance, imbalanceReason } = item;
 
-          return (
-            <div
-              key={item.projectId}
-              onClick={() => onSelectProject?.(isSelected ? null : item.projectId)}
-              className={`p-2.5 rounded-[var(--radius-md)] border transition-all cursor-pointer ${
-                isSelected
-                  ? "bg-[var(--color-primary)]/10 border-[var(--color-primary)]"
-                  : "bg-[var(--ud-surface-2)]/60 border-[var(--ud-border)] hover:border-[var(--ud-border-strong)]"
-              }`}
-            >
-              {/* Row Header */}
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="font-semibold text-xs text-[var(--ud-text)] truncate max-w-[220px]">
-                    {item.name}
-                  </span>
-                  {hasImbalance && (
-                    <span
-                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--ud-warn)]/15 text-[var(--ud-warn)] border border-[var(--ud-warn)]/30"
-                      title={imbalanceReason || "Severe layer coverage disparity"}
-                    >
-                      <AlertTriangle size={10} />
-                      Imbalance
+            const layers = [
+              { label: "Unit", val: unitPct, color: "var(--ud-unit)" },
+              { label: "API", val: intPct, color: "var(--ud-integration)" },
+              { label: "Flow", val: sysPct, color: "var(--ud-system)" },
+            ];
+
+            return (
+              <div
+                key={item.projectId}
+                onClick={() => onSelectProject?.(isSelected ? null : item.projectId)}
+                className={`p-2.5 rounded-[var(--radius-md)] border transition-all cursor-pointer ${
+                  isSelected
+                    ? "bg-[var(--color-primary)]/10 border-[var(--color-primary)]"
+                    : "bg-[var(--ud-surface-2)]/60 border-[var(--ud-border)] hover:border-[var(--ud-border-strong)]"
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-semibold text-xs text-[var(--ud-text)] truncate max-w-[220px]">
+                      {item.name}
                     </span>
-                  )}
+                    {hasImbalance && (
+                      <span
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--ud-warn)]/15 text-[var(--ud-warn)] border border-[var(--ud-warn)]/30"
+                        title={imbalanceReason || "Severe layer coverage disparity"}
+                      >
+                        <AlertTriangle size={10} />
+                        Imbalance
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 text-xs font-mono tabular-nums">
+                    <span className="text-[var(--ud-text-muted)] text-[11px]">Score:</span>
+                    <span className="font-bold text-[var(--ud-text)]">
+                      {item.healthScore !== null && item.healthScore !== undefined
+                        ? item.healthScore
+                        : "—"}
+                    </span>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-2 text-xs font-mono">
-                  <span className="text-[var(--ud-text-muted)] text-[11px]">Score:</span>
-                  <span className="font-bold text-[var(--ud-text)]">{item.healthScore}</span>
+                <div className="space-y-1.5 relative">
+                  <div
+                    style={{ left: "80%" }}
+                    className="absolute top-0 bottom-0 w-px border-l border-dashed border-[var(--ud-pass)]/50 pointer-events-none z-10"
+                  />
+
+                  {layers.map((layer) => {
+                    const hasVal = layer.val !== null && layer.val !== undefined;
+                    const widthPct = hasVal
+                      ? Math.min(100, Math.max(0, Number(layer.val)))
+                      : 0;
+                    return (
+                      <div key={layer.label} className="flex items-center gap-2">
+                        <span
+                          className="w-10 text-[10px] font-mono shrink-0"
+                          style={{ color: layer.color }}
+                        >
+                          {layer.label}
+                        </span>
+                        <div className="flex-1 h-2 rounded-full bg-[var(--ud-surface)] overflow-hidden">
+                          <div
+                            style={{
+                              width: `${widthPct}%`,
+                              backgroundColor: layer.color,
+                            }}
+                            className="h-full transition-all"
+                          />
+                        </div>
+                        <span className="w-10 text-right text-[10px] font-mono font-medium tabular-nums text-[var(--ud-text)] shrink-0">
+                          {hasVal ? `${layer.val}%` : "—"}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
-
-              {/* Grouped 3-Pillar Progress Bars */}
-              <div className="space-y-1.5 relative">
-                {/* 80% Target Line */}
-                <div
-                  style={{ left: "80%" }}
-                  className="absolute top-0 bottom-0 w-px border-l border-dashed border-[var(--ud-pass)]/50 pointer-events-none z-10"
-                />
-
-                {/* Unit Bar */}
-                <div className="flex items-center gap-2">
-                  <span className="w-10 text-[10px] font-mono text-[var(--ud-unit)] shrink-0">
-                    Unit
-                  </span>
-                  <div className="flex-1 h-2 rounded-full bg-[var(--ud-surface)] overflow-hidden">
-                    <div
-                      style={{ width: `${Math.min(100, unitPct)}%` }}
-                      className="h-full bg-[var(--ud-unit)] transition-all"
-                    />
-                  </div>
-                  <span className="w-10 text-right text-[10px] font-mono font-medium text-[var(--ud-text)] shrink-0">
-                    {unitPct}%
-                  </span>
-                </div>
-
-                {/* Integration API Bar */}
-                <div className="flex items-center gap-2">
-                  <span className="w-10 text-[10px] font-mono text-[var(--ud-integration)] shrink-0">
-                    API
-                  </span>
-                  <div className="flex-1 h-2 rounded-full bg-[var(--ud-surface)] overflow-hidden">
-                    <div
-                      style={{ width: `${Math.min(100, intPct)}%` }}
-                      className="h-full bg-[var(--ud-integration)] transition-all"
-                    />
-                  </div>
-                  <span className="w-10 text-right text-[10px] font-mono font-medium text-[var(--ud-text)] shrink-0">
-                    {intPct}%
-                  </span>
-                </div>
-
-                {/* System E2E Bar */}
-                <div className="flex items-center gap-2">
-                  <span className="w-10 text-[10px] font-mono text-[var(--ud-system)] shrink-0">
-                    Flow
-                  </span>
-                  <div className="flex-1 h-2 rounded-full bg-[var(--ud-surface)] overflow-hidden">
-                    <div
-                      style={{ width: `${Math.min(100, sysPct)}%` }}
-                      className="h-full bg-[var(--ud-system)] transition-all"
-                    />
-                  </div>
-                  <span className="w-10 text-right text-[10px] font-mono font-medium text-[var(--ud-text)] shrink-0">
-                    {sysPct}%
-                  </span>
-                </div>
-              </div>
-            </div>
-          );
-        })
+            );
+          })
         )}
       </div>
     </div>
@@ -140,4 +128,3 @@ export function MultiProjectCoverageChart({
 }
 
 export default MultiProjectCoverageChart;
-

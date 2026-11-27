@@ -1,44 +1,50 @@
+import {
+  PORTFOLIO_LAYER_WEIGHTS,
+  PORTFOLIO_GRADE_THRESHOLDS,
+  PORTFOLIO_QUALITY_GATE,
+  PORTFOLIO_RISK_QUADRANT_CUTOFFS,
+  PORTFOLIO_FILTER_SCOPE_LABELS,
+} from "../../../../shared/portfolioGovernance.js";
+
 /**
  * Multi-Project Quality Portfolio Dashboard Configuration
- * Scoped configuration for account-level aggregates, quality gates, risk quadrants,
- * and multi-dimensional filter/sort parameters.
+ * Scoped configuration aligned with shared/portfolioGovernance.js SSOT.
  */
-
 export const PORTFOLIO_CONFIG = {
   // Standardized layer weights matching Single-Project Unified Quality Overview (50/30/20)
   weights: {
-    unit: 0.50,
-    integration: 0.30,
-    system: 0.20,
+    unit: PORTFOLIO_LAYER_WEIGHTS.unit,
+    integration: PORTFOLIO_LAYER_WEIGHTS.integration,
+    system: PORTFOLIO_LAYER_WEIGHTS.system,
   },
 
   // Health Score Grade Thresholds
   grades: {
-    A: 80,
-    B: 65,
-    C: 50,
-    D: 0,
+    A: PORTFOLIO_GRADE_THRESHOLDS.A,
+    B: PORTFOLIO_GRADE_THRESHOLDS.B,
+    C: PORTFOLIO_GRADE_THRESHOLDS.C,
+    D: PORTFOLIO_GRADE_THRESHOLDS.D,
   },
 
   // Portfolio Quality Gate Thresholds
   qualityGate: {
-    minPassRatePct: 80, // Pass rate below 80% marks gate as BLOCKED
+    minPassRatePct: PORTFOLIO_QUALITY_GATE.minPassRatePct,
     coverageThresholds: {
-      unitLinesPct: 75,
-      integrationApiPct: 80,
+      unitLinesPct: PORTFOLIO_QUALITY_GATE.lowBranchThresholdPct,
+      integrationApiPct: PORTFOLIO_QUALITY_GATE.coverageTargetPct,
       systemFlowPct: 60,
     },
     passedRequirements: {
-      minHealthScore: 80,
-      minPassRate: 95,
+      minHealthScore: PORTFOLIO_QUALITY_GATE.passedMinHealthScore,
+      minPassRate: PORTFOLIO_QUALITY_GATE.passedMinPassRatePct,
       maxCriticalFailures: 0,
     },
   },
 
   // Risk Quadrant Boundaries (Coverage vs. Pass Rate)
   riskQuadrants: {
-    coverageCutoff: 70, // X-axis threshold (0-100%)
-    passRateCutoff: 85, // Y-axis threshold (0-100%)
+    coverageCutoff: PORTFOLIO_RISK_QUADRANT_CUTOFFS.coverageCutoff,
+    passRateCutoff: PORTFOLIO_RISK_QUADRANT_CUTOFFS.passRateCutoff,
     definitions: {
       healthyStars: {
         id: "healthy-stars",
@@ -64,8 +70,17 @@ export const PORTFOLIO_CONFIG = {
         description: "Low Coverage & Low Pass Rate (Immediate engineering intervention needed)",
         color: "var(--ud-fail)",
       },
+      untested: {
+        id: "untested",
+        label: "Not Yet Tested",
+        description: "No test suites executed yet (Excluded from Critical Risk quadrant)",
+        color: "var(--ps-neutral)",
+      },
     },
   },
+
+  // Lifecycle Filter Labels
+  lifecycleFilterLabels: PORTFOLIO_FILTER_SCOPE_LABELS,
 
   // Sort Options
   sortOptions: [
@@ -96,5 +111,5 @@ export const PORTFOLIO_CONFIG = {
   ],
 };
 
+export { PORTFOLIO_FILTER_SCOPE_LABELS };
 export default PORTFOLIO_CONFIG;
-

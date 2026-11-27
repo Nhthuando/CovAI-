@@ -1,11 +1,67 @@
 export function ProjectSparkline({
-  data = [0, 0, 0, 0, 0],
+  data = [],
   width = 64,
   height = 20,
   strokeColor = "var(--color-primary)",
   className = "",
 }) {
-  const points = Array.isArray(data) && data.length > 0 ? data : [0, 0, 0, 0, 0];
+  const points = Array.isArray(data)
+    ? data.map((v) => Number(v)).filter((v) => Number.isFinite(v))
+    : [];
+
+  if (points.length === 0) {
+    return (
+      <svg
+        width={width}
+        height={height}
+        viewBox={`0 0 ${width} ${height}`}
+        className={`overflow-visible shrink-0 ${className}`}
+        aria-label="No trend data yet"
+      >
+        <line
+          x1={2}
+          y1={height / 2}
+          x2={width - 2}
+          y2={height / 2}
+          stroke="var(--ud-border-strong)"
+          strokeWidth="1.2"
+          strokeDasharray="2 2"
+        />
+      </svg>
+    );
+  }
+
+  if (points.length === 1) {
+    const midY = height / 2;
+    return (
+      <svg
+        width={width}
+        height={height}
+        viewBox={`0 0 ${width} ${height}`}
+        className={`overflow-visible shrink-0 ${className}`}
+        aria-label="Single run trend"
+      >
+        <line
+          x1={2}
+          y1={midY}
+          x2={width - 2}
+          y2={midY}
+          stroke={strokeColor}
+          strokeOpacity="0.35"
+          strokeWidth="1.2"
+        />
+        <circle
+          cx={width / 2}
+          cy={midY}
+          r={2.5}
+          fill={strokeColor}
+          stroke="var(--ud-surface)"
+          strokeWidth="1"
+        />
+      </svg>
+    );
+  }
+
   const max = Math.max(...points, 100);
   const min = Math.min(...points, 0);
   const range = max - min || 1;
@@ -54,4 +110,3 @@ export function ProjectSparkline({
 }
 
 export default ProjectSparkline;
-

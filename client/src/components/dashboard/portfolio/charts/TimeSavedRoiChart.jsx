@@ -1,5 +1,6 @@
 import { memo, useState } from "react";
 import { Zap, Clock, TrendingUp, Info } from "lucide-react";
+import { PORTFOLIO_ROI_BASELINE } from "../../../../../../shared/portfolioGovernance.js";
 import ContextualMetricTooltip from "../primitives/ContextualMetricTooltip.jsx";
 
 function TimeSavedRoiChart({
@@ -10,10 +11,8 @@ function TimeSavedRoiChart({
 }) {
   const [hoveredProjectId, setHoveredProjectId] = useState(null);
 
-  // Render metrics & bars for the currently scoped (filtered) projects
   const scopedProjects = projects || [];
 
-  // Compute summary values if timeRoiAnalytics is not already provided
   const totalAutoSeconds =
     timeRoiAnalytics?.totalAutoExecutionSeconds ??
     scopedProjects.reduce((acc, p) => acc + (p.timeRoi?.actualAutoDurationMs || 0) / 1000, 0);
@@ -32,10 +31,9 @@ function TimeSavedRoiChart({
       ? Number(((totalManualHours * 3600) / totalAutoSeconds).toFixed(1))
       : 0);
 
-  // Maximum manual duration among projects to scale the horizontal bars
   const maxManualMs = Math.max(
     1,
-    ...scopedProjects.map((p) => p.timeRoi?.estimatedManualDurationMs || 0)
+    ...scopedProjects.map((p) => p.timeRoi?.estimatedManualDurationMs || 0),
   );
 
   return (
@@ -50,35 +48,37 @@ function TimeSavedRoiChart({
           <div className="text-sm font-bold text-[var(--ud-text)] mt-1 tabular-nums">
             {totalAutoSeconds.toFixed(1)}s
           </div>
-          <div className="text-[10px] text-[var(--ud-text-muted)]">Across shown suites</div>
+          <div className="text-[10px] text-[var(--ud-text-muted)]">Across Doing suites</div>
         </div>
 
         <div className="p-2 rounded bg-[var(--ud-surface-2)]/70 border border-[var(--ud-border)]">
           <div className="text-[10px] text-[var(--ud-text-muted)] uppercase font-bold flex items-center justify-between">
-            <span>Manual Benchmark</span>
+            <span>Manual Est.</span>
             <Clock className="w-3 h-3 text-[var(--ud-warn)]" />
           </div>
           <div className="text-sm font-bold text-[var(--ud-text)] mt-1 tabular-nums">
             {totalManualHours.toFixed(1)} hrs
           </div>
-          <div className="text-[10px] text-[var(--ud-text-muted)]">Standard QA effort</div>
+          <div className="text-[10px] text-[var(--ud-text-muted)]">
+            {PORTFOLIO_ROI_BASELINE.label}
+          </div>
         </div>
 
         <div className="p-2 rounded bg-[var(--ud-surface-2)]/70 border border-[var(--ud-border)]">
           <div className="text-[10px] text-[var(--ud-text-muted)] uppercase font-bold flex items-center justify-between">
-            <span>Net QA Saved</span>
+            <span>QA Saved (Est.)</span>
             <TrendingUp className="w-3 h-3 text-[var(--ud-pass)]" />
           </div>
           <div className="text-sm font-bold text-[var(--ud-pass)] mt-1 tabular-nums">
             +{totalHoursSaved.toFixed(1)} hrs
           </div>
-          <div className="text-[10px] text-[var(--ud-text-muted)]">Dev & QA hours</div>
+          <div className="text-[10px] text-[var(--ud-text-muted)]">Heuristic baseline</div>
         </div>
 
         <div className="p-2 rounded bg-[var(--ud-surface-2)]/70 border border-[var(--ud-border)]">
           <div className="text-[10px] text-[var(--ud-text-muted)] uppercase font-bold flex items-center justify-between">
             <span>Avg Speedup</span>
-            <span className="text-[10px] text-[var(--ud-unit)] font-bold">⚡ ROI</span>
+            <span className="text-[10px] text-[var(--ud-unit)] font-bold">ROI</span>
           </div>
           <div className="text-sm font-bold text-[var(--ud-unit)] mt-1 tabular-nums">
             {avgSpeedup > 0 ? `${avgSpeedup}x` : "—"}
@@ -88,16 +88,21 @@ function TimeSavedRoiChart({
       </div>
 
       {/* ── Header with Guidance Tooltip ───────────────────────────────────── */}
-      <div className="flex items-center justify-between text-xs px-1">
-        <span className="text-[11px] font-mono text-[var(--ud-text-muted)]">
-          Project Execution Efficiency (Machine vs. Manual QA Effort)
-        </span>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs px-1">
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-mono text-[var(--ud-text-muted)]">
+            Project Execution Efficiency (Automated vs. Estimated Baseline)
+          </span>
+          <span className="text-[10px] font-mono text-[var(--ud-text-muted)] px-1.5 py-0.5 rounded bg-[var(--ud-surface-2)] border border-[var(--ud-border)]">
+            {PORTFOLIO_ROI_BASELINE.label}
+          </span>
+        </div>
         <ContextualMetricTooltip
-          title="Time & QA ROI Calculation"
-          meaning="Measures test execution time reduction and AI authoring savings vs. industry standard manual test execution benchmarks."
-          formula="Manual = Unit*120s + API*300s + E2E*480s | AI Saved = 15m/test | Speedup = Manual / Auto"
-          provenance="Industry QA norms (IEEE 829 / Capers Jones QA baseline) calibrated with live PostgreSQL TestRuns"
-          tip="Click any project row to inspect its quality details."
+          title="QA Time Saved (Est.) Calculation"
+          meaning={PORTFOLIO_ROI_BASELINE.methodologyNote}
+          formula={`Manual Est = Unit×${PORTFOLIO_ROI_BASELINE.unitMinutes}m + API×${PORTFOLIO_ROI_BASELINE.integrationMinutes}m + E2E×${PORTFOLIO_ROI_BASELINE.systemMinutes}m | AI Authoring = ${PORTFOLIO_ROI_BASELINE.aiAuthoringMinutesPerTest}m/test`}
+          provenance="CovAI internal QA benchmark calibrated with executed PostgreSQL TestRun metrics"
+          tip="Click any project row to highlight its project card."
           placement="bottom-right"
         >
           <button
@@ -105,7 +110,7 @@ function TimeSavedRoiChart({
             className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[var(--ud-surface-2)] border border-[var(--ud-border)] text-[10px] text-[var(--ud-text-muted)] hover:text-[var(--ud-unit)] hover:border-[var(--ud-unit)]/40 transition-colors cursor-pointer"
           >
             <Info className="w-3 h-3" />
-            <span>Benchmark Formula</span>
+            <span>Est. Methodology</span>
           </button>
         </ContextualMetricTooltip>
       </div>
@@ -114,7 +119,7 @@ function TimeSavedRoiChart({
       <div className="space-y-2.5 rounded-[var(--radius-md)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-3 max-h-[380px] overflow-y-auto">
         {scopedProjects.length === 0 ? (
           <div className="py-8 text-center text-xs text-[var(--ud-text-muted)] font-mono">
-            No matching projects with execution data available.
+            No active (Doing) projects with execution data available.
           </div>
         ) : (
           scopedProjects.map((p) => {
@@ -124,7 +129,10 @@ function TimeSavedRoiChart({
             const manualMs = timeRoi.estimatedManualDurationMs || 0;
             const hours = timeRoi.totalHoursSaved || 0;
 
-            const barWidthPct = Math.min(100, Math.max(4, Math.round((manualMs / maxManualMs) * 100)));
+            const barWidthPct = Math.min(
+              100,
+              Math.max(4, Math.round((manualMs / maxManualMs) * 100)),
+            );
             const isHovered = hoveredProjectId === p.id;
 
             return (
@@ -139,8 +147,7 @@ function TimeSavedRoiChart({
                     : "bg-[var(--ud-surface-2)]/50 border-[var(--ud-border)] hover:border-[var(--ud-border-strong)]"
                 }`}
               >
-                {/* Row Header */}
-                <div className="flex items-center justify-between text-xs mb-1.5 font-mono">
+                <div className="flex items-center justify-between text-xs mb-1.5 font-mono tabular-nums">
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="font-semibold text-[var(--ud-text)] truncate">{p.name}</span>
                     <span className="text-[10px] text-[var(--ud-text-muted)]">
@@ -154,27 +161,26 @@ function TimeSavedRoiChart({
                     </span>
                     {speedup > 1 && (
                       <span className="px-1.5 py-0.5 rounded bg-[var(--ud-unit)]/10 border border-[var(--ud-unit)]/30 text-[10px] text-[var(--ud-unit)] font-bold">
-                        ⚡ {speedup}x ({hours}h saved)
+                        {speedup}x ({hours}h est.)
                       </span>
                     )}
                   </div>
                 </div>
 
-                {/* Comparative Bar */}
                 <div className="w-full bg-[var(--ud-surface)] rounded-full h-2 overflow-hidden flex border border-[var(--ud-border)]/50">
-                  {/* Auto duration (green portion) */}
                   <div
                     className="bg-[var(--ud-pass)] h-full transition-all duration-500 rounded-l-full"
-                    style={{ width: `${Math.max(2, (autoMs / (manualMs || 1)) * barWidthPct)}%` }}
+                    style={{
+                      width: `${Math.max(2, (autoMs / (manualMs || 1)) * barWidthPct)}%`,
+                    }}
                     title={`Auto: ${(autoMs / 1000).toFixed(1)}s`}
                   />
-                  {/* Saved duration (blue portion) */}
                   <div
                     className="bg-[var(--ud-unit)] h-full transition-all duration-500 rounded-r-full"
                     style={{
                       width: `${Math.max(0, barWidthPct - (autoMs / (manualMs || 1)) * barWidthPct)}%`,
                     }}
-                    title={`Time Saved: ${hours} hrs`}
+                    title={`Estimated Saved: ${hours} hrs`}
                   />
                 </div>
               </div>
@@ -187,4 +193,3 @@ function TimeSavedRoiChart({
 }
 
 export default memo(TimeSavedRoiChart);
-

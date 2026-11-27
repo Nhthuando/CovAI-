@@ -76,7 +76,16 @@ jobs:
             src/tests/snapshotCas.service.test.js \
             src/tests/snapshotWorkspace.test.js \
             src/tests/snapshotVcs.integration.test.js \
-            src/tests/versionControlHardening.test.js
+            src/tests/versionControlHardening.test.js \
+            src/tests/portfolioGovernance.test.js \
+            src/tests/portfolioEngine.phase1.test.js \
+            src/tests/portfolioReport.service.test.js \
+            src/tests/crossDashboardParity.test.js
+
+      - name: Run Portfolio Node unit tests
+        env:
+          DISABLE_DOCKER_RUNNER: "true"
+        run: node --test src/tests/portfolioDashboard.service.test.mjs
 
   client-verify:
     name: Client Lint, Tests & Production Build
@@ -101,6 +110,29 @@ jobs:
 
       - name: Run client unit tests
         run: npm test
+
+      - name: Run Portfolio & Lifecycle client unit tests
+        run: node --test src/services/portfolioDashboard/*.test.js src/components/dashboard/settings/*.test.js
+
+      - name: Lint Portfolio & Lifecycle Settings client modules
+        run: |
+          npx eslint --max-warnings=0 \
+            src/services/portfolio.service.js \
+            src/services/portfolioDashboard/*.js \
+            src/components/dashboard/portfolio/ProjectsPortfolioDashboard.jsx \
+            src/components/dashboard/portfolio/cards/*.jsx \
+            src/components/dashboard/portfolio/charts/*.jsx \
+            src/components/dashboard/portfolio/modals/*.jsx \
+            src/components/dashboard/portfolio/primitives/*.jsx \
+            src/components/dashboard/portfolio/zones/*.jsx \
+            src/components/dashboard/settings/SettingsSidebar.jsx \
+            src/components/dashboard/settings/ProjectLifecycleEditor.jsx \
+            src/components/dashboard/settings/ProjectGeneralSettings.jsx \
+            src/components/dashboard/settings/lifecycleSettings.utils.js \
+            src/components/dashboard/settings/lifecycleSettings.utils.test.js \
+            src/hooks/usePortfolioSocket.js \
+            src/hooks/useDashboardSocket.js \
+            src/pages/ProjectSelectionPage.jsx
 
       - name: Lint VCS & Auth client modules
         run: |

@@ -53,6 +53,10 @@ import {
   resolveSnapshotFile,
 } from "../utils/snapshotWorkspace.js";
 import { cleanupProjectStorageAsync } from "./projectStorageCleanup.service.js";
+import {
+  LIFECYCLE_MANAGE_CAPABILITY,
+  validateLifecycleTransition,
+} from "../../../shared/portfolioGovernance.js";
 
 export { ServiceError };
 export { cleanupProjectStorageAsync, buildTree };
@@ -320,7 +324,12 @@ export const healProjectLifecycleStatusIfNeeded = async (
           lifecycleUpdatedAt: now,
         },
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.error(
+          "[healProjectLifecycleStatusIfNeeded] Failed to update project lifecycle:",
+          err?.message || err,
+        );
+      });
   }
 
   return "DOING";
@@ -2042,13 +2051,86 @@ export const deleteProjectEntry = async (
   return res;
 };
 
+export const hasProjectLifecycleActivity = async (projectId, db = prisma) => {
+  if (!projectId) return false;
+  const [run, cov, aiTest, sysScenario, evalRun, evalProjRun, snapshotCount] =
+    await Promise.all([
+      db.testRun.findFirst({
+        where: { snapshot: { projectId } },
+        select: { id: true },
+      }),
+      db.coverageSummary.findFirst({
+        where: { snapshot: { projectId } },
+        select: { id: true },
+      }),
+      db.aiTest.findFirst({
+        where: { projectId },
+        select: { id: true },
+      }),
+      typeof db.systemScenario?.findFirst === "function"
+        ? db.systemScenario.findFirst({
+            where: { snapshot: { projectId } },
+            select: { id: true },
+          })
+        : Promise.resolve(null),
+      typeof db.aiEvaluationRun?.findFirst === "function"
+        ? db.aiEvaluationRun.findFirst({
+            where: { projectId },
+            select: { id: true },
+          })
+        : Promise.resolve(null),
+      typeof db.aiEvaluationProjectRun?.findFirst === "function"
+        ? db.aiEvaluationProjectRun.findFirst({
+            where: { projectId },
+            select: { id: true },
+          })
+        : Promise.resolve(null),
+      db.projectSnapshot.count({ where: { projectId } }),
+    ]);
+
+  return Boolean(
+    run ||
+      cov ||
+      aiTest ||
+      sysScenario ||
+      evalRun ||
+      evalProjRun ||
+      snapshotCount > 1,
+  );
+};
+
 export const updateProjectLifecycleStatus = async ({
   projectId,
   userId,
   lifecycleStatus,
   isPinned,
+  db = prisma,
 }) => {
-  await resolveProjectAccess({ projectId, userId, capability: "project.read" });
+  const access = await resolveProjectAccess({
+    projectId,
+    userId,
+    capability: LIFECYCLE_MANAGE_CAPABILITY,
+    db,
+  });
+
+  if (lifecycleStatus !== undefined) {
+    const hasActivity =
+      lifecycleStatus === "NOT_STARTED"
+        ? await hasProjectLifecycleActivity(projectId, db)
+        : false;
+    const validation = validateLifecycleTransition({
+      currentStatus: access.project?.lifecycleStatus || "NOT_STARTED",
+      nextStatus: lifecycleStatus,
+      hasActivity,
+    });
+    if (!validation.allowed) {
+      throw new ServiceError(
+        validation.reason,
+        validation.code === "CANNOT_REVERT_TO_NOT_STARTED" ? 409 : 400,
+        validation.code,
+      );
+    }
+  }
 
   const dataToUpdate = {};
   if (lifecycleStatus !== undefined) {
@@ -2059,7 +2141,7 @@ export const updateProjectLifecycleStatus = async ({
     dataToUpdate.isPinned = Boolean(isPinned);
   }
 
-  const updatedProject = await prisma.project.update({
+  const updatedProject = await db.project.update({
     where: { id: projectId },
     data: dataToUpdate,
     select: {
@@ -2072,28 +2154,64 @@ export const updateProjectLifecycleStatus = async ({
     },
   });
 
+  let memberIds = [];
+  try {
+    if (typeof db.projectMember?.findMany === "function") {
+      const members = await db.projectMember.findMany({
+        where: { projectId },
+        select: { userId: true },
+      });
+      memberIds = members.map((m) => m.userId).filter(Boolean);
+    }
+  } catch (memberErr) {
+    console.warn(
+      "[updateProjectLifecycleStatus] Failed to load project members:",
+      memberErr?.message || memberErr,
+    );
+  }
+
+  const affectedUserIds = [
+    ...new Set([access.project?.ownerId, userId, ...memberIds].filter(Boolean)),
+  ];
+
   try {
     const { clearPortfolioCache } =
       await import("./portfolioDashboard.service.js");
-    clearPortfolioCache(userId);
-  } catch (_) {}
+    for (const uid of affectedUserIds) {
+      clearPortfolioCache(uid);
+    }
+  } catch (cacheErr) {
+    console.warn(
+      "[updateProjectLifecycleStatus] Portfolio cache invalidation failed:",
+      cacheErr?.message || cacheErr,
+    );
+  }
   try {
     const { clearUnifiedDashboardCache } =
       await import("./unifiedQualityDashboard.service.js");
     clearUnifiedDashboardCache();
-  } catch (_) {}
+  } catch (unifiedErr) {
+    console.warn(
+      "[updateProjectLifecycleStatus] Unified cache invalidation failed:",
+      unifiedErr?.message || unifiedErr,
+    );
+  }
   try {
     const { emitPortfolioProjectUpdated } =
       await import("../realtime/portfolioSocket.emitter.js");
     emitPortfolioProjectUpdated({
       projectId,
       userId,
+      userIds: affectedUserIds,
       lifecycleStatus: updatedProject.lifecycleStatus,
       isPinned: updatedProject.isPinned,
       action: "STATUS_UPDATED",
     });
-  } catch (_err) {
-    // Non-fatal if socket emitter not yet initialized
+  } catch (emitErr) {
+    console.warn(
+      "[updateProjectLifecycleStatus] Portfolio socket emit failed:",
+      emitErr?.message || emitErr,
+    );
   }
   try {
     const { emitDashboardMetricsUpdated } =
@@ -2101,8 +2219,18 @@ export const updateProjectLifecycleStatus = async ({
     emitDashboardMetricsUpdated(projectId, {
       reason: "project-status-updated",
       lifecycleStatus: updatedProject.lifecycleStatus,
-    }).catch(() => {});
-  } catch (_) {}
+    }).catch((dashErr) => {
+      console.warn(
+        "[updateProjectLifecycleStatus] Dashboard metrics emit failed:",
+        dashErr?.message || dashErr,
+      );
+    });
+  } catch (dashImportErr) {
+    console.warn(
+      "[updateProjectLifecycleStatus] Dashboard events import failed:",
+      dashImportErr?.message || dashImportErr,
+    );
+  }
 
   return updatedProject;
 };
