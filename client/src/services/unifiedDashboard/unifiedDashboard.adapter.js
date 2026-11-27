@@ -1018,7 +1018,13 @@ function buildLiveTraceMatrixRows(unitRaw, integrationRaw, pillars) {
             grp.unitFiles.reduce((acc, f) => acc + Number(f.branchesPct ?? 0), 0) / grp.unitFiles.length
           )
         : null;
-    const unitStatus = !unitHasTests ? "untested" : pillars.unit.failedTests > 0 ? "fail" : "pass";
+    const unitStatus = !unitHasTests
+      ? "untested"
+      : avgLines === 0 && (avgBranches ?? 0) === 0
+      ? "untested"
+      : (avgBranches ?? 100) < 50
+      ? "warn"
+      : "pass";
     const unitLabel = unitHasTests
       ? `${avgLines ?? pillars.unit.coverageMetrics.lines}% lines · ${avgBranches ?? pillars.unit.coverageMetrics.branches}% branch`
       : "0/0 (Not run)";

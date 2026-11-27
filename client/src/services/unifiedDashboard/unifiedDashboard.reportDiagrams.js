@@ -1360,7 +1360,7 @@ export function renderModuleTierHeatmapSvg(model) {
     const footerContent =
       hiddenCount > 0
         ? `<text x="12" y="236" font-size="9.2" font-weight="600" fill="${SEMANTIC_COLORS.ink2}" font-family="${FONT_MONO}">${escapeXml(
-            `+${hiddenCount} more module(s) listed in Page 2 matrix`
+            `+${hiddenCount} more module(s) listed in Page 3 matrix`
           )}</text>`
         : [
             { x: 12, bg: "#dcfce7", bd: "#16a34a", label: "Pass" },
