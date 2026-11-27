@@ -20,7 +20,9 @@ import {
   stagePreparedPublication,
 } from "./projectOperationWorkspace.service.js";
 import { deliverScopedProjectTransport } from "./projectSubscription.service.js";
-import { clearProjectTreeCache } from "./project.service.js";
+import { clearProjectTreeCache, invalidateProjectTreeMetaCache } from "./project.service.js";
+import { invalidateProjectFileReadCache } from "./projectFileReadCache.service.js";
+import { reconcileEditorDocumentsAfterGitChange } from "./projectEditorBridge.service.js";
 import { checkStaleGitIndexLock, withProjectVcsLock } from "./vcsLock.service.js";
 import {
   ensureCovaiGitExcludes,
@@ -47,6 +49,8 @@ import { GitHubPlatformService } from "./githubPlatform.service.js";
 import { generateGitCommitMessage } from "./gitAiCommit.service.js";
 import { resolveConflictMarkersKeepBoth } from "./snapshotDiff3.service.js";
 import {
+  computeBranchDivergence,
+  formatGitTrackingMessage,
   GIT_LIMITS,
   GIT_REPO_OPERATION_STATE,
   GIT_SOCKET_EVENTS,
@@ -59,6 +63,18 @@ import {
 } from "../../../shared/versionControlMode.js";
 
 const ensuredGitReposCache = new Map();
+const remoteCheckMetaCache = new Map();
+const remoteCheckInFlight = new Map();
+const REMOTE_CHECK_COOLDOWN_MS = 45_000;
+const CHECKOUT_REMOTE_CHECK_COOLDOWN_MS = 15_000;
+
+export function clearGitRemoteCheckCache(projectId = null) {
+  if (!projectId) {
+    remoteCheckMetaCache.clear();
+    return;
+  }
+  remoteCheckMetaCache.delete(projectId);
+}
 
 export function invalidateGitRepoCache(rootDir = null) {
   invalidateGitExcludeCache(rootDir);
@@ -336,54 +352,114 @@ export class GitService {
     };
   }
 
+  static async _computeUpdatedFiles(rootDir, active, headOid, statusData) {
+    if (!active?.workingTreeChanging) return [];
+    const changed = new Set(
+      Array.isArray(active.explicitFiles)
+        ? active.explicitFiles.map(normalizePosixPath).filter(Boolean)
+        : [],
+    );
+
+    if (active.beforeHeadOid && headOid && active.beforeHeadOid !== headOid) {
+      try {
+        const { stdout } = await this.runCommand(
+          rootDir,
+          ["diff", "--name-only", "-z", active.beforeHeadOid, headOid],
+          { rawOutput: true },
+        );
+        for (const entry of String(stdout || "").split("\0")) {
+          const clean = normalizePosixPath(entry);
+          if (clean) changed.add(clean);
+        }
+      } catch (err) {
+        console.warn("[GitService] _computeUpdatedFiles diff failed:", err?.message || err);
+      }
+    }
+
+    if (changed.size === 0 && active.beforeHeadOid === headOid && statusData) {
+      for (const list of [statusData.staged, statusData.unstaged, statusData.conflicts]) {
+        for (const item of list || []) {
+          const clean = normalizePosixPath(item?.path);
+          if (clean) changed.add(clean);
+        }
+      }
+    }
+
+    return [...changed].slice(0, 500);
+  }
+
   static async _recordSnapshotHeadSync(rootDir, projectId, snapshotId, statusData) {
     const active = preparedGit.getStore();
     if (!active) return;
 
     const headOid = statusData?.headOid || (await this._hasHeadCommit(rootDir));
+    const workspaceChanged = Boolean(active.workingTreeChanging);
+    const updatedFiles = workspaceChanged
+      ? await this._computeUpdatedFiles(rootDir, active, headOid, statusData)
+      : [];
 
     if (active.isDirect) {
-      const dbWrites = [];
       const prevCommitSha = active.repo?.snapshot?.commitSha || null;
       const headChanged = Boolean(headOid && snapshotId && headOid !== prevCommitSha);
 
-      if (headChanged) {
-        dbWrites.push(
-          prisma.projectSnapshot.update({
+      const snapshotWrite = headChanged
+        ? prisma.projectSnapshot.update({
             where: { id: snapshotId },
             data: { commitSha: headOid },
             select: { id: true },
-          }),
-        );
-      }
+          })
+        : Promise.resolve(null);
 
-      if (active.workingTreeChanging) {
-        dbWrites.push(
-          prisma.project.update({
+      const projectWrite = workspaceChanged
+        ? prisma.project.update({
             where: { id: projectId },
             data: { workspaceRevision: { increment: 1 } },
             select: { workspaceRevision: true },
-          }),
-        );
-      }
+          })
+        : Promise.resolve(null);
 
-      if (dbWrites.length > 0) {
-        await Promise.all(dbWrites);
+      const [, updatedProject] = await Promise.all([snapshotWrite, projectWrite]);
+      if (updatedProject?.workspaceRevision != null) {
+        active.workspaceRevision = updatedProject.workspaceRevision;
+        if (statusData && typeof statusData === "object") {
+          statusData.workspaceRevision = updatedProject.workspaceRevision;
+        }
       }
 
       if (headChanged && active.repo?.snapshot) {
         active.repo.snapshot.commitSha = headOid;
         updateProjectRequestContext({ activeSnapshot: active.repo.snapshot });
       }
-      if (active.workingTreeChanging || headChanged) {
-        clearProjectTreeCache();
+      if (workspaceChanged || headChanged) {
+        clearProjectTreeCache(snapshotId);
+        invalidateProjectTreeMetaCache(projectId);
         invalidateProjectAccessCache(projectId);
+      }
+      if (workspaceChanged) {
+        invalidateProjectFileReadCache(projectId);
+        active.workspaceChanged = true;
+        active.updatedFiles = updatedFiles;
+        try {
+          await reconcileEditorDocumentsAfterGitChange({
+            projectId,
+            snapshotId,
+            rootDir,
+            updatedFiles,
+          });
+        } catch (err) {
+          console.error("[GitService] Editor document reconciliation failed:", err?.message || err);
+        }
       }
 
       emitGitTransport(projectId, GIT_SOCKET_EVENTS.STATUS_UPDATED, {
         projectId,
         actorId: active.userId,
         ...summarizeHeadChange(statusData),
+        trackingMessage: statusData?.trackingMessage || null,
+        remoteCheckedAt: statusData?.remoteCheckedAt || null,
+        workspaceChanged,
+        updatedFiles,
+        workspaceRevision: statusData?.workspaceRevision ?? active.workspaceRevision ?? null,
       });
       return;
     }
@@ -395,14 +471,32 @@ export class GitService {
           data: { commitSha: headOid },
         });
       }
-      clearProjectTreeCache();
+      clearProjectTreeCache(snapshotId);
+      invalidateProjectTreeMetaCache(projectId);
+      if (workspaceChanged) {
+        invalidateProjectFileReadCache(projectId);
+      }
     });
+
+    if (workspaceChanged) {
+      active.workspaceChanged = true;
+      active.updatedFiles = updatedFiles;
+    }
 
     deferPreparedCommit(async () => {
       await deliverScopedProjectTransport({
         projectId,
         event: GIT_SOCKET_EVENTS.STATUS_UPDATED,
-        payload: { projectId, actorId: active.userId, ...summarizeHeadChange(statusData) },
+        payload: {
+          projectId,
+          actorId: active.userId,
+          ...summarizeHeadChange(statusData),
+          trackingMessage: statusData?.trackingMessage || null,
+          remoteCheckedAt: statusData?.remoteCheckedAt || null,
+          workspaceChanged,
+          updatedFiles,
+          workspaceRevision: statusData?.workspaceRevision ?? active.workspaceRevision ?? null,
+        },
       });
     });
   }
@@ -755,8 +849,14 @@ export class GitService {
         headOid: null,
         detached: false,
         tracking: null,
+        remoteRef: null,
         ahead: 0,
         behind: 0,
+        canFastForward: false,
+        diverged: false,
+        trackingMessage: null,
+        remoteCheckedAt: null,
+        remoteCheckError: null,
         operationState: GIT_REPO_OPERATION_STATE.IDLE,
         staged: [],
         unstaged: [],
@@ -847,19 +947,67 @@ export class GitService {
       }));
     }
 
+    let remoteRef = parsed.tracking || null;
+    let ahead = parsed.ahead || 0;
+    let behind = parsed.behind || 0;
+    const activeBranchName = parsed.branch || project.defaultBranch || "main";
+
+    // Fallback when local branch has no configured upstream yet, using local refs/remotes/origin/<branch>
+    if (!remoteRef && !parsed.detached && !parsed.isUnborn && activeBranchName) {
+      try {
+        const { stdout: lrOut } = await this.runCommand(rootDir, [
+          "rev-list",
+          "--left-right",
+          "--count",
+          `HEAD...refs/remotes/origin/${activeBranchName}`,
+        ]);
+        const parts = String(lrOut || "").trim().split(/\s+/);
+        if (parts.length >= 2) {
+          ahead = Number.parseInt(parts[0], 10) || 0;
+          behind = Number.parseInt(parts[1], 10) || 0;
+          remoteRef = `origin/${activeBranchName}`;
+        }
+      } catch {
+        // Remote tracking ref does not exist locally yet
+      }
+    }
+
+    const divergence = computeBranchDivergence({
+      ahead,
+      behind,
+      tracking: remoteRef,
+      detached: parsed.detached,
+      isUnborn: parsed.isUnborn,
+    });
+    const trackingMessage = formatGitTrackingMessage({
+      branch: activeBranchName,
+      tracking: remoteRef,
+      ahead: divergence.ahead,
+      behind: divergence.behind,
+      detached: parsed.detached,
+      isUnborn: parsed.isUnborn,
+    });
+    const remoteMeta = remoteCheckMetaCache.get(projectId) || null;
+
     return {
       isGitHubProject: Boolean(isGitHubProject || activeRepoUrl),
       isGitHubLinked: Boolean(activeRepoUrl && activeRepoUrl.includes("github.com")),
       hasGit: true,
       canInitialize: false,
       isReady: true,
-      branch: parsed.branch || project.defaultBranch || "main",
+      branch: activeBranchName,
       headOid: parsed.headOid,
       detached: parsed.detached,
       isUnborn: parsed.isUnborn,
       tracking: parsed.tracking,
-      ahead: parsed.ahead,
-      behind: parsed.behind,
+      remoteRef,
+      ahead: divergence.ahead,
+      behind: divergence.behind,
+      canFastForward: divergence.canFastForward,
+      diverged: divergence.diverged,
+      trackingMessage,
+      remoteCheckedAt: remoteMeta?.checkedAt || null,
+      remoteCheckError: remoteMeta?.error || null,
       operationState: detectRepoOperationState(rootDir),
       staged: parsed.staged,
       unstaged: parsed.unstaged,
@@ -1295,7 +1443,15 @@ export class GitService {
     if (tags) args.push("--tags");
 
     const { stdout, stderr } = await this.runCommand(rootDir, args, execOptions);
+    remoteCheckMetaCache.set(projectId, {
+      checkedAt: new Date().toISOString(),
+      checkedAtMs: Date.now(),
+      branch: null,
+      error: null,
+    });
     const status = await this.getStatus(projectId, userId);
+    const prevMeta = remoteCheckMetaCache.get(projectId);
+    if (prevMeta) prevMeta.branch = status?.branch || null;
     await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
 
     emitGitTransport(projectId, GIT_SOCKET_EVENTS.OPERATION_COMPLETED, {
@@ -1308,8 +1464,124 @@ export class GitService {
     return {
       success: true,
       output: stdout || stderr || "Fetch completed",
+      trackingMessage: status.trackingMessage || null,
       status,
     };
+  }
+
+  /**
+   * Non-blocking throttled remote check (`git fetch origin --prune --no-tags`) without modifying working tree.
+   */
+  static async checkRemoteUpdates(
+    projectId,
+    userId,
+    { force = false, branch = null, silent = true } = {},
+  ) {
+    if (remoteCheckInFlight.has(projectId)) {
+      return remoteCheckInFlight.get(projectId);
+    }
+
+    const run = (async () => {
+      const { rootDir, project, snapshot } = await this.getRepoPath(projectId, userId);
+      if (!fs.existsSync(path.join(rootDir, ".git"))) {
+        return {
+          checked: false,
+          skipped: true,
+          reason: "GIT_NOT_INITIALIZED",
+          status: await this.getStatus(projectId, userId),
+        };
+      }
+
+      let originUrl = "";
+      try {
+        const { stdout } = await this.runCommand(rootDir, ["remote", "get-url", "origin"]);
+        originUrl = String(stdout || "").trim();
+      } catch {
+        originUrl = "";
+      }
+
+      if (!originUrl && !project?.repoUrl) {
+        return {
+          checked: false,
+          skipped: true,
+          reason: "NO_REMOTE",
+          status: await this.getStatus(projectId, userId),
+        };
+      }
+
+      const prevMeta = remoteCheckMetaCache.get(projectId) || null;
+      if (
+        !force &&
+        prevMeta?.checkedAtMs &&
+        Date.now() - prevMeta.checkedAtMs < REMOTE_CHECK_COOLDOWN_MS &&
+        (!branch || prevMeta.branch === branch)
+      ) {
+        return {
+          checked: false,
+          throttled: true,
+          remoteCheckedAt: prevMeta.checkedAt || null,
+          status: await this.getStatus(projectId, userId),
+        };
+      }
+
+      try {
+        const { execOptions } = await this._resolveRemoteExecution(
+          rootDir,
+          project,
+          userId,
+          { requireRepoScope: false },
+        );
+        await this.runCommand(rootDir, ["fetch", "origin", "--prune", "--no-tags"], {
+          ...execOptions,
+          timeoutMs: 15000,
+        });
+        const checkedAt = new Date().toISOString();
+        remoteCheckMetaCache.set(projectId, {
+          checkedAt,
+          checkedAtMs: Date.now(),
+          branch: branch || null,
+          error: null,
+        });
+        const status = await this.getStatus(projectId, userId);
+        const latestMeta = remoteCheckMetaCache.get(projectId);
+        if (latestMeta && status?.branch) {
+          latestMeta.branch = status.branch;
+        }
+        await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
+        return {
+          checked: true,
+          throttled: false,
+          remoteCheckedAt: status.remoteCheckedAt || checkedAt,
+          status,
+        };
+      } catch (err) {
+        const safeErr = redactGitOutput(err?.message || "Remote check failed");
+        if (!silent) throw err;
+        remoteCheckMetaCache.set(projectId, {
+          checkedAt: prevMeta?.checkedAt || null,
+          checkedAtMs: Date.now(),
+          branch: prevMeta?.branch || null,
+          error: safeErr,
+        });
+        const status = await this.getStatus(projectId, userId);
+        return {
+          checked: false,
+          throttled: false,
+          error: safeErr,
+          remoteCheckedAt: status.remoteCheckedAt || null,
+          status,
+        };
+      }
+    })();
+
+    remoteCheckInFlight.set(projectId, run);
+    try {
+      return await run;
+    } finally {
+      if (remoteCheckInFlight.get(projectId) === run) {
+        remoteCheckInFlight.delete(projectId);
+      }
+    }
   }
 
   /**
@@ -1357,6 +1629,12 @@ export class GitService {
 
     try {
       const { stdout, stderr } = await this.runCommand(rootDir, args, execOptions);
+      remoteCheckMetaCache.set(projectId, {
+        checkedAt: new Date().toISOString(),
+        checkedAtMs: Date.now(),
+        branch: targetBranch,
+        error: null,
+      });
       const status = await this.getStatus(projectId, userId);
       await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
 
@@ -1439,6 +1717,12 @@ export class GitService {
 
     try {
       const { stdout, stderr } = await this.runCommand(rootDir, args, execOptions);
+      remoteCheckMetaCache.set(projectId, {
+        checkedAt: new Date().toISOString(),
+        checkedAtMs: Date.now(),
+        branch: targetBranch,
+        error: null,
+      });
       const status = await this.getStatus(projectId, userId);
       await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
 
@@ -1693,6 +1977,58 @@ export class GitService {
           await this.runCommand(rootDir, ["checkout", localName]);
         });
       }
+
+      if (opts.checkRemote !== false) {
+        const localTarget = cleanBranch.replace(/^origin\//, "");
+        const prevMeta = remoteCheckMetaCache.get(projectId);
+        const withinCooldown =
+          opts.checkRemote !== true &&
+          prevMeta?.checkedAtMs &&
+          prevMeta?.branch === localTarget &&
+          Date.now() - prevMeta.checkedAtMs < CHECKOUT_REMOTE_CHECK_COOLDOWN_MS;
+        if (!withinCooldown) {
+          try {
+            const activeRepo = preparedGit.getStore()?.repo;
+            let hasOrigin = false;
+            try {
+              const { stdout: oUrl } = await this.runCommand(rootDir, ["remote", "get-url", "origin"]);
+              hasOrigin = Boolean(String(oUrl || "").trim());
+            } catch {
+              hasOrigin = Boolean(activeRepo?.project?.repoUrl);
+            }
+            if (hasOrigin) {
+              const proj = activeRepo?.project || { id: projectId };
+              const { execOptions } = await this._resolveRemoteExecution(
+                rootDir,
+                proj,
+                userId,
+                { requireRepoScope: false },
+              );
+              await this.runCommand(
+                rootDir,
+                [
+                  "fetch",
+                  "origin",
+                  "--no-tags",
+                  `+refs/heads/${localTarget}:refs/remotes/origin/${localTarget}`,
+                ],
+                { ...execOptions, timeoutMs: 6000 },
+              );
+              remoteCheckMetaCache.set(projectId, {
+                checkedAt: new Date().toISOString(),
+                checkedAtMs: Date.now(),
+                branch: localTarget,
+                error: null,
+              });
+            }
+          } catch (err) {
+            console.warn(
+              `[GitService.checkout] Best-effort remote tracking refresh skipped for '${localTarget}':`,
+              redactGitOutput(err?.message || err),
+            );
+          }
+        }
+      }
     }
 
     const [branches, status] = await Promise.all([
@@ -1700,7 +2036,12 @@ export class GitService {
       this.getStatus(projectId, userId),
     ]);
     await this._recordSnapshotHeadSync(rootDir, projectId, snapshot.id, status);
-    return { ...branches, stashed, status };
+    return {
+      ...branches,
+      stashed,
+      trackingMessage: status?.trackingMessage || null,
+      status,
+    };
   }
 
   static async renameBranch(projectId, userId, oldName, newName) {
@@ -3026,6 +3367,7 @@ const INTEGRATION_VCS_MUTATIONS = [
   "setRemoteUrl",
   "publishToGitHub",
   "fetch",
+  "checkRemoteUpdates",
   "pull",
   "push",
   "sync",
@@ -3079,6 +3421,37 @@ const WORKING_TREE_CHANGING_METHODS = new Set([
   "stashPop",
 ]);
 
+function isWorkingTreeChangingCall(method, args) {
+  if (WORKING_TREE_CHANGING_METHODS.has(method)) return true;
+  if (method === "undoLastCommit" && args?.[0]?.mode === "hard") return true;
+  return false;
+}
+
+function extractExplicitChangedPaths(method, args) {
+  const paths = [];
+  if (method === "discardChanges") {
+    const first = args?.[0];
+    if (typeof first === "string" && first !== "all") {
+      paths.push(first);
+    } else if (first && typeof first === "object") {
+      if (first.filePath) paths.push(first.filePath);
+      if (Array.isArray(first.files)) {
+        for (const item of first.files) {
+          if (typeof item === "string") paths.push(item);
+          else if (item?.path) paths.push(item.path);
+        }
+      }
+    }
+  } else if (method === "revertHunk" && typeof args?.[0] === "string") {
+    paths.push(args[0]);
+  } else if (method === "resolveConflict" && args?.[0]?.filePath) {
+    paths.push(args[0].filePath);
+  } else if (method === "addGitignorePattern") {
+    paths.push(".gitignore");
+  }
+  return paths.map(normalizePosixPath).filter(Boolean);
+}
+
 for (const [capability, methods] of [
   ["vcs.local", LOCAL_VCS_MUTATIONS],
   ["integrations.write", INTEGRATION_VCS_MUTATIONS],
@@ -3109,7 +3482,23 @@ for (const [capability, methods] of [
         if (t !== undefined) tagName(t);
       }
 
-      if (preparedGit.getStore()) {
+      const workingTreeChanging = isWorkingTreeChangingCall(method, args);
+      const explicitPaths = extractExplicitChangedPaths(method, args);
+
+      const existingStore = preparedGit.getStore();
+      if (existingStore) {
+        if (workingTreeChanging) {
+          existingStore.workingTreeChanging = true;
+          if (explicitPaths.length > 0) {
+            existingStore.explicitFiles = [
+              ...(existingStore.explicitFiles || []),
+              ...explicitPaths,
+            ];
+          }
+          if (!existingStore.beforeHeadOid && existingStore.repo?.rootDir && fs.existsSync(path.join(existingStore.repo.rootDir, ".git"))) {
+            existingStore.beforeHeadOid = await this._hasHeadCommit(existingStore.repo.rootDir);
+          }
+        }
         return original.call(this, projectId, userId, ...args);
       }
 
@@ -3142,17 +3531,49 @@ for (const [capability, methods] of [
       return withProjectVcsLock(projectId, async () => {
         checkStaleGitIndexLock(repo.rootDir, { removeStale: true });
 
+        const beforeHeadOid =
+          workingTreeChanging && fs.existsSync(dotGit)
+            ? await this._hasHeadCommit(repo.rootDir)
+            : null;
+
+        const decorateResult = (store, result) => {
+          if (
+            store.workingTreeChanging &&
+            result &&
+            typeof result === "object" &&
+            !Array.isArray(result)
+          ) {
+            return {
+              ...result,
+              workspaceChanged: true,
+              updatedFiles: store.updatedFiles || [],
+              workspaceRevision:
+                store.workspaceRevision ??
+                result.status?.workspaceRevision ??
+                result.workspaceRevision ??
+                null,
+            };
+          }
+          return result;
+        };
+
         if (!USE_PREPARED_GIT_WORKSPACE()) {
-          return preparedGit.run(
-            {
-              projectId,
-              userId,
-              repo,
-              isDirect: true,
-              workingTreeChanging: WORKING_TREE_CHANGING_METHODS.has(method),
-            },
-            () => original.call(this, projectId, userId, ...args),
+          const store = {
+            projectId,
+            userId,
+            repo,
+            isDirect: true,
+            workingTreeChanging,
+            beforeHeadOid,
+            explicitFiles: explicitPaths,
+            workspaceChanged: false,
+            updatedFiles: [],
+            workspaceRevision: repo.project.workspaceRevision ?? null,
+          };
+          const res = await preparedGit.run(store, () =>
+            original.call(this, projectId, userId, ...args),
           );
+          return decorateResult(store, res);
         }
 
         return withPreparedProjectWorkspace(
@@ -3166,23 +3587,31 @@ for (const [capability, methods] of [
             input: { method },
             includeGitMetadata: true,
           },
-          (context) =>
-            preparedGit.run(
-              {
-                projectId,
-                userId,
-                repo: {
-                  ...repo,
-                  rootDir: context.rootDir,
-                  snapshot: {
-                    ...repo.snapshot,
-                    rootDir: path.join(context.rootDir, context.analysisRelative),
-                    storagePath: context.rootDir,
-                  },
+          async (context) => {
+            const store = {
+              projectId,
+              userId,
+              workingTreeChanging,
+              beforeHeadOid,
+              explicitFiles: explicitPaths,
+              workspaceChanged: false,
+              updatedFiles: [],
+              workspaceRevision: repo.project.workspaceRevision ?? null,
+              repo: {
+                ...repo,
+                rootDir: context.rootDir,
+                snapshot: {
+                  ...repo.snapshot,
+                  rootDir: path.join(context.rootDir, context.analysisRelative),
+                  storagePath: context.rootDir,
                 },
               },
-              () => original.call(this, projectId, userId, ...args),
-            ),
+            };
+            const res = await preparedGit.run(store, () =>
+              original.call(this, projectId, userId, ...args),
+            );
+            return decorateResult(store, res);
+          },
         );
       });
     };

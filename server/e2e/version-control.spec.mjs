@@ -160,6 +160,7 @@ test.beforeAll(async () => {
       ...process.env,
       NODE_ENV: "test",
       COVAI_WORKER_ENABLED: "false",
+      PROJECT_EDITOR_ENABLED: "false",
       E2E_API_PORT: "55110",
       CLIENT_URL,
     },
@@ -556,5 +557,116 @@ test("3. Mini-GitHub Snapshot & Checkpoints Workflow E2E (Diff, Partial Capture,
     consoleErrors.filter(
       (e) => !/WebSocket/i.test(e) && !/409 \(Conflict\)/i.test(e),
     ),
+  ).toEqual([]);
+});
+
+test("4. Console git pull auto-refreshes Explorer File Tree & open clean Editor tabs (preserving dirty edits) + Real Behind-Origin detection", async ({
+  page,
+  request,
+}) => {
+  const seedRes = await request.post(`${API_BASE}/__test/seed-vcs`);
+  expect(seedRes.ok()).toBe(true);
+  const seeded = await seedRes.json();
+
+  const consoleErrors = [];
+  const pageErrors = [];
+  page.on("console", (msg) => {
+    if (msg.type() === "error") consoleErrors.push(msg.text());
+  });
+  page.on("pageerror", (err) => pageErrors.push(err.message));
+
+  await loginAsGithubUser(page);
+  await page.goto(
+    `/main-editor?projectId=${seeded.gitProject.id}&snapshotId=${seeded.gitProject.snapshotId}&tab=explorer`,
+  );
+  await dismissSpotlightIfOpen(page);
+
+  // 1. Open `src/app.js` (stay clean) and `src/utils.js` (make unsaved dirty draft in Editor)
+  const utilsEntry = page.getByText("utils.js", { exact: true }).first();
+  const utilsVisible = await utilsEntry
+    .waitFor({ state: "visible", timeout: 4000 })
+    .then(() => true, () => false);
+  if (!utilsVisible) {
+    const srcFolder = page.getByText("src", { exact: true }).first();
+    if (await srcFolder.isVisible().catch(() => false)) {
+      await srcFolder.click();
+    }
+  }
+
+  await utilsEntry.click();
+  const monacoArea = page.locator(".monaco-editor .view-lines").first();
+  await expect(monacoArea).toContainText("a + b");
+  await monacoArea.click();
+  await page.keyboard.type("// local unsaved user edit\n");
+  await expect(monacoArea).toContainText("local unsaved user edit");
+
+  await page.getByText("app.js", { exact: true }).first().click();
+  await expect(monacoArea).toContainText("v1");
+
+  // 2. Peer pushes commit updating `src/app.js`, `src/utils.js`, and adding `src/remote-pulled.js`
+  const peerRes = await request.post(`${API_BASE}/__test/push-peer-commit`, {
+    data: { branch: "develop" },
+  });
+  expect(peerRes.ok()).toBe(true);
+
+  // 3. Switch to Version Control -> auto remote check detects `behind 'origin/develop' by 1 commit`
+  await page.locator("#activity-version-control").click();
+  await dismissSpotlightIfOpen(page);
+  await expect(page.getByTestId("vcs-mode-badge")).toHaveText("GIT & GITHUB");
+
+  const behindBanner = page.getByTestId("git-behind-origin-banner");
+  await expect(behindBanner).toBeVisible({ timeout: 10000 });
+  await expect(behindBanner).toContainText("behind 'origin/develop' by 1 commit");
+  await expect(behindBanner.getByRole("button")).toHaveCount(1);
+  await expect(page.getByTestId("vcs-status-behind")).toContainText("↓1");
+
+  // 4. Open docked Git Output Console, assert it fits cleanly inside viewport without clipping, and run `git pull`
+  await page.getByRole("button", { name: "Console" }).click();
+  const consoleDrawer = page.getByTestId("git-output-console");
+  await expect(consoleDrawer).toBeVisible();
+  const viewport = page.viewportSize();
+  const drawerBox = await consoleDrawer.boundingBox();
+  expect(drawerBox).toBeTruthy();
+  expect(drawerBox.height).toBeGreaterThanOrEqual(140);
+  if (viewport) {
+    expect(drawerBox.y + drawerBox.height).toBeLessThanOrEqual(viewport.height + 1);
+  }
+  const consoleInput = page.getByLabel("Git CLI command input");
+  await consoleInput.fill("git pull");
+  await consoleInput.press("Enter");
+  await expect(behindBanner).toBeHidden({ timeout: 10000 });
+
+  // 5. Switch back to Explorer WITHOUT reloading the page!
+  await page.locator("#activity-explorer").click();
+  await dismissSpotlightIfOpen(page);
+
+  // 5a. File Tree shows newly pulled file `remote-pulled.js`
+  await expect(page.getByText("remote-pulled.js", { exact: true }).first()).toBeVisible({
+    timeout: 10000,
+  });
+
+  // 5b. Already-open clean tab `app.js` AUTOMATICALLY displays pulled remote code
+  await expect(page.locator(".monaco-editor .view-lines").first()).toContainText(
+    "v99-remote-pulled",
+    { timeout: 10000 },
+  );
+
+  // 5c. Switch to dirty tab `utils.js` -> unsaved edit is PRESERVED and Reload/Keep banner shows
+  await page.getByText("utils.js", { exact: true }).first().click();
+  await expect(page.locator(".monaco-editor .view-lines").first()).toContainText(
+    "local unsaved user edit",
+  );
+  await expect(page.getByRole("button", { name: "Reload from Disk" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Keep My Edits" })).toBeVisible();
+
+  // Clicking Reload from Disk discards draft and shows pulled content
+  await page.getByRole("button", { name: "Reload from Disk" }).click();
+  await expect(page.locator(".monaco-editor .view-lines").first()).toContainText(
+    "Number(a) + Number(b) + 10",
+  );
+
+  expect(pageErrors.filter((e) => !/WebSocket closed without opened/i.test(e))).toEqual([]);
+  expect(
+    consoleErrors.filter((e) => !/WebSocket/i.test(e)),
   ).toEqual([]);
 });

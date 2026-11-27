@@ -32,12 +32,23 @@ jest.unstable_mockModule("../services/gemini.service.js", () => ({
 }));
 
 let GitService;
+let clearGitRemoteCheckCache;
+let rememberProjectFileRead;
+let recentProjectFileRead;
+let reconcileEditorDocumentsAfterGitChange;
+let seededEditorState;
 let gitRoute;
 let AUTH_PROVIDERS;
 let AUTH_ERROR_CODES;
 
 try {
-  ({ GitService } = await import("../services/git.service.js"));
+  ({ GitService, clearGitRemoteCheckCache } = await import("../services/git.service.js"));
+  ({ rememberProjectFileRead, recentProjectFileRead } = await import(
+    "../services/projectFileReadCache.service.js"
+  ));
+  ({ reconcileEditorDocumentsAfterGitChange, seededEditorState } = await import(
+    "../services/projectEditorBridge.service.js"
+  ));
   ({ default: gitRoute } = await import("../routes/git.route.js"));
   ({ AUTH_PROVIDERS } = await import("../../../shared/versionControlMode.js"));
   ({ AUTH_ERROR_CODES } = await import("../../../shared/authValidation.js"));
@@ -107,6 +118,7 @@ describe("Phase 1 Full Git & GitHub Workflow Integration", () => {
 
   beforeEach(async () => {
     global.fetch = origFetch;
+    clearGitRemoteCheckCache();
     await testDb.db.project.deleteMany({});
     await testDb.resetAuthTables();
 
@@ -873,5 +885,265 @@ describe("Phase 1 Full Git & GitHub Workflow Integration", () => {
       expect(expectedStatuses).toContain(badRes.status);
       expect(badRes.body.success).toBe(false);
     }
+  });
+
+  test("VS Code UX Upgrade: workspaceChanged/updatedFiles/workspaceRevision sync, cache invalidation, and real remote behind-origin detection", async () => {
+    const ownerJwt = makeJwt(owner, AUTH_PROVIDERS.GITHUB);
+
+    await execFileAsync("git", ["init", "--initial-branch=main"], {
+      cwd: repoRoot,
+      windowsHide: true,
+    });
+    fs.writeFileSync(path.join(repoRoot, "README.md"), "# Initial\n", "utf8");
+    fs.writeFileSync(path.join(repoRoot, "notes.md"), "base note\n", "utf8");
+    await execFileAsync("git", ["add", "."], { cwd: repoRoot, windowsHide: true });
+    await execFileAsync("git", ["commit", "-m", "chore: init"], {
+      cwd: repoRoot,
+      windowsHide: true,
+    });
+    await execFileAsync("git", ["remote", "add", "origin", bareRemoteDir], {
+      cwd: repoRoot,
+      windowsHide: true,
+    });
+    await execFileAsync("git", ["push", "-u", "origin", "main"], {
+      cwd: repoRoot,
+      windowsHide: true,
+    });
+
+    // Seed read cache entry that MUST be invalidated on working-tree change
+    rememberProjectFileRead(
+      { projectId: project.id, userId: owner.id },
+      { snapshotId: snapshot.id, path: "README.md", content: "# Stale", size: 7 },
+    );
+    expect(
+      recentProjectFileRead({
+        projectId: project.id,
+        snapshotId: snapshot.id,
+        userId: owner.id,
+        path: "README.md",
+      }),
+    ).toBeTruthy();
+
+    // Peer pushes 2 commits to remote main
+    await execFileAsync("git", ["clone", bareRemoteDir, peerCloneDir], {
+      windowsHide: true,
+    });
+    await execFileAsync("git", ["config", "user.name", "Peer Dev"], {
+      cwd: peerCloneDir,
+      windowsHide: true,
+    });
+    await execFileAsync("git", ["config", "user.email", "peer@covai.dev"], {
+      cwd: peerCloneDir,
+      windowsHide: true,
+    });
+    fs.writeFileSync(path.join(peerCloneDir, "README.md"), "# Updated from remote\n", "utf8");
+    await execFileAsync("git", ["add", "README.md"], {
+      cwd: peerCloneDir,
+      windowsHide: true,
+    });
+    await execFileAsync("git", ["commit", "-m", "feat: peer commit 1"], {
+      cwd: peerCloneDir,
+      windowsHide: true,
+    });
+    fs.writeFileSync(path.join(peerCloneDir, "remote-only.js"), "export const x = 1;\n", "utf8");
+    await execFileAsync("git", ["add", "remote-only.js"], {
+      cwd: peerCloneDir,
+      windowsHide: true,
+    });
+    await execFileAsync("git", ["commit", "-m", "feat: peer commit 2"], {
+      cwd: peerCloneDir,
+      windowsHide: true,
+    });
+    await execFileAsync("git", ["push", "origin", "main"], {
+      cwd: peerCloneDir,
+      windowsHide: true,
+    });
+
+    // 1. GET /status stays purely local & fast (does not fetch from origin automatically)
+    const fastLocalStatus = await request(app)
+      .get(`/api/git/status?projectId=${project.id}`)
+      .set("Authorization", `Bearer ${ownerJwt}`);
+    expect(fastLocalStatus.status).toBe(200);
+    expect(fastLocalStatus.body.data.behind).toBe(0);
+    expect(fastLocalStatus.body.data.trackingMessage).toContain(
+      "Your branch is up to date with 'origin/main'.",
+    );
+
+    // 2. Real remote check detects behind = 2 + exact CLI guidance
+    const checkRes = await request(app)
+      .post("/api/git/remote-check")
+      .set("Authorization", `Bearer ${ownerJwt}`)
+      .send({ projectId: project.id, force: true });
+    expect(checkRes.status).toBe(200);
+    expect(checkRes.body.data.checked).toBe(true);
+    expect(checkRes.body.data.status.behind).toBe(2);
+    expect(checkRes.body.data.status.canFastForward).toBe(true);
+    expect(checkRes.body.data.status.remoteCheckedAt).toBeTruthy();
+    expect(checkRes.body.data.status.trackingMessage).toBe(
+      `Your branch is behind 'origin/main' by 2 commits, and can be fast-forwarded.\n  (use "git pull" to update your local branch)`,
+    );
+
+    // Immediate non-forced check respects cooldown throttle
+    const throttledRes = await request(app)
+      .post("/api/git/remote-check")
+      .set("Authorization", `Bearer ${ownerJwt}`)
+      .send({ projectId: project.id, force: false });
+    expect(throttledRes.status).toBe(200);
+    expect(throttledRes.body.data.throttled).toBe(true);
+    expect(throttledRes.body.data.status.behind).toBe(2);
+
+    // 3. Even if upstream tracking is unset, status still compares against refs/remotes/origin/main
+    await execFileAsync("git", ["branch", "--unset-upstream", "main"], {
+      cwd: repoRoot,
+      windowsHide: true,
+    });
+    const unsetUpstreamStatus = await request(app)
+      .get(`/api/git/status?projectId=${project.id}`)
+      .set("Authorization", `Bearer ${ownerJwt}`);
+    expect(unsetUpstreamStatus.status).toBe(200);
+    expect(unsetUpstreamStatus.body.data.behind).toBe(2);
+    expect(unsetUpstreamStatus.body.data.remoteRef).toBe("origin/main");
+
+    // Console `git status` reports the tracking guidance line directly under `On branch main`
+    const statusConsole = await request(app)
+      .post("/api/git/command")
+      .set("Authorization", `Bearer ${ownerJwt}`)
+      .send({ projectId: project.id, input: "git status" });
+    expect(statusConsole.status).toBe(200);
+    expect(statusConsole.body.result).toContain("Your branch is behind 'origin/main' by 2 commits");
+
+    // Restore upstream tracking, switch to a new branch, then checkout `main` -> console prints tracking guidance
+    await execFileAsync("git", ["branch", "--set-upstream-to=origin/main", "main"], {
+      cwd: repoRoot,
+      windowsHide: true,
+    });
+    await request(app)
+      .post("/api/git/command")
+      .set("Authorization", `Bearer ${ownerJwt}`)
+      .send({ projectId: project.id, input: "git checkout -b temp-branch" });
+
+    const checkoutBack = await request(app)
+      .post("/api/git/command")
+      .set("Authorization", `Bearer ${ownerJwt}`)
+      .send({ projectId: project.id, input: "git checkout main" });
+    expect(checkoutBack.status).toBe(200);
+    expect(checkoutBack.body.data.workspaceChanged).toBe(true);
+    expect(checkoutBack.body.result).toContain("Switched to branch 'main'");
+    expect(checkoutBack.body.result).toContain(
+      "Your branch is behind 'origin/main' by 2 commits, and can be fast-forwarded.",
+    );
+
+    // 4. Console `git pull` returns workspaceChanged=true, updatedFiles including pulled files,
+    //    incremented workspaceRevision, and invalidates projectFileReadCache
+    const revBeforePull = unsetUpstreamStatus.body.data.workspaceRevision;
+    const pullCmd = await request(app)
+      .post("/api/git/command")
+      .set("Authorization", `Bearer ${ownerJwt}`)
+      .send({ projectId: project.id, input: "git pull" });
+    expect(pullCmd.status).toBe(200);
+    expect(pullCmd.body.data.workspaceChanged).toBe(true);
+    expect(pullCmd.body.data.syncWorkspace).toBe(true);
+    expect(pullCmd.body.data.updatedFiles).toEqual(
+      expect.arrayContaining(["README.md", "remote-only.js"]),
+    );
+    expect(pullCmd.body.data.workspaceRevision).toBeGreaterThan(revBeforePull);
+    expect(pullCmd.body.data.status.behind).toBe(0);
+    expect(
+      recentProjectFileRead({
+        projectId: project.id,
+        snapshotId: snapshot.id,
+        userId: owner.id,
+        path: "README.md",
+      }),
+    ).toBeNull();
+  });
+
+  test("reconcileEditorDocumentsAfterGitChange reloads clean Yjs docs, closes deleted docs, and protects dirty drafts", async () => {
+    fs.writeFileSync(path.join(repoRoot, "clean.js"), "export const v = 2;\n", "utf8");
+    fs.writeFileSync(path.join(repoRoot, "dirty.js"), "export const v = 'disk-new';\n", "utf8");
+
+    const cleanDoc = await testDb.db.projectEditorDocument.create({
+      data: {
+        projectId: project.id,
+        snapshotId: snapshot.id,
+        relativePath: "clean.js",
+        generation: 1,
+        revision: 0,
+        checkpointRevision: 0,
+        stateBytes: seededEditorState("export const v = 1;\n"),
+        text: "export const v = 1;\n",
+        contentHash: "oldhash-clean",
+        baseFileHash: "oldhash-clean",
+        baseFileRevision: 0,
+        lineAttributionJson: [],
+        active: true,
+      },
+    });
+    const dirtyDoc = await testDb.db.projectEditorDocument.create({
+      data: {
+        projectId: project.id,
+        snapshotId: snapshot.id,
+        relativePath: "dirty.js",
+        generation: 1,
+        revision: 2,
+        checkpointRevision: 0,
+        stateBytes: seededEditorState("export const v = 'unsaved-user-draft';\n"),
+        text: "export const v = 'unsaved-user-draft';\n",
+        contentHash: "oldhash-dirty",
+        baseFileHash: "oldhash-dirty",
+        baseFileRevision: 0,
+        lineAttributionJson: [],
+        active: true,
+      },
+    });
+    const deletedDoc = await testDb.db.projectEditorDocument.create({
+      data: {
+        projectId: project.id,
+        snapshotId: snapshot.id,
+        relativePath: "removed.js",
+        generation: 1,
+        revision: 0,
+        checkpointRevision: 0,
+        stateBytes: seededEditorState("export const gone = true;\n"),
+        text: "export const gone = true;\n",
+        contentHash: "oldhash-gone",
+        baseFileHash: "oldhash-gone",
+        baseFileRevision: 0,
+        lineAttributionJson: [],
+        active: true,
+      },
+    });
+
+    const summary = await reconcileEditorDocumentsAfterGitChange({
+      projectId: project.id,
+      snapshotId: snapshot.id,
+      rootDir: repoRoot,
+      updatedFiles: ["clean.js", "dirty.js", "removed.js"],
+      db: testDb.db,
+    });
+
+    expect(summary).toEqual({
+      reconciled: 1,
+      closed: 1,
+      skippedDirty: ["dirty.js"],
+    });
+
+    const [afterClean, afterDirty, afterDeleted] = await Promise.all([
+      testDb.db.projectEditorDocument.findUnique({ where: { id: cleanDoc.id } }),
+      testDb.db.projectEditorDocument.findUnique({ where: { id: dirtyDoc.id } }),
+      testDb.db.projectEditorDocument.findUnique({ where: { id: deletedDoc.id } }),
+    ]);
+
+    expect(afterClean.active).toBe(true);
+    expect(afterClean.generation).toBe(2);
+    expect(afterClean.text).toBe("export const v = 2;\n");
+
+    expect(afterDirty.active).toBe(true);
+    expect(afterDirty.generation).toBe(1);
+    expect(afterDirty.revision).toBe(2);
+    expect(afterDirty.text).toBe("export const v = 'unsaved-user-draft';\n");
+
+    expect(afterDeleted.active).toBe(false);
+    expect(afterDeleted.generation).toBe(2);
   });
 });
