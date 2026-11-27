@@ -243,6 +243,38 @@ ${nativeHarnessExample}
       : "All exported module members";
   const defaultRuntimeSym = runtimeSymbols.find((s) => s.isDefault);
   const namedRuntimeSyms = runtimeSymbols.filter((s) => !s.isDefault);
+  const singletonInstanceMatch = String(sourceCode || "").match(
+    /\b(?:export\s+default|module\.exports\s*=)\s*new\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/,
+  );
+  const isDefaultObjectLiteral = Boolean(
+    /\b(?:export\s+default|module\.exports\s*=)\s*\{/.test(sourceCode || "") ||
+      defaultRuntimeSym?.type === "object",
+  );
+  const isDefaultSingletonOrObject = Boolean(
+    singletonInstanceMatch || isDefaultObjectLiteral,
+  );
+  const toCamelInstanceAlias = (raw = "") => {
+    const clean = String(raw || "").trim();
+    if (!clean || clean === "defaultExport" || clean === "default") {
+      return "targetInstance";
+    }
+    return clean.charAt(0).toLowerCase() + clean.slice(1);
+  };
+  const safeDefaultAlias = isDefaultSingletonOrObject
+    ? toCamelInstanceAlias(
+        singletonInstanceMatch?.[1] ||
+          defaultRuntimeSym?.localName ||
+          defaultRuntimeSym?.name ||
+          "targetInstance",
+      )
+    : defaultRuntimeSym?.name && defaultRuntimeSym.name !== "defaultExport"
+      ? defaultRuntimeSym.name
+      : "targetModule";
+  const defaultExportShapeContract = singletonInstanceMatch
+    ? `\n- CRITICAL DEFAULT EXPORT CONTRACT (SINGLETON INSTANCE — NOT A CONSTRUCTOR): \`${cleanSource}\` executes \`export default new ${singletonInstanceMatch[1]}()\` and exports an ALREADY-INSTANTIATED singleton object, NOT the \`${singletonInstanceMatch[1]}\` class! NEVER write \`new ${singletonInstanceMatch[1]}(...)\` or \`new ${safeDefaultAlias}(...)\` (which throws \`TypeError: ... is not a constructor\`). Call methods directly on \`${safeDefaultAlias}\` (e.g. \`await ${safeDefaultAlias}.methodName(...)\`) and reset any instance properties like \`${safeDefaultAlias}.stripeClient = null\` in \`beforeEach\` if needed.`
+    : isDefaultObjectLiteral
+      ? `\n- CRITICAL DEFAULT EXPORT CONTRACT (PLAIN OBJECT): \`${cleanSource}\` exports a plain object of methods (\`export default { ... }\`), NOT a class constructor! NEVER use \`new\`; invoke methods directly on \`${safeDefaultAlias}.methodName(...)\`.`
+      : "";
   const isCjsSource =
     !/^\s*(?:import|export)\s+/m.test(sourceCode || "") &&
     /(?:module\.exports|exports\.)/.test(sourceCode || "");
@@ -254,7 +286,7 @@ ${nativeHarnessExample}
   let importExample = `import { ... } from '${cleanImportPath}';`;
   if (isCjsSource && !isVitest) {
     if (defaultRuntimeSym && namedRuntimeSyms.length === 0) {
-      importExample = `const ${defaultRuntimeSym.name || "targetModule"} = require('${cleanImportPath}');`;
+      importExample = `const ${safeDefaultAlias} = require('${cleanImportPath}');`;
     } else if (namedRuntimeSyms.length > 0) {
       importExample = `const { ${namedRuntimeSyms
         .slice(0, 4)
@@ -265,14 +297,12 @@ ${nativeHarnessExample}
     }
   } else if (isEsmJest) {
     if (defaultRuntimeSym && namedRuntimeSyms.length > 0) {
-      const defAlias = defaultRuntimeSym.name || "defaultExport";
-      importExample = `const { default: ${defAlias}, ${namedRuntimeSyms
+      importExample = `const { default: ${safeDefaultAlias}, ${namedRuntimeSyms
         .slice(0, 4)
         .map((s) => s.name)
         .join(", ")} } = await import('${cleanImportPath}');`;
     } else if (defaultRuntimeSym) {
-      const defAlias = defaultRuntimeSym.name || "defaultExport";
-      importExample = `const { default: ${defAlias} } = await import('${cleanImportPath}');`;
+      importExample = `const { default: ${safeDefaultAlias} } = await import('${cleanImportPath}');`;
     } else if (namedRuntimeSyms.length > 0) {
       importExample = `const { ${namedRuntimeSyms
         .slice(0, 4)
@@ -283,14 +313,12 @@ ${nativeHarnessExample}
     }
   } else {
     if (defaultRuntimeSym && namedRuntimeSyms.length > 0) {
-      const defAlias = defaultRuntimeSym.name || "defaultExport";
-      importExample = `import ${defAlias}, { ${namedRuntimeSyms
+      importExample = `import ${safeDefaultAlias}, { ${namedRuntimeSyms
         .slice(0, 4)
         .map((s) => s.name)
         .join(", ")} } from '${cleanImportPath}';`;
     } else if (defaultRuntimeSym) {
-      const defAlias = defaultRuntimeSym.name || "defaultExport";
-      importExample = `import ${defAlias} from '${cleanImportPath}';`;
+      importExample = `import ${safeDefaultAlias} from '${cleanImportPath}';`;
     } else if (namedRuntimeSyms.length > 0) {
       importExample = `import { ${namedRuntimeSyms
         .slice(0, 4)
@@ -412,6 +440,15 @@ Schema evidence: ${JSON.stringify(analyzeMongooseSchemas(sourceCode))}`;
 
   const businessFunctionTargets = [];
   const seenBusinessFnNames = new Set();
+  const isNonCallableExportConstant = (symName) => {
+    if (!symName || !sourceCode) return false;
+    const esc = String(symName).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const nonFnDeclRe = new RegExp(
+      `(?:export\\s+)?(?:const|let|var)\\s+${esc}\\s*=\\s*(?:\\[|\\{(?![^}]*=>)|['"\`\\d]|true\\b|false\\b|null\\b|new\\s+(?:Set|Map|WeakMap|WeakSet|RegExp|Date|Error)\\b)`,
+    );
+    return nonFnDeclRe.test(sourceCode);
+  };
+
   const addBusinessFnTarget = (
     name,
     line = 1,
@@ -425,7 +462,12 @@ Schema evidence: ${JSON.stringify(analyzeMongooseSchemas(sourceCode))}`;
     if (
       !cleanName ||
       cleanName === "default" ||
+      cleanName === "defaultExport" ||
+      cleanName === "module.exports" ||
+      cleanName === "exports" ||
+      (cleanName === "constructor" && isDefaultSingletonOrObject) ||
       isTrivialCallbackFunctionName(cleanName) ||
+      isNonCallableExportConstant(cleanName) ||
       seenBusinessFnNames.has(cleanName.toLowerCase())
     ) {
       return;
@@ -440,8 +482,33 @@ Schema evidence: ${JSON.stringify(analyzeMongooseSchemas(sourceCode))}`;
   };
 
   for (const sym of runtimeSymbols) {
+    if (Array.isArray(sym.methods) && sym.methods.length > 0) {
+      for (const methodItem of sym.methods) {
+        const mName =
+          typeof methodItem === "string"
+            ? methodItem
+            : methodItem?.name || methodItem?.methodName;
+        const mLine =
+          typeof methodItem === "object"
+            ? methodItem?.line || methodItem?.startLine || sym.line || 1
+            : sym.line || sym.startLine || 1;
+        addBusinessFnTarget(mName, mLine, "exported");
+      }
+      continue;
+    }
+    const symType = String(sym.type || "").toLowerCase();
+    if (
+      ["constant", "object", "array", "literal", "class", "instance"].includes(
+        symType,
+      )
+    ) {
+      continue;
+    }
+    if (sym.isDefault && (!sym.localName || sym.name === "defaultExport")) {
+      continue;
+    }
     const resolvedName =
-      sym.name === "default" ? sym.localName || "defaultExport" : sym.name;
+      sym.name === "default" ? sym.localName || "" : sym.name;
     addBusinessFnTarget(
       resolvedName,
       sym.line || sym.startLine || 1,
@@ -584,7 +651,7 @@ which tests the source file: ${cleanSource}
 
 ### 2. TARGET FILE & IMPORT CONTRACT
 - Source Module Import Path: "${cleanImportPath}" (e.g. ${importExample})
-- EXPORTED PUBLIC SYMBOLS (ONLY import and call these directly): ${exportedSymbolsStr}
+- EXPORTED PUBLIC SYMBOLS (ONLY import and call these directly): ${exportedSymbolsStr}${defaultExportShapeContract}
 ${unexportedWarning}
 - MODEL SCHEMA INVARIANT: When testing Sequelize/Mongoose model definitions (e.g. defineVersionModel(sequelize)), ALWAYS import the exported function from "${cleanImportPath}". In expect(mockSequelize.define).toHaveBeenCalledWith(...) assertions, guarantee that every property object is properly closed with braces and comma (e.g. id: { type: ..., primaryKey: true },) before the next property or before the options object ({ tableName: ... }).
 - CUCUMBER / GHERKIN AST FIXTURE INVARIANT: When testing Cucumber/Gherkin functions or AST code-generation (e.g. ParsedFeature, ParsedScenario, ParsedStep), NEVER pass incomplete mock step or scenario objects. Every step object MUST contain { lineNumber, stepText: string, keyword: 'Given'|'When'|'Then' }. Every scenario object MUST contain { lineNumber, title: string, steps: ParsedStep[] }.
@@ -633,7 +700,7 @@ ${unexportedWarning}
    - Unit testing verifies business logic functions and their internal branches (NOT just 4 generic HTTP/integration cases!). You MUST generate dedicated \`it(...)\` / \`test(...)\` block(s) covering EVERY business logic function listed below, plus all conditional branches (\`if/else\`, \`switch\`, ternary, logical \`||\`/\`&&\`/\`??\`, \`try/catch\`) so the file reaches 100% Statements, Branches, Functions, and Lines coverage:
 ${requiredCaseSummary}
 ${businessFunctionTargets.length > 1 ? `   - MINIMUM TEST BLOCK COUNT & FUNCTION COVERAGE MANDATE: There are ${businessFunctionTargets.length} distinct business logic functions above. Write dedicated test(...)/it(...) block(s) covering EVERY business logic function listed above (and all its conditional branches/error paths) rather than collapsing unrelated functions into 4 generic Category A/B/C/D tests. If 1 scenario exercises an exported function that delegates to internal helper(s), keep the primary bracket tag in the title and list ALL covered functions via \`// @covers fn1, fn2\` inside or immediately above that test block.` : ""}
-   - MANDATORY FUNCTION TAG & @covers CONTRACT: Start each generated \`it(...)\` / \`test(...)\` title with the primary target function in brackets (e.g. \`"[functionName] should ..."\`) AND add a \`// @covers fn1, fn2\` comment listing every unit function covered by that scenario.
+   - MANDATORY FUNCTION TAG & @covers CONTRACT: Start each generated \`it(...)\` / \`test(...)\` title with the primary target function in brackets (e.g. \`"[functionName] should ..."\`) AND add a \`// @covers fn1, fn2\` comment listing every unit function covered by that scenario. NEVER generate standalone test blocks tagged with \`[defaultExport]\` or non-callable constant/array/object exports (e.g. \`[SANDBOX_PLANS]\`, \`[AVAILABLE_AI_MODELS]\`) — every bracketed tag MUST match a real callable function/method from the target list above!
    - 100% PASSING ASSERTION GUARANTEE (ZERO FAILING AI TESTS):
      * NEVER write speculative \`expect(() => fn(...)).toThrow()\` or \`expect(fn(...)).rejects.toThrow()\` unless the function body literally contains an unguarded \`throw\` statement reachable in that exact test state! If a function catches errors internally (e.g. \`try/catch\` logging or returning \`null\`/\`undefined\`/\`false\` or \`res.status(500)\`), assert the returned fallback or \`res.status\` instead of \`.toThrow()\`!
      * MODULE SINGLETON STATE AWARENESS: If a module caches singleton state (such as \`let io = null\` in \`socket.js\` set by \`initSocket()\`), calling \`getSocketInstance()\` AFTER \`initSocket()\` has already run in an earlier test will return the initialized instance and WILL NOT throw! Test uninitialized state before initializing singletons, or reset modules, or assert the actual returned value.
@@ -720,7 +787,7 @@ We need to generate a comprehensive unit test suite to achieve >=90% to 100% cov
 
 ### 2. TARGET FILE & IMPORT CONTRACT
 - Source Module Import Path: "${cleanImportPath}" (MUST import using: ${importExample}; DO NOT guess other folders or use reserved keyword \`default\` as a named import!)
-- EXPORTED PUBLIC SYMBOLS (ONLY import and call these directly): ${exportedSymbolsStr}
+- EXPORTED PUBLIC SYMBOLS (ONLY import and call these directly): ${exportedSymbolsStr}${defaultExportShapeContract}
 ${unexportedWarning}
 
 ### 3. CURRENT COVERAGE DIAGNOSTICS & GAPS
@@ -753,7 +820,7 @@ ${unexportedWarning}
    - Unit testing verifies business logic functions and their internal branches (NOT just 4 generic HTTP/integration cases!). Generate dedicated \`it(...)\` / \`test(...)\` block(s) covering EVERY business logic function listed below, plus all conditional branches (\`if/else\`, \`switch\`, ternary, logical \`||\`/\`&&\`/\`??\`, \`try/catch\`) so the file achieves 100% Statements, Branches, Functions, and Lines coverage:
 ${requiredCaseSummary}
 ${businessFunctionTargets.length > 1 ? `   - MINIMUM TEST BLOCK COUNT & FUNCTION COVERAGE MANDATE: There are ${businessFunctionTargets.length} distinct business logic functions above. Write dedicated test(...)/it(...) block(s) covering EVERY business logic function listed above (and all its conditional branches/error paths) rather than collapsing unrelated functions into 4 generic Category A/B/C/D tests. If 1 scenario exercises an exported function that delegates to internal helper(s), keep the primary bracket tag in the title and list ALL covered functions via \`// @covers fn1, fn2\` inside or immediately above that test block.` : ""}
-   - MANDATORY FUNCTION TAG & @covers CONTRACT: Start each generated \`it(...)\` / \`test(...)\` title with the primary target function in brackets (e.g. \`"[functionName] should ..."\`) AND add a \`// @covers fn1, fn2\` comment listing every unit function covered by that scenario.
+   - MANDATORY FUNCTION TAG & @covers CONTRACT: Start each generated \`it(...)\` / \`test(...)\` title with the primary target function in brackets (e.g. \`"[functionName] should ..."\`) AND add a \`// @covers fn1, fn2\` comment listing every unit function covered by that scenario. NEVER generate standalone test blocks tagged with \`[defaultExport]\` or non-callable constant/array/object exports (e.g. \`[SANDBOX_PLANS]\`, \`[AVAILABLE_AI_MODELS]\`) — every bracketed tag MUST match a real callable function/method from the target list above!
    - 100% PASSING ASSERTION GUARANTEE (ZERO FAILING AI TESTS):
      * NEVER write speculative \`expect(() => fn(...)).toThrow()\` or \`expect(fn(...)).rejects.toThrow()\` unless the function body literally contains an unguarded \`throw\` statement reachable in that exact test state! If a function catches errors internally (e.g. \`try/catch\` logging or returning \`null\`/\`undefined\`/\`false\` or \`res.status(500)\`), assert the returned fallback or \`res.status\` instead of \`.toThrow()\`!
      * MODULE SINGLETON STATE AWARENESS: If a module caches singleton state (such as \`let io = null\` in \`socket.js\` set by \`initSocket()\`), calling \`getSocketInstance()\` AFTER \`initSocket()\` has already run in an earlier test will return the initialized instance and WILL NOT throw! Test uninitialized state before initializing singletons, or reset modules, or assert the actual returned value.
@@ -2141,15 +2208,42 @@ export const generateAiUnitTestSuite = async ({
     },
   };
 
+  let finalSuggestion = primarySuggestion;
+  if (
+    !process.env.JEST_WORKER_ID &&
+    snapshot?.rootDir &&
+    fs.existsSync(snapshot.rootDir)
+  ) {
+    try {
+      finalSuggestion = await verifyAndRefineUnitTestDraft({
+        rootDir: snapshot.rootDir,
+        snapshot,
+        suggestion: primarySuggestion,
+        sourceCode: effectiveSourceCode,
+        selectedAiModel,
+        maxPasses: 2,
+      });
+    } catch (verifyDraftErr) {
+      console.warn(
+        `[generateAiUnitTestSuite] Draft verification warning for ${cleanSourceFile}:`,
+        verifyDraftErr?.message,
+      );
+    }
+  }
+  const finalResolvedCode =
+    finalSuggestion.fullUpdatedContent ||
+    finalSuggestion.suggestedTestCode ||
+    resolvedTestCode;
+
   return {
-    ...primarySuggestion,
+    ...finalSuggestion,
     targetPolicy,
-    testCode: resolvedTestCode,
+    testCode: finalResolvedCode,
     targetSourceFile: cleanSourceFile,
     targetTestFile: cleanTargetTest,
     scenarioMatrix,
-    suggestions: [primarySuggestion],
-    telemetry: primarySuggestion.telemetry,
+    suggestions: [finalSuggestion],
+    telemetry: finalSuggestion.telemetry || primarySuggestion.telemetry,
   };
 };
 
@@ -2265,10 +2359,11 @@ export const verifyAndRefineUnitTestDraft = async ({
         ]);
 
         let parsedRun = null;
+        let rawRunRes = null;
         if (framework === "vitest") {
           const { runVitestCoverage } =
             await import("./vitestRunner.service.js");
-          await runVitestCoverage(
+          rawRunRes = await runVitestCoverage(
             `verify-${verifyId}`,
             rootDir,
             snapshot?.vitestCommand,
@@ -2281,7 +2376,7 @@ export const verifyAndRefineUnitTestDraft = async ({
           );
           parsedRun = parseVitestResults(absCovDir, { rootDir });
         } else {
-          await runJestCoverage(
+          rawRunRes = await runJestCoverage(
             `verify-${verifyId}`,
             rootDir,
             null,
@@ -2389,9 +2484,24 @@ export const verifyAndRefineUnitTestDraft = async ({
               : "",
           }));
         const passedTests = Number(parsedRun?.passedTests || 0);
-        const failedTests = Number(
+        let failedTests = Number(
           parsedRun?.failedTests || failedScenarios.length || 0,
         );
+        if (
+          failedScenarios.length === 0 &&
+          (passedTests === 0 || (rawRunRes?.exitCode != null && rawRunRes.exitCode !== 0))
+        ) {
+          const rawErrLog = String(
+            rawRunRes?.stderr || rawRunRes?.stdout || parsedRun?.rawError || "",
+          ).trim();
+          if (rawErrLog) {
+            failedScenarios.push({
+              title: `${cleanTestFile} (Suite Load / Import Crash)`,
+              error: rawErrLog.slice(0, 1800),
+            });
+            failedTests = Math.max(1, failedTests);
+          }
+        }
         const linesPct = Number(sumEntry?.lines?.pct ?? 0);
         const branchesPct = Number(sumEntry?.branches?.pct ?? 0);
         const funcsPct = Number(sumEntry?.functions?.pct ?? 0);
@@ -2598,9 +2708,13 @@ export const verifyAndRefineUnitTestDraft = async ({
     ...(nextTestCases.length > 0 ? { testCases: nextTestCases } : {}),
     validation: {
       ...(suggestion.validation || {}),
-      status: bestEval.failedTests === 0 ? "VERIFIED_DRAFT" : "NEEDS_REVIEW",
+      status:
+        bestEval.failedTests === 0 && bestEval.passedTests > 0
+          ? "VERIFIED_DRAFT"
+          : "NEEDS_REVIEW",
       coverageGoalStatus:
         bestEval.failedTests === 0 &&
+        bestEval.passedTests > 0 &&
         bestEval.linesPct >= 100 &&
         bestEval.funcsPct >= 100
           ? "MET"
