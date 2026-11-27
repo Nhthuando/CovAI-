@@ -1061,15 +1061,32 @@ export async function dispatchGitConsoleCommand({
     const { stdout, stderr } = await GitService.runCommand(rootDir, parsed.cliArgs, {
       rawOutput: true,
     });
-    const output = redactGitOutput((stdout || stderr || "").trimEnd());
+    let output = redactGitOutput((stdout || stderr || "").trimEnd());
+    let status = null;
+    if (parsed.subcommand === "status") {
+      status = await GitService.getStatus(projectId, userId).catch(() => null);
+      if (status?.trackingMessage && !output.includes("Your branch")) {
+        const lines = output.split(/\r?\n/);
+        if (lines.length > 0 && /^On branch\s+/i.test(lines[0])) {
+          lines.splice(1, 0, status.trackingMessage);
+          output = lines.join("\n");
+        } else {
+          output = output ? `${output}\n${status.trackingMessage}` : status.trackingMessage;
+        }
+      }
+    }
     return {
       command: parsed.normalizedCommand,
       output,
       mutated: false,
       syncWorkspace: false,
+      workspaceChanged: false,
+      updatedFiles: [],
+      workspaceRevision: status?.workspaceRevision ?? null,
+      trackingMessage: status?.trackingMessage || null,
       conflicted: false,
       conflicts: [],
-      status: null,
+      status,
       branches: null,
     };
   }
@@ -1079,6 +1096,7 @@ export async function dispatchGitConsoleCommand({
   let branches = null;
   let conflicted = false;
   let conflicts = [];
+  let actionResult = null;
 
   switch (parsed.action) {
     case "stageFiles":
@@ -1097,18 +1115,25 @@ export async function dispatchGitConsoleCommand({
       break;
     case "commit": {
       const res = await GitService.commit(projectId, userId, parsed.params);
+      actionResult = res;
       status = res.status || null;
       output = res.message || `Committed ${res.commitSha || ""}`.trim();
       break;
     }
     case "fetch": {
       const res = await GitService.fetch(projectId, userId, parsed.params);
+      actionResult = res;
       status = res.status || null;
-      output = res.output || "Fetch completed.";
+      const baseFetchOut = res.output || "Fetch completed.";
+      output =
+        status?.trackingMessage && !baseFetchOut.includes("Your branch")
+          ? `${baseFetchOut}\n${status.trackingMessage}`
+          : baseFetchOut;
       break;
     }
     case "pull": {
       const res = await GitService.pull(projectId, userId, parsed.params);
+      actionResult = res;
       status = res.status || null;
       conflicted = Boolean(res.conflicted);
       conflicts = res.conflicts || [];
@@ -1117,21 +1142,27 @@ export async function dispatchGitConsoleCommand({
     }
     case "push": {
       const res = await GitService.push(projectId, userId, parsed.params);
+      actionResult = res;
       status = res.status || null;
       output = res.output || "Push completed.";
       break;
     }
     case "checkout": {
       const res = await GitService.checkout(projectId, userId, parsed.params);
+      actionResult = res;
       status = res.status || null;
       branches = res;
-      output = parsed.params.createNew
-        ? `Switched to a new branch '${parsed.params.branch}'.`
-        : `Switched to branch '${parsed.params.branch}'.`;
+      const switchedLine = parsed.params.createNew
+        ? `Switched to a new branch '${status?.branch || parsed.params.branch}'`
+        : `Switched to branch '${status?.branch || parsed.params.branch}'`;
+      output = status?.trackingMessage
+        ? `${switchedLine}\n${status.trackingMessage}`
+        : `${switchedLine}.`;
       break;
     }
     case "createBranch": {
       const res = await GitService.createBranch(projectId, userId, parsed.params);
+      actionResult = res;
       status = res.status || null;
       branches = res;
       output = `Created branch '${parsed.params.branch}'.`;
@@ -1139,24 +1170,28 @@ export async function dispatchGitConsoleCommand({
     }
     case "stashPush": {
       const res = await GitService.stashPush(projectId, userId, parsed.params);
+      actionResult = res;
       status = res.status || null;
       output = res.output || "Saved working directory and index state.";
       break;
     }
     case "stashPop": {
       const res = await GitService.stashPop(projectId, userId, parsed.params.index);
+      actionResult = res;
       status = res.status || null;
       output = `Popped stash@{${parsed.params.index}}.`;
       break;
     }
     case "stashApply": {
       const res = await GitService.stashApply(projectId, userId, parsed.params.index);
+      actionResult = res;
       status = res.status || null;
       output = `Applied stash@{${parsed.params.index}}.`;
       break;
     }
     case "stashDrop": {
       const res = await GitService.stashDrop(projectId, userId, parsed.params.index);
+      actionResult = res;
       status = res.status || null;
       output = `Dropped stash@{${parsed.params.index}}.`;
       break;
@@ -1165,11 +1200,22 @@ export async function dispatchGitConsoleCommand({
       throw new ServiceError("Unsupported Git action", 400, "INVALID_GIT_COMMAND");
   }
 
+  const workspaceChanged = Boolean(parsed.syncWorkspace || actionResult?.workspaceChanged);
+  const updatedFiles = Array.isArray(actionResult?.updatedFiles)
+    ? actionResult.updatedFiles
+    : [];
+  const workspaceRevision =
+    actionResult?.workspaceRevision ?? status?.workspaceRevision ?? null;
+
   return {
     command: parsed.normalizedCommand,
     output: redactGitOutput(output),
     mutated: true,
     syncWorkspace: parsed.syncWorkspace,
+    workspaceChanged,
+    updatedFiles,
+    workspaceRevision,
+    trackingMessage: status?.trackingMessage || null,
     conflicted,
     conflicts,
     status,

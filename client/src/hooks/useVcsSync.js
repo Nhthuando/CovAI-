@@ -61,6 +61,7 @@ export function useVcsSync(projectId) {
   const [activeOperation, setActiveOperation] = useState(null);
   const debounceTimerRef = useRef(null);
   const clearOpTimerRef = useRef(null);
+  const lastWorkspaceEventRef = useRef({ key: "", at: 0 });
 
   const enabled = Boolean(isAuthenticated && projectId && vcMode);
 
@@ -215,7 +216,34 @@ export function useVcsSync(projectId) {
         return;
       }
 
-      const actorId = detail.payload?.actorId || null;
+      const payload = detail.payload || {};
+      if (payload.workspaceChanged) {
+        const updatedList = Array.isArray(payload.updatedFiles)
+          ? payload.updatedFiles
+          : [];
+        const dedupeKey = `${projectId}:${payload.workspaceRevision ?? ""}:${payload.headOid ?? ""}:${updatedList.join(",")}`;
+        const now = Date.now();
+        if (
+          lastWorkspaceEventRef.current.key !== dedupeKey ||
+          now - lastWorkspaceEventRef.current.at > 1500
+        ) {
+          lastWorkspaceEventRef.current = { key: dedupeKey, at: now };
+          window.dispatchEvent(
+            new CustomEvent("covai:vcs-workspace-changed", {
+              detail: {
+                projectId,
+                headOid: payload.headOid || null,
+                branch: payload.branch || null,
+                updatedFiles: updatedList,
+                workspaceRevision: payload.workspaceRevision ?? null,
+                source: "socket",
+              },
+            }),
+          );
+        }
+      }
+
+      const actorId = payload.actorId || null;
       const isSelfEcho = !actorId || (currentUserId && actorId === currentUserId);
       if (isSelfEcho && isLocalVcsEchoSuppressed(vcMode, projectId)) {
         return;

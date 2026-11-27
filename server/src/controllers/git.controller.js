@@ -32,6 +32,7 @@ import {
   gitStashPushSchema,
   gitStatusQuerySchema,
   gitUndoCommitSchema,
+  remoteCheckBodySchema,
 } from "../validators/git.validation.js";
 
 function parseInput(schema, rawInput) {
@@ -333,6 +334,20 @@ export const fetchRemote = async (req, res) => {
     return res.status(200).json({ success: true, data });
   } catch (error) {
     return handleError(res, error, "Failed to fetch from remote");
+  }
+};
+
+export const checkRemoteUpdates = async (req, res) => {
+  try {
+    const input = parseInput(remoteCheckBodySchema, req.body);
+    const data = await GitService.checkRemoteUpdates(input.projectId, req.user?.id, {
+      force: input.force,
+      branch: input.branch,
+      silent: input.silent,
+    });
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    return handleError(res, error, "Failed to check remote updates");
   }
 };
 

@@ -9,11 +9,13 @@ import {
   applyOptimisticStage,
   applyOptimisticUnstage,
   buildChangesFileTree,
+  buildRemoteSyncBannerState,
   buildVcsPermissions,
   buildVcsSummary,
   computeCommitGraphLayout,
   extractVcsStatusFromResponse,
   formatAiCommitSubject,
+  formatRemoteCheckedAgo,
   getVcsStatusMeta,
   isValidGithubRepoUrl,
   resolveVcsModeMeta,
@@ -347,4 +349,68 @@ test("gitService.runCommand sends single CLI input string when called without le
     globalThis.fetch = prevFetch;
     restoreEnv();
   }
+});
+
+test("buildRemoteSyncBannerState builds fast-forward, diverged, and fallback tracking descriptors", () => {
+  assert.equal(buildRemoteSyncBannerState(null), null);
+  assert.equal(
+    buildRemoteSyncBannerState({ hasGit: true, branch: "develop", ahead: 2, behind: 0 }),
+    null,
+  );
+  assert.equal(
+    buildRemoteSyncBannerState({
+      hasGit: true,
+      detached: true,
+      ahead: 0,
+      behind: 3,
+    }),
+    null,
+  );
+
+  const behindOne = buildRemoteSyncBannerState({
+    hasGit: true,
+    branch: "develop",
+    tracking: null,
+    ahead: 0,
+    behind: 1,
+  });
+  assert.deepEqual(
+    {
+      kind: behindOne.kind,
+      remoteRef: behindOne.remoteRef,
+      title: behindOne.title,
+      primaryAction: behindOne.primaryAction,
+      primaryLabel: behindOne.primaryLabel,
+    },
+    {
+      kind: "behind",
+      remoteRef: "origin/develop",
+      title: "Your branch 'develop' is behind 'origin/develop' by 1 commit",
+      primaryAction: "pull",
+      primaryLabel: "Pull (↓1)",
+    },
+  );
+  assert.match(behindOne.cliHint, /by 1 commit, and can be fast-forwarded/);
+
+  const diverged = buildRemoteSyncBannerState({
+    hasGit: true,
+    branch: "main",
+    tracking: "origin/main",
+    ahead: 2,
+    behind: 4,
+  });
+  assert.equal(diverged.kind, "diverged");
+  assert.equal(diverged.primaryAction, "sync");
+  assert.equal(diverged.primaryLabel, "Sync (↓4 ↑2)");
+  assert.match(diverged.title, /2 ahead, 4 behind/);
+});
+
+test("formatRemoteCheckedAgo formats relative timestamps cleanly", () => {
+  const base = Date.parse("2026-11-27T12:00:00.000Z");
+  assert.equal(formatRemoteCheckedAgo(null, base), null);
+  assert.equal(formatRemoteCheckedAgo("invalid-date", base), null);
+  assert.equal(formatRemoteCheckedAgo("2026-11-27T11:59:55.000Z", base), "just now");
+  assert.equal(formatRemoteCheckedAgo("2026-11-27T11:59:20.000Z", base), "40s ago");
+  assert.equal(formatRemoteCheckedAgo("2026-11-27T11:55:00.000Z", base), "5m ago");
+  assert.equal(formatRemoteCheckedAgo("2026-11-27T09:00:00.000Z", base), "3h ago");
 });

@@ -7,6 +7,7 @@ import { aiLimiter, gitRemoteLimiter } from "../middlewares/rateLimit.middleware
 import {
   addGitignorePattern,
   applyStash,
+  checkRemoteUpdates,
   checkoutBranch,
   cherryPickCommit,
   commitChanges,
@@ -122,6 +123,7 @@ router.post("/conflicts/resolve", resolveConflict);
 
 // Remote Network Operations
 router.post("/fetch", gitRemoteLimiter, fetchRemote);
+router.post("/remote-check", checkRemoteUpdates);
 router.post("/pull", gitRemoteLimiter, pullBranch);
 router.post("/push", gitRemoteLimiter, pushBranch);
 router.post("/sync", gitRemoteLimiter, syncRemote);

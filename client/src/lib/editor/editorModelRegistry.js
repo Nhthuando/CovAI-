@@ -29,3 +29,19 @@ export async function saveActiveCollaborativeFile(projectId, snapshotId, path, c
   const result = await provider.save();
   return { success: true, data: { snapshotId, path, workspaceRevision: result.workspaceRevision, version: undefined, collaborative: true } };
 }
+export function reopenCleanProjectEditors(projectId, snapshotId = null, updatedFiles = null) {
+  if (!projectId) return;
+  const filterSet = Array.isArray(updatedFiles) && updatedFiles.length > 0
+    ? new Set(updatedFiles.map(entry => String(entry || '').replaceAll('\\', '/').replace(/^\/+/, '')).filter(Boolean))
+    : null;
+  for (const { provider } of registry.values()) {
+    if (!provider || provider.disposed || provider.blocked || provider.opening) continue;
+    if (provider.scope.projectId !== projectId) continue;
+    if (snapshotId && provider.scope.snapshotId && provider.scope.snapshotId !== snapshotId) continue;
+    const normPath = String(provider.scope.path || provider.identity?.path || '').replaceAll('\\', '/').replace(/^\/+/, '');
+    if (filterSet && !filterSet.has(normPath)) continue;
+    const isDirty = provider.queue.length > 0 || provider.revision !== provider.checkpointRevision;
+    if (isDirty) continue;
+    void provider.reopen();
+  }
+}

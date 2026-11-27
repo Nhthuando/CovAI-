@@ -415,7 +415,7 @@ function TreeNode({
         )}
         {!isRenaming && folderChanged && (
           <span
-            className="ml-auto w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0"
+            className="ml-auto w-1.5 h-1.5 rounded-full bg-[var(--color-warning)] shrink-0"
             title="Contains uncommitted changes"
           />
         )}
@@ -823,9 +823,9 @@ export default function Sidebar({
         <span
           className={`w-1.5 h-1.5 rounded-full inline-block shrink-0 ${
             (vcsSummary?.conflictCount || 0) > 0
-              ? "bg-rose-400"
+              ? "bg-[var(--color-danger)]"
               : (vcsSummary?.dirtyCount || 0) > 0
-                ? "bg-amber-400"
+                ? "bg-[var(--color-warning)]"
                 : "bg-[var(--ps-emerald)]"
           }`}
         />
@@ -845,7 +845,7 @@ export default function Sidebar({
         <span
           className={`ml-auto text-[10.5px] shrink-0 ${
             (vcsSummary?.dirtyCount || 0) > 0
-              ? "text-amber-400"
+              ? "text-[var(--color-warning)]"
               : "text-[var(--ps-emerald)]"
           }`}
         >
