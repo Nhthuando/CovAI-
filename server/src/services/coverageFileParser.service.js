@@ -4,6 +4,7 @@ import { canonicalizeFilePath } from "../utils/pathSanitizer.js";
 import {
   isBusinessLogicSourceFile,
   isTestFilePath,
+  extractProjectCoverageExclusions,
 } from "../utils/businessLogicFileDetector.js";
 import path from "node:path";
 import { resolveProjectAccess } from "./projectAccess.service.js";
@@ -189,9 +190,9 @@ const getTotalCoverageSummary = (coverageReport) => {
 
   return {
     linesPct: rawLinesPct ?? astStmtsPct ?? 0,
-    branchesPct: (astBranchesPct !== null && astBranchesPct > 0) ? astBranchesPct : (rawBranchesPct ?? astBranchesPct ?? 0),
-    funcsPct: (astFuncsPct !== null && astFuncsPct > 0) ? astFuncsPct : (rawFuncsPct ?? astFuncsPct ?? 0),
-    stmtsPct: (astStmtsPct !== null && astStmtsPct > 0) ? astStmtsPct : (rawStmtsPct ?? astStmtsPct ?? 0),
+    branchesPct: rawBranchesPct ?? astBranchesPct ?? 0,
+    funcsPct: rawFuncsPct ?? astFuncsPct ?? 0,
+    stmtsPct: rawStmtsPct ?? astStmtsPct ?? 0,
   };
 };
 
@@ -203,6 +204,7 @@ export const parseCoverageFilesForSnapshot = async ({
   testType: explicitTestType,
   preserveOtherFiles = false,
   preserveUnitRows = false,
+  skipSummaryUpsert = false,
 }) => {
   assertStringField(projectId, "projectId");
   assertStringField(snapshotId, "snapshotId");
@@ -233,6 +235,9 @@ export const parseCoverageFilesForSnapshot = async ({
     snapshot = operationSnapshot(snapshot);
 
 
+  const configExclusions = snapshot.rootDir
+    ? extractProjectCoverageExclusions(snapshot.rootDir)
+    : [];
   const coverageRows = getCoverageRecords(coverageReport, snapshot.rootDir);
 
   const testType = explicitTestType || coverageReport.testType || "UNIT"; // 'UNIT' or 'INTEGRATION'
@@ -245,7 +250,7 @@ export const parseCoverageFilesForSnapshot = async ({
   for (const row of coverageRows) {
     if (!row.filePath) continue;
     if (testType === "UNIT") {
-      if (!isBusinessLogicSourceFile(row.filePath)) continue;
+      if (!isBusinessLogicSourceFile(row.filePath, configExclusions)) continue;
     } else if (isTestFilePath(row.filePath) || isIgnoredArtifactPath(row.filePath)) {
       continue;
     }
@@ -269,12 +274,53 @@ export const parseCoverageFilesForSnapshot = async ({
   const formattedRows = Array.from(dedupedMap.values());
 
   const rawSummary = getTotalCoverageSummary(coverageReport);
-  const summaryRow = rawSummary || {
+  let summaryRow = rawSummary || {
     linesPct: 0,
     branchesPct: 0,
     funcsPct: 0,
     stmtsPct: 0,
   };
+
+  if (testType === "UNIT" && !Array.isArray(coverageReport) && typeof coverageReport === "object") {
+    const rawEntries = Object.entries(coverageReport).filter(
+      ([k, v]) =>
+        k !== "total" &&
+        k !== "summary" &&
+        k !== "metadata" &&
+        k !== "testType" &&
+        v &&
+        typeof v === "object" &&
+        v.lines?.total != null,
+    );
+    const allowedSet = new Set(formattedRows.map((r) => r.filePath));
+    let lCov = 0, lTot = 0, bCov = 0, bTot = 0, fCov = 0, fTot = 0, sCov = 0, sTot = 0;
+    let countedAny = false;
+    for (const [k, v] of rawEntries) {
+      const fp = extractFilePath(v, k, snapshot.rootDir);
+      if (!fp || !allowedSet.has(fp)) continue;
+      countedAny = true;
+      lCov += Number(v.lines?.covered ?? 0);
+      lTot += Number(v.lines?.total ?? 0);
+      bCov += Number(v.branches?.covered ?? 0);
+      bTot += Number(v.branches?.total ?? 0);
+      fCov += Number(v.functions?.covered ?? 0);
+      fTot += Number(v.functions?.total ?? 0);
+      sCov += Number(v.statements?.covered ?? 0);
+      sTot += Number(v.statements?.total ?? 0);
+    }
+    if (countedAny) {
+      const lPct = lTot > 0 ? Number(((lCov / lTot) * 100).toFixed(1)) : 0;
+      const bPct = bTot > 0 ? Number(((bCov / bTot) * 100).toFixed(1)) : (lCov > 0 && lPct === 100 ? 100 : 0);
+      const fPct = fTot > 0 ? Number(((fCov / fTot) * 100).toFixed(1)) : 0;
+      const sPct = sTot > 0 ? Number(((sCov / sTot) * 100).toFixed(1)) : 0;
+      summaryRow = {
+        linesPct: lPct,
+        branchesPct: bPct,
+        funcsPct: fPct,
+        stmtsPct: sPct,
+      };
+    }
+  }
 
   const safeNum = (v) => {
     if (typeof v === "number" && !isNaN(v)) return v;
@@ -298,7 +344,7 @@ export const parseCoverageFilesForSnapshot = async ({
           },
           create: row,
           update:
-            testType === "INTEGRATION" && preserveUnitRows && isBusinessLogicSourceFile(row.filePath)
+            testType === "INTEGRATION" && preserveUnitRows && isBusinessLogicSourceFile(row.filePath, configExclusions)
               ? {}
               : {
                   linesPct: row.linesPct,
@@ -321,7 +367,7 @@ export const parseCoverageFilesForSnapshot = async ({
       }
     }
 
-    if (rawSummary && testType !== "INTEGRATION") {
+    if (rawSummary && testType !== "INTEGRATION" && !preserveOtherFiles && !skipSummaryUpsert) {
       await tx.coverageSummary.upsert({
         where: { snapshotId },
         update: {

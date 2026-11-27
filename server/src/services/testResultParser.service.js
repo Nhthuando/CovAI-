@@ -29,16 +29,21 @@ export const extractExecutionDurationMs = (raw, runnerElapsedMs = 0) => {
         }
     }
 
+    if (duration <= 0 && Number(raw.endTime) > Number(raw.startTime) && Number(raw.startTime) > 0) {
+        duration = Number(raw.endTime) - Number(raw.startTime);
+    }
+
     if (duration <= 0 && Number(raw.startTime) > 0 && Array.isArray(raw.testResults)) {
         const maxEnd = raw.testResults.reduce((max, s) => Math.max(max, Number(s.endTime || 0)), 0);
         if (maxEnd > raw.startTime) duration = maxEnd - raw.startTime;
     }
 
-    if (duration <= 0 && runnerElapsedMs > 0) {
-        duration = runnerElapsedMs;
+    const rounded = Math.round(duration);
+    if (rounded <= 0 && runnerElapsedMs > 0) {
+        return Math.max(0, Math.round(runnerElapsedMs));
     }
 
-    return Math.max(0, Math.round(duration));
+    return Math.max(0, rounded);
 };
 
 /**

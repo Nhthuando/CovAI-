@@ -7,8 +7,17 @@ import { detectCoverageFrameworks } from "./coverageFramework.service.js";
 import { coverageSummaryFor } from "./systemAssessmentContract.service.js";
 import { cleanStoragePath, cleanStorageText } from "../utils/pathSanitizer.js";
 import { isApiFilePath } from "../utils/apiFileDetector.js";
-import { isBusinessLogicSourceFile } from "../utils/businessLogicFileDetector.js";
-import { resolveProjectRoot } from "../utils/projectRootResolver.js";
+import {
+  isBusinessLogicSourceFile,
+  extractProjectCoverageExclusions,
+} from "../utils/businessLogicFileDetector.js";
+import {
+  resolveCanonicalUnitCoverage,
+  extractThresholdExceptions,
+  resolveProjectRelativePath,
+  getNormalizedMatchKey,
+  resolveSnapshotRootDir,
+} from "./unitCoverageSummary.service.js";
 
 function toFixedNum(val, fallback = 0) {
   if (val === null || val === undefined || val === "") return fallback;
@@ -136,30 +145,6 @@ export function clearUnifiedDashboardCache(snapshotId = null) {
   }
 }
 
-function resolveSnapshotRootDir(rootDir) {
-  if (!rootDir) return null;
-  let candidate = rootDir;
-  if (!fs.existsSync(rootDir)) {
-    if (rootDir.startsWith("/app/")) {
-      const hostCandidate = path.resolve(process.cwd(), rootDir.replace(/^\/app\//, ""));
-      if (fs.existsSync(hostCandidate)) candidate = hostCandidate;
-    } else {
-      const storageIdx = rootDir.indexOf("storage");
-      if (storageIdx !== -1) {
-        const subPath = rootDir.slice(storageIdx).replace(/\\/g, "/");
-        const containerCandidate = path.join("/app", subPath);
-        if (fs.existsSync(containerCandidate)) candidate = containerCandidate;
-        else {
-          const hostCandidate = path.resolve(process.cwd(), subPath);
-          if (fs.existsSync(hostCandidate)) candidate = hostCandidate;
-        }
-      }
-    }
-  }
-  const resolved = resolveProjectRoot(candidate);
-  return resolved || candidate;
-}
-
 /**
  * Normalize and singularize a domain token, stripping common architectural suffixes.
  */
@@ -176,6 +161,9 @@ function normalizeDomainWord(word = "") {
     "repository", "repositories", "dao",
     "util", "utils", "helper", "helpers",
     "test", "tests", "spec", "specs", "e2e", "cy",
+    "vitest", "jest", "playwright", "cypress", "mocha", "chai", "supertest",
+    "setup", "config", "workspace", "teardown",
+    "mock", "mocks", "fixture", "fixtures",
     "api", "v1", "v2", "item", "items",
     "index", "app", "server", "main", "core"
   ]);
@@ -254,7 +242,7 @@ function formatDomainTitle(domainKey) {
 /**
  * Deterministic Cross-Layer Root Cause Decision Tree
  */
-function diagnoseModuleRootCause(unitStatus, intStatus, sysStatus, details = {}) {
+export function diagnoseModuleRootCause(unitStatus, intStatus, sysStatus, details = {}) {
   const uFail = unitStatus === "fail";
   const iFail = intStatus === "fail";
   const sFail = sysStatus === "fail";
@@ -262,6 +250,7 @@ function diagnoseModuleRootCause(unitStatus, intStatus, sysStatus, details = {})
   const uPass = unitStatus === "pass";
   const iPass = intStatus === "pass";
   const sPass = sysStatus === "pass";
+  const hasModuleApis = (details.totalEpCount ?? 0) > 0 || (details.uncoveredEpCount ?? 0) > 0;
 
   if (uFail && (iFail || sFail)) {
     return {
@@ -299,7 +288,7 @@ function diagnoseModuleRootCause(unitStatus, intStatus, sysStatus, details = {})
       diagnosis: `Backend logic passes; E2E journey "${details.flowName || "User Flow"}" failed at step "${details.failedStep || "assertion"}".`,
     };
   }
-  if (intStatus === "untested" || intStatus === "warn") {
+  if (hasModuleApis && (intStatus === "untested" || intStatus === "warn")) {
     return {
       suspectLayer: "integration",
       summary: "API coverage gap",
@@ -316,11 +305,31 @@ function diagnoseModuleRootCause(unitStatus, intStatus, sysStatus, details = {})
       diagnosis: `Source file ${details.unitFile || "module"} has no executed unit tests.`,
     };
   }
+  if (unitStatus === "warn") {
+    return {
+      suspectLayer: "unit",
+      summary: "Low unit branch coverage",
+      diagnosis: `Branch coverage in ${details.unitFile || "module"} is below 50%.`,
+    };
+  }
   if (uPass && iPass && sPass) {
     return {
       suspectLayer: "none",
       summary: "Verified across all 3 layers",
       diagnosis: "Unit, Integration API, and System E2E suites pass for this module.",
+    };
+  }
+  if (uPass && !hasModuleApis) {
+    return {
+      suspectLayer: "none",
+      summary:
+        (details.totalProjectApis ?? 0) === 0
+          ? "Unit verified (no APIs)"
+          : "Partial verification",
+      diagnosis:
+        (details.totalProjectApis ?? 0) === 0
+          ? "Unit suite passes; no API endpoints discovered in this snapshot."
+          : "Unit suite passes; no API endpoints mapped to this module.",
     };
   }
   return {
@@ -333,7 +342,7 @@ function diagnoseModuleRootCause(unitStatus, intStatus, sysStatus, details = {})
 /**
  * Build Cross-Layer Traceability Matrix rows by clustering real Unit files, Integration endpoints, and System E2E scenarios.
  */
-function buildCrossLayerMatrix({ unitFiles = [], unitScenarios = [], endpoints = [], systemScenarios = [], unitPillar, systemPillar }) {
+export function buildCrossLayerMatrix({ unitFiles = [], unitScenarios = [], endpoints = [], systemScenarios = [], unitPillar = {}, systemPillar = {} }) {
   const domainMap = new Map();
 
   const ensureDomain = (key) => {
@@ -359,16 +368,12 @@ function buildCrossLayerMatrix({ unitFiles = [], unitScenarios = [], endpoints =
 
   for (const f of unitFiles) {
     const key = extractDomainKey(f.filePath || "");
-    if (domainMap.has(key) || domainMap.size < 8) {
-      ensureDomain(key).unitFiles.push(f);
-    }
+    ensureDomain(key).unitFiles.push(f);
   }
 
   for (const sc of unitScenarios) {
     const key = extractDomainKey(sc.testFile || sc.suiteName || sc.title || "");
-    if (domainMap.has(key) || domainMap.size < 8) {
-      ensureDomain(key).unitScenarios.push(sc);
-    }
+    ensureDomain(key).unitScenarios.push(sc);
   }
 
   for (const sc of systemScenarios) {
@@ -380,14 +385,32 @@ function buildCrossLayerMatrix({ unitFiles = [], unitScenarios = [], endpoints =
   for (const grp of domainMap.values()) {
     const totalEp = grp.endpoints.length;
     const coveredEp = grp.endpoints.filter((e) => e.status === "Covered").length;
+    const partialEp = grp.endpoints.filter((e) => e.status === "Partial").length;
     const failedEp = grp.endpoints.filter((e) => e.status === "Failed" || e.status === "Script Error").length;
-    const uncoveredEp = Math.max(0, totalEp - coveredEp - failedEp);
+    const issueEp = failedEp + partialEp;
+    const uncoveredEp = Math.max(0, totalEp - coveredEp - issueEp);
     const firstEp = grp.endpoints[0] || null;
 
     const uScenariosTotal = grp.unitScenarios.length;
     const uScenariosFailed = grp.unitScenarios.filter((s) => s.status === "failed").length;
     const uScenariosPassed = grp.unitScenarios.filter((s) => s.status === "passed").length;
     const firstUnitFile = grp.unitFiles[0] || null;
+
+    const sTotal = grp.systemScenarios.length;
+
+    const hasBranchTotals = grp.unitFiles.some((f) => f.branchesTotal != null);
+    const totalGroupBranches = grp.unitFiles.reduce((s, f) => s + Number(f.branchesTotal ?? 0), 0);
+    const totalGroupLines = grp.unitFiles.reduce((s, f) => s + Number(f.linesTotal ?? 0), 0);
+
+    if (
+      uScenariosTotal === 0 &&
+      totalEp === 0 &&
+      sTotal === 0 &&
+      grp.unitFiles.length > 0 &&
+      grp.unitFiles.every((f) => f.linesTotal === 0 && f.branchesTotal === 0)
+    ) {
+      continue;
+    }
 
     const avgUnitBranch =
       grp.unitFiles.length > 0
@@ -402,28 +425,43 @@ function buildCrossLayerMatrix({ unitFiles = [], unitScenarios = [], endpoints =
           )
         : null;
 
+    const uPassRate = getPassRate(uScenariosPassed, uScenariosFailed);
+    const isCoverageOnlyUnit =
+      uScenariosTotal === 0 && grp.unitFiles.length > 0 && avgUnitLines !== null;
+
     let unitStatus = "untested";
     let unitLabel = "0/0 (Not run)";
     if (uScenariosTotal > 0) {
       unitStatus = uScenariosFailed > 0 ? "fail" : "pass";
-      const covInfo = avgUnitLines !== null ? ` (${avgUnitLines}%)` : uScenariosFailed > 0 ? ` (${uScenariosFailed} failed)` : "";
-      unitLabel = `${uScenariosPassed}/${uScenariosTotal} passed${covInfo}`;
-    } else if (grp.unitFiles.length > 0 && avgUnitLines !== null) {
-      unitStatus = (avgUnitBranch ?? 100) < 50 ? "warn" : "pass";
+      const rateInfo = uPassRate !== null ? ` (${uPassRate}%)` : "";
+      const covInfo =
+        avgUnitLines !== null
+          ? ` · ${avgUnitLines}% lines`
+          : uScenariosFailed > 0
+          ? ` · ${uScenariosFailed} failed`
+          : "";
+      unitLabel = `${uScenariosPassed}/${uScenariosTotal} passed${rateInfo}${covInfo}`;
+    } else if (isCoverageOnlyUnit) {
+      if (avgUnitLines === 0 && (avgUnitBranch ?? 0) === 0 && (!hasBranchTotals || totalGroupLines > 0)) {
+        unitStatus = "untested";
+      } else if (avgUnitLines > 0 && hasBranchTotals && totalGroupBranches === 0) {
+        unitStatus = "pass";
+      } else {
+        unitStatus = (avgUnitBranch ?? 100) < 50 ? "warn" : "pass";
+      }
       unitLabel = `${avgUnitLines}% lines${avgUnitBranch !== null ? ` · ${avgUnitBranch}% branch` : ""}`;
     }
 
-    let intStatus = "untested";
+    let intStatus = totalEp === 0 ? "none" : "untested";
     let intLabel = "0/0 APIs";
     if (totalEp > 0) {
       if (failedEp > 0) intStatus = "fail";
       else if (coveredEp === totalEp) intStatus = "pass";
-      else if (coveredEp > 0) intStatus = "warn";
+      else if (coveredEp > 0 || partialEp > 0) intStatus = "warn";
       else intStatus = "untested";
       intLabel = `${coveredEp}/${totalEp} covered`;
     }
 
-    const sTotal = grp.systemScenarios.length;
     const sFailed = grp.systemScenarios.filter((s) => s.status === "failed").length;
     const sFlaky = grp.systemScenarios.filter((s) => s.status === "flaky").length;
     const sPassed = grp.systemScenarios.filter((s) => s.status === "passed").length;
@@ -439,7 +477,8 @@ function buildCrossLayerMatrix({ unitFiles = [], unitScenarios = [], endpoints =
       sysLabel = `${systemPillar.passedTests}/${systemPillar.totalTests} journeys`;
     }
 
-    const failedEpObj = grp.endpoints.find((e) => e.status === "Failed" || e.status === "Script Error") || firstEp;
+    const failedEpObj =
+      grp.endpoints.find((e) => ["Failed", "Script Error", "Partial"].includes(e.status)) || firstEp;
     const failedEpScenario = failedEpObj?.scenarios?.find((sc) => sc.status && sc.status.toLowerCase() !== "passed") || null;
 
     const rootCause = diagnoseModuleRootCause(unitStatus, intStatus, sysStatus, {
@@ -450,6 +489,8 @@ function buildCrossLayerMatrix({ unitFiles = [], unitScenarios = [], endpoints =
       flowName: firstSys?.title,
       failureKind: firstSys?.failureCategory,
       uncoveredEpCount: uncoveredEp,
+      totalEpCount: totalEp,
+      totalProjectApis: endpoints.length,
     });
 
     const items = [
@@ -463,7 +504,14 @@ function buildCrossLayerMatrix({ unitFiles = [], unitScenarios = [], endpoints =
         type: "integration",
         name: `${e.method || "GET"} ${e.path} (${e.status || "Uncovered"})`,
         endpoint: `${e.method || "GET"} ${e.path}`,
-        status: e.status === "Covered" ? "pass" : e.status === "Failed" || e.status === "Script Error" ? "fail" : "untested",
+        status:
+          e.status === "Covered"
+            ? "pass"
+            : e.status === "Failed" || e.status === "Script Error"
+            ? "fail"
+            : e.status === "Partial"
+            ? "warn"
+            : "untested",
       })),
       ...grp.systemScenarios.slice(0, 3).map((s) => ({
         type: "system",
@@ -490,7 +538,12 @@ function buildCrossLayerMatrix({ unitFiles = [], unitScenarios = [], endpoints =
         label: unitLabel,
         passed: uScenariosPassed,
         failed: uScenariosFailed,
-        total: uScenariosTotal || grp.unitFiles.length,
+        total: uScenariosTotal,
+        coverageOnly: isCoverageOnlyUnit,
+        fileCount: grp.unitFiles.length,
+        avgLinesPct: avgUnitLines,
+        avgBranchesPct: avgUnitBranch,
+        passRate: uPassRate,
         path: firstUnitFile?.filePath || null,
       },
       integration: {
@@ -498,6 +551,7 @@ function buildCrossLayerMatrix({ unitFiles = [], unitScenarios = [], endpoints =
         label: intLabel,
         passed: coveredEp,
         failed: failedEp,
+        partial: partialEp,
         total: totalEp,
         uncovered: uncoveredEp,
         endpoint: failedEpObj ? `${failedEpObj.method || "GET"} ${failedEpObj.path}` : null,
@@ -535,7 +589,7 @@ function buildCrossLayerMatrix({ unitFiles = [], unitScenarios = [], endpoints =
             (failedEp > 0 ? "controller" : uncoveredEp > 0 ? "uncovered" : "none"),
           summaryText:
             totalEp > 0
-              ? `${coveredEp}/${totalEp} endpoint(s) covered${failedEp > 0 ? `, ${failedEp} failed` : ""}`
+              ? `${coveredEp}/${totalEp} endpoint(s) covered${failedEp > 0 ? `, ${failedEp} failed` : ""}${partialEp > 0 ? `, ${partialEp} partial` : ""}`
               : "No API endpoints in this module",
         },
         system: {
@@ -549,7 +603,34 @@ function buildCrossLayerMatrix({ unitFiles = [], unitScenarios = [], endpoints =
     });
   }
 
-  return rows;
+  const rowPriority = (r) => {
+    const statuses = [r.unit?.status, r.integration?.status, r.system?.status];
+    const hasFail = statuses.includes("fail");
+    const hasWarn = statuses.includes("warn");
+    const layersPresent =
+      (r.unit.total > 0 || (r.unit.fileCount || 0) > 0 ? 1 : 0) +
+      (r.integration.total > 0 ? 1 : 0) +
+      (r.system.total > 0 ? 1 : 0);
+    const activity = (r.unit.total || 0) + (r.integration.total || 0) + (r.system.total || 0);
+    return {
+      riskTier: hasFail ? 2 : hasWarn ? 1 : 0,
+      layersPresent,
+      activity,
+      fileCount: r.unit.fileCount || 0,
+    };
+  };
+
+  rows.sort((a, b) => {
+    const pa = rowPriority(a);
+    const pb = rowPriority(b);
+    if (pb.riskTier !== pa.riskTier) return pb.riskTier - pa.riskTier;
+    if (pb.layersPresent !== pa.layersPresent) return pb.layersPresent - pa.layersPresent;
+    if (pb.activity !== pa.activity) return pb.activity - pa.activity;
+    if (pb.fileCount !== pa.fileCount) return pb.fileCount - pa.fileCount;
+    return String(a.moduleName || "").localeCompare(String(b.moduleName || ""));
+  });
+
+  return rows.slice(0, 12);
 }
 
 /**
@@ -595,6 +676,517 @@ function isExcludedCoverageFilePath(filePath = "") {
     p.includes("/cypress/") ||
     p.includes("/playwright/")
   );
+}
+
+/**
+ * Return true when a TestRun should be excluded from causal metrics/trend
+ * (explicitly canceled runs or zero-execution/empty runs).
+ */
+export function isExcludedCausalRun(run) {
+  if (!run) return true;
+  const status = String(run.status || "").toUpperCase();
+  if (status === "CANCELED" || status === "CANCELLED") return true;
+  const rPassed = Number(run.passedTests ?? 0);
+  const rFailed = Number(run.failedTests ?? 0);
+  const rTotal = Number(run.totalTests ?? 0);
+  if (rPassed === 0 && rFailed === 0 && rTotal === 0) return true;
+  return false;
+}
+
+/**
+ * Build a strictly causal chronological trend series (oldest -> newest) without
+ * look-ahead leakage from future runs or current snapshot totals.
+ */
+export function buildCausalTrendSeries({
+  combinedHistoricalRuns = [],
+  snapshotId = "",
+  snapshotCreatedAt = null,
+  latestUnitRunId = null,
+  latestIntRunId = null,
+  latestSysRunId = null,
+  unitLinesPct = 0,
+  epCovPct = 0,
+  sysFlowCoveragePct = 0,
+  unitPassRate = 0,
+  intPassRate = 0,
+  sysPassRate = 0,
+  unitPassed = 0,
+  unitFailed = 0,
+  intPassed = 0,
+  intFailed = 0,
+  sysPassed = 0,
+  sysFailed = 0,
+} = {}) {
+  const activeSnapTs = snapshotCreatedAt ? new Date(snapshotCreatedAt).getTime() : Number.NaN;
+  const chronologicalRuns = [...combinedHistoricalRuns]
+    .reverse()
+    .filter((run) => {
+      if (isExcludedCausalRun(run)) return false;
+      if (
+        snapshotId &&
+        run.snapshotId !== snapshotId &&
+        Number.isFinite(activeSnapTs) &&
+        run.snapshot?.createdAt
+      ) {
+        const runSnapTs = new Date(run.snapshot.createdAt).getTime();
+        if (Number.isFinite(runSnapTs) && runSnapTs > activeSnapTs) {
+          return false;
+        }
+      }
+      return true;
+    });
+  const trendSeries = [];
+  let rollingUnitCov = 0;
+  let rollingIntCov = 0;
+  let rollingSysCov = 0;
+  let rollingUnitPass = 0;
+  let rollingIntPass = 0;
+  let rollingSysPass = 0;
+  let rollingUnitPassed = 0;
+  let rollingUnitFailed = 0;
+  let rollingIntPassed = 0;
+  let rollingIntFailed = 0;
+  let rollingSysPassed = 0;
+  let rollingSysFailed = 0;
+
+  const applyRunToRolling = (run) => {
+    const tType = String(run.type || "").toUpperCase();
+    const rPassed = Number(run.passedTests ?? 0);
+    const rFailed = Number(run.failedTests ?? 0);
+    const rTotal = Number(run.totalTests ?? 0);
+    const rPassRate = getPassRate(rPassed, rFailed) ?? 0;
+
+    if (tType === "JEST" || tType === "VITEST") {
+      if (run.coverageLinesPct != null) {
+        rollingUnitCov = toFixedNum(run.coverageLinesPct);
+      } else if (run.id === latestUnitRunId) {
+        rollingUnitCov = toFixedNum(unitLinesPct);
+      }
+      rollingUnitPassed = rPassed;
+      rollingUnitFailed = rFailed;
+      rollingUnitPass = rPassRate;
+    } else if (tType === "SUPERTEST" || tType === "PLAYWRIGHT_API") {
+      // Integration trend tracks API endpoint coverage strictly: use epCovPct only on
+      // latestIntRunId, or explicit run.endpointCoveragePct if persisted; never leak
+      // epCovPct backward and never mix Istanbul code coverageLinesPct into endpoint %.
+      if (run.id === latestIntRunId) {
+        rollingIntCov = toFixedNum(epCovPct);
+      } else if (run.endpointCoveragePct != null) {
+        rollingIntCov = toFixedNum(run.endpointCoveragePct);
+      }
+      rollingIntPassed = rPassed;
+      rollingIntFailed = rFailed;
+      rollingIntPass = rPassRate;
+    } else if (tType === "PLAYWRIGHT" || tType === "CYPRESS") {
+      if (run.id === latestSysRunId) {
+        rollingSysCov =
+          sysFlowCoveragePct !== null && sysFlowCoveragePct !== undefined
+            ? toFixedNum(sysFlowCoveragePct)
+            : null;
+      } else {
+        let histSysCov = null;
+        if (rTotal > 0 && run.systemMeasurement) {
+          try {
+            const sysCovSummary = coverageSummaryFor(run.systemMeasurement);
+            const feLinesPct =
+              sysCovSummary?.frontend?.counters?.lines?.pct ??
+              sysCovSummary?.tiers?.frontend?.counters?.lines?.pct ??
+              sysCovSummary?.linesPct;
+            if (feLinesPct !== undefined && feLinesPct !== null) {
+              histSysCov = toFixedNum(feLinesPct);
+            }
+          } catch (err) {
+            console.warn(
+              "[UnifiedQualityDashboard] Failed to parse historical systemMeasurement:",
+              err?.message
+            );
+          }
+        }
+        if (histSysCov !== null) {
+          rollingSysCov = histSysCov;
+        }
+      }
+      rollingSysPassed = rPassed;
+      rollingSysFailed = rFailed;
+      rollingSysPass = rPassRate;
+    }
+
+    const combinedPassed = rollingUnitPassed + rollingIntPassed + rollingSysPassed;
+    const combinedFailed = rollingUnitFailed + rollingIntFailed + rollingSysFailed;
+    const combinedPassRate = getPassRate(combinedPassed, combinedFailed) ?? rPassRate;
+    const overallCov = toFixedNum(
+      rollingUnitCov * 0.5 + rollingIntCov * 0.3 + (rollingSysCov ?? 0) * 0.2
+    );
+    return { overallCov, combinedPassRate };
+  };
+
+  if (chronologicalRuns.length > 0) {
+    const windowStart = Math.max(0, chronologicalRuns.length - 8);
+    for (let i = 0; i < windowStart; i += 1) {
+      applyRunToRolling(chronologicalRuns[i]);
+    }
+
+    const sampledRuns = chronologicalRuns.slice(windowStart);
+    sampledRuns.forEach((run, idx) => {
+      const { overallCov, combinedPassRate } = applyRunToRolling(run);
+      const isLast = idx === sampledRuns.length - 1;
+      const rawCommit = run.snapshot?.commitSha;
+      const sanitizedCommit =
+        rawCommit && !String(rawCommit).startsWith("appliedTx:") ? rawCommit : null;
+      const shaShort = (sanitizedCommit || run.snapshotId || "").slice(0, 6);
+
+      trendSeries.push({
+        runLabel: isLast ? `#${idx + 1} (Current)` : `#${idx + 1} (${shaShort})`,
+        timestamp: new Date(run.createdAt).getTime(),
+        unitCoverage: rollingUnitCov,
+        integrationCoverage: rollingIntCov,
+        systemCoverage: rollingSysCov,
+        overallCoverage: overallCov,
+        passRate: combinedPassRate,
+        unitPassRate: rollingUnitPass,
+        integrationPassRate: rollingIntPass,
+        systemPassRate: rollingSysPass,
+      });
+    });
+  } else if (unitLinesPct > 0 || epCovPct > 0 || (sysFlowCoveragePct ?? 0) > 0) {
+    const overallCov = toFixedNum(
+      unitLinesPct * 0.5 + epCovPct * 0.3 + (sysFlowCoveragePct ?? 0) * 0.2
+    );
+    trendSeries.push({
+      runLabel: "#1 (Current)",
+      timestamp: Date.now(),
+      unitCoverage: unitLinesPct,
+      integrationCoverage: epCovPct,
+      systemCoverage: sysFlowCoveragePct,
+      overallCoverage: overallCov,
+      passRate: getPassRate(unitPassed + intPassed + sysPassed, unitFailed + intFailed + sysFailed) ?? 0,
+      unitPassRate: unitPassRate,
+      integrationPassRate: intPassRate,
+      systemPassRate: sysPassRate,
+    });
+  }
+
+  return trendSeries;
+}
+
+/**
+ * Aggregate Integration Pillar metrics from integrationWorkspace payload.
+ * Never falls back coveredApis to passed test scenario count and includes
+ * "Partial" and "Script Error" alongside "Failed" for endpoint issue tracking.
+ */
+export function aggregateIntegrationLayer({ integrationWs }) {
+  const wsSummary = integrationWs?.summary || {};
+  const endpoints = Array.isArray(integrationWs?.endpoints) ? integrationWs.endpoints : [];
+  const coveredEpCount = endpoints.filter((e) => e.status === "Covered").length;
+  const partialEpCount = endpoints.filter((e) => e.status === "Partial").length;
+  const errorEpCount = endpoints.filter(
+    (e) => e.status === "Failed" || e.status === "Script Error"
+  ).length;
+  const issueEpCount = errorEpCount + partialEpCount;
+
+  const intPassed = Number(wsSummary.passedTests ?? wsSummary.testedApis ?? coveredEpCount ?? 0);
+  const intFailed = Number(wsSummary.failedTests ?? errorEpCount ?? 0);
+  const intSkipped = Number(wsSummary.skippedTests ?? 0);
+  const intTotalExecuted = Number(
+    wsSummary.totalTests ?? wsSummary.executedApis ?? intPassed + intFailed + intSkipped
+  );
+  const totalApis = Number(
+    wsSummary.totalApis ?? wsSummary.discoveredApis ?? (endpoints.length || intTotalExecuted)
+  );
+  const coveredApis =
+    intTotalExecuted > 0 && totalApis > 0
+      ? Math.min(
+          totalApis,
+          Number(wsSummary.endpointCoverageMetrics?.coveredEndpoints ?? coveredEpCount)
+        )
+      : 0;
+  const partialApis = Math.min(
+    Math.max(0, totalApis - coveredApis),
+    Number(wsSummary.endpointCoverageMetrics?.partialEndpoints ?? partialEpCount)
+  );
+  const failedApis = Math.min(Math.max(0, totalApis - coveredApis), issueEpCount);
+  const uncoveredApis = Math.max(0, totalApis - coveredApis);
+  const intDurationMs = Number(wsSummary.durationMs ?? 0);
+  const intAvgLatencyMs = Number(
+    wsSummary.avgEndpointLatencyMs ?? wsSummary.avgRequestLatencyMs ?? 0
+  );
+  const intPassRate = getPassRate(intPassed, intFailed) ?? 0;
+
+  const intHasRuns = intTotalExecuted > 0;
+  const epCovPct =
+    !intHasRuns || totalApis <= 0
+      ? 0
+      : wsSummary.endpointCoverageMetrics?.endpointCoveragePct !== undefined
+      ? toFixedNum(wsSummary.endpointCoverageMetrics.endpointCoveragePct)
+      : toFixedNum((coveredApis / totalApis) * 100);
+
+  const intCodeCov = wsSummary.codeCoverage || {};
+  const intCoverageMetrics = {
+    lines: intHasRuns ? toFixedNum(intCodeCov.line?.pct ?? intCodeCov.line ?? 0) : 0,
+    branches: intHasRuns ? toFixedNum(intCodeCov.branch?.pct ?? intCodeCov.branch ?? 0) : 0,
+    functions: intHasRuns ? toFixedNum(intCodeCov.function?.pct ?? intCodeCov.function ?? 0) : 0,
+    statements: intHasRuns ? toFixedNum(intCodeCov.statement?.pct ?? intCodeCov.statement ?? 0) : 0,
+    apiEndpoint: epCovPct,
+    coveragePct: epCovPct,
+    coveredApis,
+    partialApis,
+    failedApis,
+    uncoveredApis,
+    totalApis,
+  };
+
+  let routeFails = 0;
+  let middlewareFails = 0;
+  let controllerFails = 0;
+  let databaseFails = 0;
+  const intFailedScenarios = [];
+
+  if (intFailed > 0) {
+    for (const ep of endpoints) {
+      if (Array.isArray(ep.scenarios)) {
+        for (const sc of ep.scenarios) {
+          const st = String(sc.status || "").toLowerCase();
+          if (st === "failed" || st === "error" || st === "script error") {
+            const fl = String(sc.failureLayer || "").toUpperCase();
+            if (fl === "ROUTER_NOT_FOUND") routeFails++;
+            else if (fl === "MIDDLEWARE_REJECTED") middlewareFails++;
+            else if (fl === "DATABASE_FAILURE") databaseFails++;
+            else controllerFails++;
+
+            if (intFailedScenarios.length < 5) {
+              intFailedScenarios.push({
+                id: sc.id || `${ep.method}-${ep.path}`,
+                name: sc.title || `${ep.method || "GET"} ${ep.path}`,
+                endpoint: `${ep.method || "GET"} ${ep.path}`,
+                filePath: ep.file || "API Route",
+                httpStatus: sc.statusCode || 500,
+                failureLayer:
+                  fl === "ROUTER_NOT_FOUND"
+                    ? "route"
+                    : fl === "MIDDLEWARE_REJECTED"
+                    ? "middlewareAuth"
+                    : fl === "DATABASE_FAILURE"
+                    ? "database"
+                    : "controller",
+                durationMs: sc.durationMs || 0,
+                errorMessage: cleanStorageText(sc.errorMessage || sc.failureReason || "API test failed"),
+              });
+            }
+          }
+        }
+      }
+    }
+    if (routeFails + middlewareFails + controllerFails + databaseFails === 0) {
+      const qc = wsSummary.qualityClassification || {};
+      routeFails = Number(qc.invalidTests ?? 0);
+      middlewareFails = Number(qc.testScriptErrors ?? 0);
+      databaseFails = Number(qc.infrastructureFailures ?? 0);
+      controllerFails = Number(
+        qc.assertionFailures ?? Math.max(0, intFailed - routeFails - middlewareFails - databaseFails)
+      );
+    }
+  }
+
+  const intLowCoverageItems = endpoints
+    .filter((e) => e.status !== "Covered")
+    .slice(0, 5)
+    .map((e) => ({
+      filePath: e.path,
+      name: `${e.method || "GET"} ${e.path}`,
+      branchesPct: toFixedNum(e.mappedCodeCoverage?.branch),
+      linesPct: toFixedNum(e.mappedCodeCoverage?.line),
+      line: 1,
+    }));
+
+  const integrationPillar = {
+    id: "integration",
+    label: "Integration Test",
+    framework: integrationWs?.snapshot?.framework || "Supertest",
+    totalTests: intTotalExecuted,
+    passedTests: intPassed,
+    failedTests: intFailed,
+    skippedTests: intSkipped,
+    flakyTests: 0,
+    passRate: intPassRate,
+    durationMs: intDurationMs,
+    avgDurationMs: intAvgLatencyMs,
+    avgEndpointLatencyMs: intAvgLatencyMs,
+    coverageMetrics: intCoverageMetrics,
+    lowCoverageItems: intLowCoverageItems,
+    failedScenarios: intFailedScenarios,
+    failureDistribution: {
+      route: routeFails,
+      middlewareAuth: middlewareFails,
+      controller: controllerFails,
+      database: databaseFails,
+    },
+    errorMessage: null,
+  };
+
+  return {
+    integrationPillar,
+    endpoints,
+    epCovPct,
+    totalApis,
+    uncoveredApis,
+    intTotalExecuted,
+    intPassed,
+    intFailed,
+    intPassRate,
+  };
+}
+
+/**
+ * Aggregate System (E2E) Pillar metrics.
+ * Returns flowCoveragePct: null and coverageAvailable: false when no real systemMeasurement exists.
+ */
+export function aggregateSystemLayer({ latestSystemRun, detectedFrameworks }) {
+  const sysPassed = Number(latestSystemRun?.passedTests ?? 0);
+  const sysFailed = Number(latestSystemRun?.failedTests ?? 0);
+  const sysFlaky = Number(latestSystemRun?.flakyTests ?? 0);
+  const sysSkipped = Number(latestSystemRun?.skippedTests ?? 0);
+  const sysTotal = Number(
+    latestSystemRun?.totalTests ?? sysPassed + sysFailed + sysFlaky + sysSkipped
+  );
+  const sysDurationMs = Number(latestSystemRun?.durationMs ?? 0);
+  const sysPassRate = getPassRate(sysPassed, sysFailed) ?? 0;
+
+  let sysFlowCoveragePct = null;
+  let sysCoverageAvailable = false;
+  if (sysTotal > 0 && latestSystemRun?.systemMeasurement) {
+    try {
+      const sysCovSummary = coverageSummaryFor(latestSystemRun.systemMeasurement);
+      const feLinesPct =
+        sysCovSummary?.frontend?.counters?.lines?.pct ??
+        sysCovSummary?.tiers?.frontend?.counters?.lines?.pct ??
+        sysCovSummary?.linesPct;
+      if (feLinesPct !== undefined && feLinesPct !== null && Number.isFinite(Number(feLinesPct))) {
+        sysFlowCoveragePct = toFixedNum(feLinesPct);
+        sysCoverageAvailable = true;
+      }
+    } catch (err) {
+      console.warn(
+        "[UnifiedQualityDashboard] Failed to parse latest systemMeasurement:",
+        err?.message
+      );
+    }
+  }
+
+  let selectorNotFoundCount = 0;
+  let networkTimeoutCount = 0;
+  let assertionFailCount = 0;
+  const sysScenarios = [];
+  const sysFailedScenarios = [];
+
+  for (const sc of latestSystemRun?.scenarios || []) {
+    const st = String(sc.status || "").toLowerCase();
+    const cleanFile = sc.testFile ? cleanStoragePath(sc.testFile) : "";
+    const cleanMsgs = (sc.failureMessages || []).map((m) => cleanStorageText(m));
+    sysScenarios.push({
+      id: sc.id,
+      title: sc.title,
+      suiteName: sc.suiteName,
+      file: cleanFile,
+      durationMs: sc.durationMs || 0,
+      status: st,
+      failureStep: sc.failureStep || null,
+      failureCategory: sc.failureCategory || null,
+      failureMessages: cleanMsgs,
+    });
+
+    if (st === "failed") {
+      const cat = String(sc.failureCategory || "").toUpperCase();
+      const msgLower = cleanMsgs.join(" ").toLowerCase();
+      let mappedCat = "assertion";
+      if (
+        cat === "ELEMENT_NOT_FOUND" ||
+        msgLower.includes("selector") ||
+        msgLower.includes("locator") ||
+        msgLower.includes("waiting for element")
+      ) {
+        selectorNotFoundCount++;
+        mappedCat = "selectorNotFound";
+      } else if (
+        ["TIMEOUT", "SERVER_ERROR", "NAVIGATION_ERROR"].includes(cat) ||
+        msgLower.includes("timeout") ||
+        msgLower.includes("timed out")
+      ) {
+        networkTimeoutCount++;
+        mappedCat = "networkTimeout";
+      } else {
+        assertionFailCount++;
+        mappedCat = "assertion";
+      }
+
+      if (sysFailedScenarios.length < 5) {
+        sysFailedScenarios.push({
+          id: sc.id,
+          name: sc.title,
+          filePath: cleanFile || "E2E Spec",
+          failedStep: sc.failureStep || "E2E Journey Step",
+          failureCategory: mappedCat,
+          durationMs: sc.durationMs || 0,
+          errorMessage: cleanMsgs[0] || "E2E journey test failed",
+        });
+      }
+    }
+  }
+
+  const sysRunnerName =
+    latestSystemRun?.type === "CYPRESS"
+      ? "Cypress"
+      : detectedFrameworks?.supported?.system?.includes("cypress") &&
+        !detectedFrameworks?.supported?.system?.includes("playwright")
+      ? "Cypress"
+      : "Playwright";
+
+  const avgTestDur = sysTotal > 0 ? Math.round(sysDurationMs / sysTotal) : 0;
+
+  const systemPillar = {
+    id: "system",
+    label: "System Test (E2E)",
+    framework: sysRunnerName,
+    totalTests: sysTotal,
+    passedTests: sysPassed,
+    failedTests: sysFailed,
+    skippedTests: sysSkipped,
+    flakyTests: sysFlaky,
+    passRate: sysPassRate,
+    durationMs: sysDurationMs,
+    avgTestDurationMs: avgTestDur,
+    avgDurationMs: avgTestDur,
+    flowCoveragePct: sysFlowCoveragePct,
+    coverageAvailable: sysCoverageAvailable,
+    coverageMetrics: {
+      lines: sysFlowCoveragePct,
+      flow: sysFlowCoveragePct,
+    },
+    lowCoverageItems: [],
+    failedScenarios: sysFailedScenarios,
+    failureDistribution: {
+      selectorNotFound: sysFailed > 0 ? selectorNotFoundCount : 0,
+      networkTimeout: sysFailed > 0 ? networkTimeoutCount : 0,
+      assertion:
+        sysFailed > 0
+          ? selectorNotFoundCount + networkTimeoutCount + assertionFailCount > 0
+            ? assertionFailCount
+            : sysFailed
+          : 0,
+      flaky: sysFlaky,
+    },
+    errorMessage: null,
+  };
+
+  return {
+    systemPillar,
+    sysFlowCoveragePct,
+    sysCoverageAvailable,
+    sysPassed,
+    sysFailed,
+    sysTotal,
+    sysPassRate,
+    sysScenarios,
+  };
 }
 
 async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassCache = false }) {
@@ -789,11 +1381,25 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
   }
 
   const unitSummaryRecord = snapshot.coverageSummaries || null;
+  const activeSnapshotCreatedAtMs = snapshot.createdAt
+    ? new Date(snapshot.createdAt).getTime()
+    : Number.POSITIVE_INFINITY;
   const mergedRunsMap = new Map();
   for (const r of snapshotSpecificRuns || []) {
     mergedRunsMap.set(r.id, r);
   }
   for (const r of historicalTestRuns || []) {
+    const runSnapCreatedAtMs = r.snapshot?.createdAt
+      ? new Date(r.snapshot.createdAt).getTime()
+      : Number.NaN;
+    if (
+      r.snapshotId !== snapshot.id &&
+      Number.isFinite(activeSnapshotCreatedAtMs) &&
+      Number.isFinite(runSnapCreatedAtMs) &&
+      runSnapCreatedAtMs > activeSnapshotCreatedAtMs
+    ) {
+      continue;
+    }
     if (!mergedRunsMap.has(r.id)) mergedRunsMap.set(r.id, r);
   }
   const combinedHistoricalRuns = Array.from(mergedRunsMap.values()).sort(
@@ -804,11 +1410,15 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
       ? snapshotSpecificRuns
       : combinedHistoricalRuns.filter((r) => r.snapshotId === snapshot.id);
   const latestUnitRun =
-    (snapshotRuns || []).find((r) => ["JEST", "VITEST"].includes(r.type)) || null;
+    (snapshotRuns || []).find(
+      (r) => ["JEST", "VITEST"].includes(r.type) && !isExcludedCausalRun(r)
+    ) || null;
   const latestSystemRun =
-    (snapshotRuns || []).find((r) => ["PLAYWRIGHT", "CYPRESS"].includes(r.type)) || null;
-  const snapshotIntegrationRuns = (snapshotRuns || []).filter((r) =>
-    ["SUPERTEST", "PLAYWRIGHT_API"].includes(r.type)
+    (snapshotRuns || []).find(
+      (r) => ["PLAYWRIGHT", "CYPRESS"].includes(r.type) && !isExcludedCausalRun(r)
+    ) || null;
+  const snapshotIntegrationRuns = (snapshotRuns || []).filter(
+    (r) => ["SUPERTEST", "PLAYWRIGHT_API"].includes(r.type) && !isExcludedCausalRun(r)
   );
   const snapshotAiTests = (aiTestsList || []).filter((t) => t.snapshotId === snapshot.id);
   const aiSuggestionsCount = snapshot.project?._count?.aiSuggestions ?? 0;
@@ -867,12 +1477,32 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
 
   // 3. Aggregate Unit Layer
   const startUnit = Date.now();
+  const configExclusions = resolvedRootDir
+    ? extractProjectCoverageExclusions(resolvedRootDir)
+    : [];
+  const thresholdExceptions = resolvedRootDir
+    ? await extractThresholdExceptions(resolvedRootDir, snapshot.jestConfigPath || null)
+    : new Set();
+
+  const isAllowedUnitFile = (filePath) => {
+    if (!filePath || isApiFilePath(filePath)) return false;
+    const can = resolvedRootDir
+      ? resolveProjectRelativePath(filePath, resolvedRootDir) || filePath
+      : filePath;
+    const norm = String(can).replace(/\\/g, "/").toLowerCase();
+    if (
+      thresholdExceptions.size > 0 &&
+      Array.from(thresholdExceptions).some((exc) => norm === exc || norm.endsWith(exc))
+    ) {
+      return false;
+    }
+    return isBusinessLogicSourceFile(can, configExclusions);
+  };
+
   const allCoverageFiles = (rawCoverageFiles || []).filter(
     (f) => !isExcludedCoverageFilePath(f.filePath)
   );
-  const unitFiles = allCoverageFiles.filter(
-    (f) => !isApiFilePath(f.filePath) && isBusinessLogicSourceFile(f.filePath)
-  );
+  let unitFiles = allCoverageFiles.filter((f) => isAllowedUnitFile(f.filePath));
   const unitFwRaw =
     detectedFrameworks?.supported?.unit?.[0] ||
     (latestUnitRun?.type === "VITEST" ? "Vitest" : "Jest");
@@ -885,47 +1515,45 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
   const unitDurationMs = Number(latestUnitRun?.durationMs ?? 0);
   const unitPassRate = getPassRate(unitPassed, unitFailed) ?? 0;
 
-  const avgUnitFuncs =
-    unitFiles.length > 0
-      ? toFixedNum(
-          unitFiles.reduce((acc, f) => acc + Number(f.funcsPct ?? f.functionsPct ?? 0), 0) /
-            unitFiles.length
-        )
-      : 0;
-  const avgUnitStmts =
-    unitFiles.length > 0
-      ? toFixedNum(
-          unitFiles.reduce((acc, f) => acc + Number(f.stmtsPct ?? f.statementsPct ?? 0), 0) /
-            unitFiles.length
-        )
-      : 0;
+  const canonicalUnit = await resolveCanonicalUnitCoverage({
+    snapshotId: snapshot.id,
+    rootDir: resolvedRootDir,
+    jestConfigPath: snapshot.jestConfigPath || null,
+    unitSummaryRecord,
+    latestUnitRun,
+    unitFiles,
+  });
 
-  const unitLinesPct =
-    unitTotal > 0
-      ? toFixedNum(unitSummaryRecord?.linesPct ?? latestUnitRun?.coverageLinesPct ?? 0)
-      : 0;
-  const unitBranchesPct =
-    unitTotal > 0
-      ? toFixedNum(unitSummaryRecord?.branchesPct ?? latestUnitRun?.coverageBranchesPct ?? 0)
-      : 0;
-  const unitFuncsPct =
-    unitTotal > 0
-      ? toFixedNum(
-          unitSummaryRecord?.funcsPct ??
-            unitSummaryRecord?.functionsPct ??
-            latestUnitRun?.coverageFunctionsPct ??
-            avgUnitFuncs
-        )
-      : 0;
-  const unitStmtsPct =
-    unitTotal > 0
-      ? toFixedNum(
-          unitSummaryRecord?.stmtsPct ??
-            unitSummaryRecord?.statementsPct ??
-            latestUnitRun?.coverageStatementsPct ??
-            avgUnitStmts
-        )
-      : 0;
+  if (
+    Array.isArray(canonicalUnit.files) &&
+    canonicalUnit.files.length > 0 &&
+    (canonicalUnit.coverageSource === "filtered-summary" ||
+      canonicalUnit.coverageSource === "peak-report")
+  ) {
+    const dbByKey = new Map();
+    for (const df of unitFiles) {
+      dbByKey.set(getNormalizedMatchKey(df.filePath), df);
+    }
+    const mergedFiles = canonicalUnit.files
+      .filter((f) => isAllowedUnitFile(f.filePath))
+      .map((f) => {
+        const dbMatch = dbByKey.get(getNormalizedMatchKey(f.filePath));
+        return {
+          ...f,
+          linesTotal: f.linesTotal ?? dbMatch?.linesTotal ?? undefined,
+          branchesTotal: f.branchesTotal ?? dbMatch?.branchesTotal ?? undefined,
+        };
+      });
+    if (mergedFiles.length > 0) {
+      unitFiles = mergedFiles;
+    }
+  }
+
+  const hasUnitCoverage = unitTotal > 0 || canonicalUnit.coverageSource !== "none";
+  const unitLinesPct = hasUnitCoverage ? toFixedNum(canonicalUnit.coverage.lines) : 0;
+  const unitBranchesPct = hasUnitCoverage ? toFixedNum(canonicalUnit.coverage.branches) : 0;
+  const unitFuncsPct = hasUnitCoverage ? toFixedNum(canonicalUnit.coverage.functions) : 0;
+  const unitStmtsPct = hasUnitCoverage ? toFixedNum(canonicalUnit.coverage.statements) : 0;
 
   const lowBranchFiles = unitFiles.filter((f) => Number(f.branchesPct ?? 100) < 80);
   const filesToDisplay = lowBranchFiles.length > 0 ? lowBranchFiles : unitFiles;
@@ -934,9 +1562,33 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
     name: (f.filePath || "").split(/[/\\]/).pop(),
     branchesPct: toFixedNum(f.branchesPct),
     linesPct: toFixedNum(f.linesPct),
+    functionsPct: toFixedNum(f.funcsPct ?? f.functionsPct),
     isBottleneck: Number(f.branchesPct ?? 100) < 80,
     line: 1,
   }));
+
+  const sortedUnitFilesForReport = [...unitFiles].sort(
+    (a, b) =>
+      Number(a.branchesPct ?? 0) - Number(b.branchesPct ?? 0) ||
+      Number(a.linesPct ?? 0) - Number(b.linesPct ?? 0) ||
+      Number(a.funcsPct ?? a.functionsPct ?? 0) - Number(b.funcsPct ?? b.functionsPct ?? 0)
+  );
+  const unitCoverageFiles = sortedUnitFilesForReport.map((f) => {
+    const branchesPct = toFixedNum(f.branchesPct);
+    const linesPct = toFixedNum(f.linesPct);
+    const functionsPct = toFixedNum(f.funcsPct ?? f.functionsPct);
+    const statementsPct = toFixedNum(f.stmtsPct ?? f.statementsPct);
+    return {
+      filePath: cleanStoragePath(f.filePath) || f.filePath,
+      name: (f.filePath || "").split(/[/\\]/).pop(),
+      branchesPct,
+      linesPct,
+      functionsPct,
+      statementsPct,
+      isBottleneck: branchesPct < 100 || linesPct < 100 || functionsPct < 100,
+      line: 1,
+    };
+  });
 
   const unitScenarios = (latestUnitRun?.scenarios || []).map((s) => ({
     id: s.id,
@@ -961,6 +1613,8 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
       isFaultyExistingTest: s.isFaultyExistingTest,
     }));
 
+  const avgUnitTestDurationMs = unitTotal > 0 ? Math.round(unitDurationMs / unitTotal) : 0;
+
   const unitPillar = {
     id: "unit",
     label: "Unit Test",
@@ -972,14 +1626,25 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
     flakyTests: 0,
     passRate: unitPassRate,
     durationMs: unitDurationMs,
-    avgDurationMs: unitTotal > 0 ? Math.round(unitDurationMs / unitTotal) : 0,
+    avgTestDurationMs: avgUnitTestDurationMs,
+    avgDurationMs: avgUnitTestDurationMs,
+    coverageSource: canonicalUnit.coverageSource,
     coverageMetrics: {
       lines: unitLinesPct,
       branches: unitBranchesPct,
       functions: unitFuncsPct,
       statements: unitStmtsPct,
+      linesCovered: canonicalUnit.rawTotals?.lines?.covered ?? null,
+      linesTotal: canonicalUnit.rawTotals?.lines?.total ?? null,
+      branchesCovered: canonicalUnit.rawTotals?.branches?.covered ?? null,
+      branchesTotal: canonicalUnit.rawTotals?.branches?.total ?? null,
+      functionsCovered: canonicalUnit.rawTotals?.functions?.covered ?? null,
+      functionsTotal: canonicalUnit.rawTotals?.functions?.total ?? null,
+      statementsCovered: canonicalUnit.rawTotals?.statements?.covered ?? null,
+      statementsTotal: canonicalUnit.rawTotals?.statements?.total ?? null,
     },
     lowCoverageItems: unitLowCoverageItems,
+    coverageFiles: unitCoverageFiles,
     failedScenarios: unitFailedScenarios,
     failureDistribution: {},
     errorMessage: null,
@@ -989,273 +1654,31 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
 
   // 4. Aggregate Integration Layer via buildIntegrationWorkspace
   const startIntegration = Date.now();
-  const wsSummary = integrationWs?.summary || {};
-  const endpoints = Array.isArray(integrationWs?.endpoints) ? integrationWs.endpoints : [];
-  const coveredEpCount = endpoints.filter((e) => e.status === "Covered").length;
-  const failedEpCount = endpoints.filter((e) => e.status === "Failed" || e.status === "Script Error").length;
-
-  const intPassed = Number(wsSummary.passedTests ?? wsSummary.testedApis ?? coveredEpCount ?? 0);
-  const intFailed = Number(wsSummary.failedTests ?? failedEpCount ?? 0);
-  const intSkipped = Number(wsSummary.skippedTests ?? 0);
-  const intTotalExecuted = Number(
-    wsSummary.totalTests ?? wsSummary.executedApis ?? intPassed + intFailed + intSkipped
-  );
-  const totalApis = Number(
-    wsSummary.totalApis ?? wsSummary.discoveredApis ?? (endpoints.length || intTotalExecuted)
-  );
-  const coveredApis =
-    intTotalExecuted > 0 && totalApis > 0
-      ? Math.min(
-          totalApis,
-          Number(
-            wsSummary.endpointCoverageMetrics?.coveredEndpoints ??
-              (coveredEpCount > 0 ? coveredEpCount : intPassed)
-          )
-        )
-      : 0;
-  const uncoveredApis = Math.max(0, totalApis - coveredApis);
-  const intDurationMs = Number(wsSummary.durationMs ?? 0);
-  const intAvgLatencyMs = Number(
-    wsSummary.avgEndpointLatencyMs ?? wsSummary.avgRequestLatencyMs ?? 0
-  );
-  const intPassRate = getPassRate(intPassed, intFailed) ?? 0;
-
-  const intHasRuns = intTotalExecuted > 0;
-  const epCovPct =
-    !intHasRuns || totalApis <= 0
-      ? 0
-      : wsSummary.endpointCoverageMetrics?.endpointCoveragePct !== undefined
-      ? toFixedNum(wsSummary.endpointCoverageMetrics.endpointCoveragePct)
-      : toFixedNum((coveredApis / totalApis) * 100);
-
-  const intCodeCov = wsSummary.codeCoverage || {};
-  const intCoverageMetrics = {
-    lines: intHasRuns ? toFixedNum(intCodeCov.line?.pct ?? intCodeCov.line ?? 0) : 0,
-    branches: intHasRuns ? toFixedNum(intCodeCov.branch?.pct ?? intCodeCov.branch ?? 0) : 0,
-    functions: intHasRuns ? toFixedNum(intCodeCov.function?.pct ?? intCodeCov.function ?? 0) : 0,
-    statements: intHasRuns ? toFixedNum(intCodeCov.statement?.pct ?? intCodeCov.statement ?? 0) : 0,
-    apiEndpoint: epCovPct,
-    coveredApis,
-    failedApis: failedEpCount,
-    uncoveredApis,
+  const {
+    integrationPillar,
+    endpoints,
+    epCovPct,
     totalApis,
-  };
-
-  // Real Integration Failure Layer Breakdown
-  let routeFails = 0;
-  let middlewareFails = 0;
-  let controllerFails = 0;
-  let databaseFails = 0;
-  const intFailedScenarios = [];
-
-  if (intFailed > 0) {
-    for (const ep of endpoints) {
-      if (Array.isArray(ep.scenarios)) {
-        for (const sc of ep.scenarios) {
-          const st = String(sc.status || "").toLowerCase();
-          if (st === "failed" || st === "error" || st === "script error") {
-            const fl = String(sc.failureLayer || "").toUpperCase();
-            if (fl === "ROUTER_NOT_FOUND") routeFails++;
-            else if (fl === "MIDDLEWARE_REJECTED") middlewareFails++;
-            else if (fl === "DATABASE_FAILURE") databaseFails++;
-            else controllerFails++;
-
-            if (intFailedScenarios.length < 5) {
-              intFailedScenarios.push({
-                id: sc.id || `${ep.method}-${ep.path}`,
-                name: sc.title || `${ep.method || "GET"} ${ep.path}`,
-                endpoint: `${ep.method || "GET"} ${ep.path}`,
-                filePath: ep.file || "API Route",
-                httpStatus: sc.statusCode || 500,
-                failureLayer:
-                  fl === "ROUTER_NOT_FOUND"
-                    ? "route"
-                    : fl === "MIDDLEWARE_REJECTED"
-                    ? "middlewareAuth"
-                    : fl === "DATABASE_FAILURE"
-                    ? "database"
-                    : "controller",
-                durationMs: sc.durationMs || 0,
-                errorMessage: cleanStorageText(sc.errorMessage || sc.failureReason || "API test failed"),
-              });
-            }
-          }
-        }
-      }
-    }
-    if (routeFails + middlewareFails + controllerFails + databaseFails === 0) {
-      const qc = wsSummary.qualityClassification || {};
-      routeFails = Number(qc.invalidTests ?? 0);
-      middlewareFails = Number(qc.testScriptErrors ?? 0);
-      databaseFails = Number(qc.infrastructureFailures ?? 0);
-      controllerFails = Number(
-        qc.assertionFailures ?? Math.max(0, intFailed - routeFails - middlewareFails - databaseFails)
-      );
-    }
-  }
-
-  const intLowCoverageItems = endpoints
-    .filter((e) => e.status !== "Covered")
-    .slice(0, 5)
-    .map((e) => ({
-      filePath: e.path,
-      name: `${e.method || "GET"} ${e.path}`,
-      branchesPct: toFixedNum(e.mappedCodeCoverage?.branch),
-      linesPct: toFixedNum(e.mappedCodeCoverage?.line),
-      line: 1,
-    }));
-
-  const integrationPillar = {
-    id: "integration",
-    label: "Integration Test",
-    framework: integrationWs?.snapshot?.framework || "Supertest",
-    totalTests: intTotalExecuted,
-    passedTests: intPassed,
-    failedTests: intFailed,
-    skippedTests: intSkipped,
-    flakyTests: 0,
-    passRate: intPassRate,
-    durationMs: intDurationMs,
-    avgDurationMs: intAvgLatencyMs,
-    coverageMetrics: intCoverageMetrics,
-    lowCoverageItems: intLowCoverageItems,
-    failedScenarios: intFailedScenarios,
-    failureDistribution: {
-      route: routeFails,
-      middlewareAuth: middlewareFails,
-      controller: controllerFails,
-      database: databaseFails,
-    },
-    errorMessage: null,
-  };
+    uncoveredApis,
+    intTotalExecuted,
+    intPassed,
+    intFailed,
+    intPassRate,
+  } = aggregateIntegrationLayer({ integrationWs });
 
   const integrationTime = Date.now() - startIntegration;
 
   // 5. Aggregate System (E2E) Layer
   const startSystem = Date.now();
-  const sysPassed = Number(latestSystemRun?.passedTests ?? 0);
-  const sysFailed = Number(latestSystemRun?.failedTests ?? 0);
-  const sysFlaky = Number(latestSystemRun?.flakyTests ?? 0);
-  const sysSkipped = Number(latestSystemRun?.skippedTests ?? 0);
-  const sysTotal = Number(
-    latestSystemRun?.totalTests ?? sysPassed + sysFailed + sysFlaky + sysSkipped
-  );
-  const sysDurationMs = Number(latestSystemRun?.durationMs ?? 0);
-  const sysPassRate = getPassRate(sysPassed, sysFailed) ?? 0;
-
-  let sysFlowCoveragePct = 0;
-  if (sysTotal > 0 && latestSystemRun?.systemMeasurement) {
-    try {
-      const sysCovSummary = coverageSummaryFor(latestSystemRun.systemMeasurement);
-      const feLinesPct = sysCovSummary?.frontend?.counters?.lines?.pct;
-      if (feLinesPct !== undefined && feLinesPct !== null) {
-        sysFlowCoveragePct = toFixedNum(feLinesPct);
-      }
-    } catch (_) {}
-  }
-  if (sysFlowCoveragePct === 0 && sysTotal > 0) {
-    sysFlowCoveragePct = toFixedNum(sysPassRate);
-  }
-
-  let selectorNotFoundCount = 0;
-  let networkTimeoutCount = 0;
-  let assertionFailCount = 0;
-  const sysScenarios = [];
-  const sysFailedScenarios = [];
-
-  for (const sc of latestSystemRun?.scenarios || []) {
-    const st = String(sc.status || "").toLowerCase();
-    const cleanFile = sc.testFile ? cleanStoragePath(sc.testFile) : "";
-    const cleanMsgs = (sc.failureMessages || []).map((m) => cleanStorageText(m));
-    sysScenarios.push({
-      id: sc.id,
-      title: sc.title,
-      suiteName: sc.suiteName,
-      file: cleanFile,
-      durationMs: sc.durationMs || 0,
-      status: st,
-      failureStep: sc.failureStep || null,
-      failureCategory: sc.failureCategory || null,
-      failureMessages: cleanMsgs,
-    });
-
-    if (st === "failed") {
-      const cat = String(sc.failureCategory || "").toUpperCase();
-      const msgLower = cleanMsgs.join(" ").toLowerCase();
-      let mappedCat = "assertion";
-      if (
-        cat === "ELEMENT_NOT_FOUND" ||
-        msgLower.includes("selector") ||
-        msgLower.includes("locator") ||
-        msgLower.includes("waiting for element")
-      ) {
-        selectorNotFoundCount++;
-        mappedCat = "selectorNotFound";
-      } else if (
-        ["TIMEOUT", "SERVER_ERROR", "NAVIGATION_ERROR"].includes(cat) ||
-        msgLower.includes("timeout") ||
-        msgLower.includes("timed out")
-      ) {
-        networkTimeoutCount++;
-        mappedCat = "networkTimeout";
-      } else {
-        assertionFailCount++;
-        mappedCat = "assertion";
-      }
-
-      if (sysFailedScenarios.length < 5) {
-        sysFailedScenarios.push({
-          id: sc.id,
-          name: sc.title,
-          filePath: cleanFile || "E2E Spec",
-          failedStep: sc.failureStep || "E2E Journey Step",
-          failureCategory: mappedCat,
-          durationMs: sc.durationMs || 0,
-          errorMessage: cleanMsgs[0] || "E2E journey test failed",
-        });
-      }
-    }
-  }
-
-  const sysRunnerName =
-    latestSystemRun?.type === "CYPRESS"
-      ? "Cypress"
-      : detectedFrameworks?.supported?.system?.includes("cypress") &&
-        !detectedFrameworks?.supported?.system?.includes("playwright")
-      ? "Cypress"
-      : "Playwright";
-
-  const systemPillar = {
-    id: "system",
-    label: "System Test (E2E)",
-    framework: sysRunnerName,
-    totalTests: sysTotal,
-    passedTests: sysPassed,
-    failedTests: sysFailed,
-    skippedTests: sysSkipped,
-    flakyTests: sysFlaky,
-    passRate: sysPassRate,
-    durationMs: sysDurationMs,
-    avgDurationMs: sysTotal > 0 ? Math.round(sysDurationMs / sysTotal) : 0,
-    coverageMetrics: {
-      lines: sysFlowCoveragePct,
-      flow: sysFlowCoveragePct,
-    },
-    lowCoverageItems: [],
-    failedScenarios: sysFailedScenarios,
-    failureDistribution: {
-      selectorNotFound: sysFailed > 0 ? selectorNotFoundCount : 0,
-      networkTimeout: sysFailed > 0 ? networkTimeoutCount : 0,
-      assertion:
-        sysFailed > 0
-          ? selectorNotFoundCount + networkTimeoutCount + assertionFailCount > 0
-            ? assertionFailCount
-            : sysFailed
-          : 0,
-      flaky: sysFlaky,
-    },
-    errorMessage: null,
-  };
+  const {
+    systemPillar,
+    sysFlowCoveragePct,
+    sysPassed,
+    sysFailed,
+    sysTotal,
+    sysPassRate,
+    sysScenarios,
+  } = aggregateSystemLayer({ latestSystemRun, detectedFrameworks });
 
   const systemTime = Date.now() - startSystem;
 
@@ -1307,22 +1730,57 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
     const rPassed = Number(run.passedTests ?? 0);
     const rFailed = Number(run.failedTests ?? 0);
     const rFlaky = Number(run.flakyTests ?? 0);
+    const rawStatus = String(run.status || "").toUpperCase();
     const rStatus =
-      rFailed > 0 || String(run.status).toUpperCase() === "FAILED"
+      rawStatus === "CANCELED" || rawStatus === "CANCELLED"
+        ? "canceled"
+        : rFailed > 0 || rawStatus === "FAILED"
         ? "fail"
         : rFlaky > 0
         ? "flaky"
         : "pass";
 
     let covPct = toFixedNum(run.coverageLinesPct ?? 0);
-    if (pillarType === "unit" && covPct === 0) {
-      if (run.id === latestUnitRun?.id || run.snapshotId === snapshot.id) {
+    if (pillarType === "unit") {
+      if (covPct === 0 && run.id === latestUnitRun?.id) {
         covPct = toFixedNum(unitSummaryRecord?.linesPct ?? unitLinesPct ?? 0);
       }
-    } else if (pillarType === "integration" && covPct === 0) {
-      covPct = epCovPct;
-    } else if (pillarType === "system" && covPct === 0) {
-      covPct = rTotal > 0 ? toFixedNum((rPassed / rTotal) * 100) : 0;
+    } else if (pillarType === "integration") {
+      if (run.id === snapshotIntegrationRuns[0]?.id) {
+        covPct =
+          epCovPct > 0 || totalApis > 0
+            ? epCovPct
+            : toFixedNum(run.endpointCoveragePct ?? covPct);
+      } else if (run.endpointCoveragePct != null) {
+        covPct = toFixedNum(run.endpointCoveragePct);
+      }
+    } else if (pillarType === "system") {
+      if (run.id === latestSystemRun?.id) {
+        covPct =
+          sysFlowCoveragePct !== null && sysFlowCoveragePct !== undefined
+            ? toFixedNum(sysFlowCoveragePct)
+            : null;
+      } else if (covPct === 0) {
+        let histSysCov = null;
+        if (rTotal > 0 && run.systemMeasurement) {
+          try {
+            const sysCovSummary = coverageSummaryFor(run.systemMeasurement);
+            const feLinesPct =
+              sysCovSummary?.frontend?.counters?.lines?.pct ??
+              sysCovSummary?.tiers?.frontend?.counters?.lines?.pct ??
+              sysCovSummary?.linesPct;
+            if (feLinesPct !== undefined && feLinesPct !== null) {
+              histSysCov = toFixedNum(feLinesPct);
+            }
+          } catch (err) {
+            console.warn(
+              "[UnifiedQualityDashboard] Failed to parse history systemMeasurement:",
+              err?.message
+            );
+          }
+        }
+        covPct = histSysCov !== null ? histSysCov : null;
+      }
     }
 
     const firstFailedSc = (run.scenarios || []).find(
@@ -1331,6 +1789,8 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
     const failureLayerLabel =
       rStatus === "pass"
         ? "None — All Passed"
+        : rStatus === "canceled"
+        ? "Canceled"
         : firstFailedSc?.failureLayer ||
           firstFailedSc?.failureCategory ||
           (pillarType === "unit"
@@ -1342,6 +1802,10 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
     const stackMsg = firstFailedSc?.failureMessages?.[0]
       ? cleanStorageText(firstFailedSc.failureMessages[0])
       : `${tType} Run (${rPassed}/${rTotal} passed, Duration: ${run.durationMs || 0}ms)`;
+
+    const rawRunCommit = run.snapshot?.commitSha;
+    const cleanRunCommit =
+      rawRunCommit && !String(rawRunCommit).startsWith("appliedTx:") ? rawRunCommit : null;
 
     return {
       id: run.id,
@@ -1357,7 +1821,7 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
       coveragePct: covPct,
       durationMs: Number(run.durationMs ?? 0),
       startedAt: run.startedAt || run.createdAt,
-      commitSha: run.snapshot?.commitSha || run.snapshotId.slice(0, 7),
+      commitSha: cleanRunCommit || run.snapshotId.slice(0, 7),
       snapshotId: run.snapshotId,
       failureLayer: failureLayerLabel,
       stackTrace: stackMsg,
@@ -1377,94 +1841,26 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
   });
 
   // Build chronological trend series from historical runs (oldest -> newest)
-  const chronologicalRuns = [...combinedHistoricalRuns].reverse();
-  const trendSeries = [];
-  let rollingUnitCov = unitLinesPct;
-  let rollingIntCov = epCovPct;
-  let rollingSysCov = sysFlowCoveragePct;
-  let rollingUnitPass = unitPassRate;
-  let rollingIntPass = intPassRate;
-  let rollingSysPass = sysPassRate;
-
-  if (chronologicalRuns.length > 0) {
-    // Initialize rolling values from earliest known runs per type
-    const earliestUnit = chronologicalRuns.find((r) => ["JEST", "VITEST"].includes(r.type));
-    const earliestInt = chronologicalRuns.find((r) => ["SUPERTEST", "PLAYWRIGHT_API"].includes(r.type));
-    const earliestSys = chronologicalRuns.find((r) => ["PLAYWRIGHT", "CYPRESS"].includes(r.type));
-
-    rollingUnitCov = toFixedNum(earliestUnit?.coverageLinesPct ?? unitLinesPct);
-    rollingIntCov = epCovPct;
-    rollingSysCov =
-      earliestSys && earliestSys.totalTests > 0
-        ? toFixedNum(((earliestSys.passedTests || 0) / earliestSys.totalTests) * 100)
-        : sysFlowCoveragePct;
-
-    rollingUnitPass =
-      earliestUnit ? getPassRate(earliestUnit.passedTests, earliestUnit.failedTests) ?? 0 : unitPassRate;
-    rollingIntPass =
-      earliestInt ? getPassRate(earliestInt.passedTests, earliestInt.failedTests) ?? 0 : intPassRate;
-    rollingSysPass =
-      earliestSys ? getPassRate(earliestSys.passedTests, earliestSys.failedTests) ?? 0 : sysPassRate;
-
-    const sampledRuns = chronologicalRuns.slice(-8);
-    sampledRuns.forEach((run, idx) => {
-      const tType = String(run.type || "").toUpperCase();
-      const rPassRate = getPassRate(run.passedTests, run.failedTests) ?? 0;
-
-      if (tType === "JEST" || tType === "VITEST") {
-        if (run.coverageLinesPct != null) rollingUnitCov = toFixedNum(run.coverageLinesPct);
-        rollingUnitPass = rPassRate;
-      } else if (tType === "SUPERTEST" || tType === "PLAYWRIGHT_API") {
-        if (run.coverageLinesPct != null && run.coverageLinesPct > 0) {
-          rollingIntCov = toFixedNum(run.coverageLinesPct);
-        } else {
-          rollingIntCov = epCovPct;
-        }
-        rollingIntPass = rPassRate;
-      } else if (tType === "PLAYWRIGHT" || tType === "CYPRESS") {
-        rollingSysCov =
-          run.totalTests > 0
-            ? toFixedNum(((run.passedTests || 0) / run.totalTests) * 100)
-            : sysFlowCoveragePct;
-        rollingSysPass = rPassRate;
-      }
-
-      const overallCov = toFixedNum(
-        rollingUnitCov * 0.5 + rollingIntCov * 0.3 + rollingSysCov * 0.2
-      );
-      const isLast = idx === sampledRuns.length - 1;
-      const shaShort = (run.snapshot?.commitSha || run.snapshotId || "").slice(0, 6);
-
-      trendSeries.push({
-        runLabel: isLast ? `#${idx + 1} (Current)` : `#${idx + 1} (${shaShort})`,
-        timestamp: new Date(run.createdAt).getTime(),
-        unitCoverage: rollingUnitCov,
-        integrationCoverage: rollingIntCov,
-        systemCoverage: rollingSysCov,
-        overallCoverage: overallCov,
-        passRate: rPassRate,
-        unitPassRate: rollingUnitPass,
-        integrationPassRate: rollingIntPass,
-        systemPassRate: rollingSysPass,
-      });
-    });
-  } else if (unitLinesPct > 0 || epCovPct > 0 || sysFlowCoveragePct > 0) {
-    const overallCov = toFixedNum(
-      unitLinesPct * 0.5 + epCovPct * 0.3 + sysFlowCoveragePct * 0.2
-    );
-    trendSeries.push({
-      runLabel: "#1 (Current)",
-      timestamp: Date.now(),
-      unitCoverage: unitLinesPct,
-      integrationCoverage: epCovPct,
-      systemCoverage: sysFlowCoveragePct,
-      overallCoverage: overallCov,
-      passRate: getPassRate(unitPassed + intPassed + sysPassed, unitFailed + intFailed + sysFailed) ?? 0,
-      unitPassRate: unitPassRate,
-      integrationPassRate: intPassRate,
-      systemPassRate: sysPassRate,
-    });
-  }
+  const trendSeries = buildCausalTrendSeries({
+    combinedHistoricalRuns,
+    snapshotId: snapshot.id,
+    snapshotCreatedAt: snapshot.createdAt,
+    latestUnitRunId: latestUnitRun?.id || null,
+    latestIntRunId: snapshotIntegrationRuns[0]?.id || null,
+    latestSysRunId: latestSystemRun?.id || null,
+    unitLinesPct,
+    epCovPct,
+    sysFlowCoveragePct,
+    unitPassRate,
+    intPassRate,
+    sysPassRate,
+    unitPassed,
+    unitFailed,
+    intPassed,
+    intFailed,
+    sysPassed,
+    sysFailed,
+  });
 
   const firstPoint = trendSeries[0] || {
     unitCoverage: 0,
@@ -1520,7 +1916,7 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
   // Multi-tier Quality Health Score (Weights: Unit 50%, Integration 30%, System 20%)
   const unitScore = unitTotal > 0 ? 0.5 * unitPassRate + 0.5 * unitLinesPct : 0;
   const intScore = intTotalExecuted > 0 ? 0.5 * intPassRate + 0.5 * epCovPct : 0;
-  const sysScore = sysTotal > 0 ? 0.5 * sysPassRate + 0.5 * sysFlowCoveragePct : 0;
+  const sysScore = sysTotal > 0 ? 0.5 * sysPassRate + 0.5 * (sysFlowCoveragePct ?? 0) : 0;
 
   // Unexecuted or uncovered targets still count in the denominator to avoid artificial inflation
   const weightedSum = unitScore * 0.5 + intScore * 0.3 + sysScore * 0.2;

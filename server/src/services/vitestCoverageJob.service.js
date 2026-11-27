@@ -78,10 +78,17 @@ export const processVitestCoverageJob = async (jobId) => {
         }
 
         // 3. Parse global coverage summary
-        const summaryResult = await parseCoverageSummary(coverageDir, snapshotId);
+        const effectiveRootDir = job.snapshot.rootDir || rootDir;
+        const summaryResult = await parseCoverageSummary(coverageDir, snapshotId, {
+            rootDir: effectiveRootDir,
+            filterBusinessLogic: true,
+        });
 
         // 4. Parse test results
-        const vitestResults = parseVitestResults(coverageDir);
+        const vitestResults = parseVitestResults(coverageDir, {
+            rootDir: effectiveRootDir,
+            runnerElapsedMs: runResult?.elapsedMs || 0,
+        });
         if (vitestResults) {
             const formattedScenarios = formatScenariosForPrisma(vitestResults.scenarios);
             const dataPayload = {
@@ -93,6 +100,10 @@ export const processVitestCoverageJob = async (jobId) => {
                 skippedTests: vitestResults.skippedTests,
                 durationMs: vitestResults.durationMs,
                 status: vitestResults.status, // PASSED or FAILED
+                coverageLinesPct: summaryResult?.total?.lines?.pct ?? 0,
+                coverageBranchesPct: summaryResult?.total?.branches?.pct ?? 0,
+                coverageFunctionsPct: summaryResult?.total?.functions?.pct ?? 0,
+                coverageStatementsPct: summaryResult?.total?.statements?.pct ?? 0,
                 startedAt: new Date(),
                 finishedAt: new Date()
             };
@@ -107,12 +118,32 @@ export const processVitestCoverageJob = async (jobId) => {
         const { parseCoverageFilesForSnapshot } = await import("./coverageFileParser.service.js");
         const { parseCoverageFunctionsForSnapshot } = await import("./coverageFunctionParser.service.js");
 
+        let parsedFilesResult = null;
         try {
             const coverageReport = JSON.parse(fs.readFileSync(finalPath, "utf8"));
-            await parseCoverageFilesForSnapshot({ projectId, snapshotId, coverageReport, userId });
+            parsedFilesResult = await parseCoverageFilesForSnapshot({ projectId, snapshotId, coverageReport, userId });
             await parseCoverageFunctionsForSnapshot({ projectId, snapshotId, coverageReport, userId });
         } catch (parseErr) {
             await addJobLog(jobId, "WARN", `[VitestCoverage] Coverage parsing warning: ${parseErr.message}`).catch(() => { });
+        }
+
+        try {
+            const { capturePeakUnitReportIfHigher } = await import("./unitReport.service.js");
+            await capturePeakUnitReportIfHigher(snapshotId, {
+                summaryTotal: summaryResult?.total || null,
+                fileCoverages: parsedFilesResult?.files || [],
+                testStats: vitestResults
+                    ? {
+                        total: vitestResults.totalTests,
+                        passed: vitestResults.passedTests,
+                        failed: vitestResults.failedTests,
+                        durationMs: vitestResults.durationMs,
+                    }
+                    : null,
+                isTargetedRun: false,
+            });
+        } catch (peakErr) {
+            await addJobLog(jobId, "WARN", `[VitestCoverage] Peak report warning: ${peakErr.message}`).catch(() => { });
         }
 
         await updateJobProgress(jobId, 80);

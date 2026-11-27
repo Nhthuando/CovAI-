@@ -16,7 +16,17 @@ import {
   renderTierBarComparisonSvg,
   renderTierOutcomeDonutSvg,
   renderCoveragePassRateTrendSvg,
+  renderModuleTierHeatmapSvg,
 } from "./unifiedDashboard.reportDiagrams.js";
+import {
+  normalizeReportLanguage,
+  formatHumanDate,
+  pickText,
+  translateChecklistItem,
+  translateSuspectLayer,
+  translateMatrixCellLabel,
+  translateHistoryStatus,
+} from "./unifiedDashboard.reportI18n.js";
 
 function makePopulatedVm({ withTrend = true, withMatrix = true, extraMatrixRows = 0 } = {}) {
   const baseRows = [
@@ -185,10 +195,10 @@ function getSvgByDiagramId(html, diagramId) {
   return match ? match[0] : "";
 }
 
-test("populated snapshot exports Page-1 Executive layout with 4 charts, exact parity, and zero clutter across EN/VI/Bilingual", () => {
+test("populated snapshot exports Page-1 Executive layout with 4 charts, exact parity, and strictly English-only output", () => {
   const vm = makePopulatedVm({ withTrend: true, withMatrix: true });
 
-  for (const lang of ["bilingual", "en", "vi"]) {
+  for (const lang of ["en", "vi", "bilingual"]) {
     const html = generateHtmlReport(vm, DEFAULT_EXPORT_SECTIONS, { language: lang });
     const pdfHtml = generatePdfHtmlReport(vm, DEFAULT_EXPORT_SECTIONS, { language: lang });
     const md = generateMarkdownReport(vm, DEFAULT_EXPORT_SECTIONS, { language: lang });
@@ -237,16 +247,14 @@ test("populated snapshot exports Page-1 Executive layout with 4 charts, exact pa
     assert.ok(!/linear-gradient|radial-gradient/i.test(html));
     assert.ok(!/linear-gradient|radial-gradient/i.test(pdfHtml));
 
-    // 5. Print mode strips interactive toolbar, preserves A4 & page-break boundary
+    // 5. Print mode strips interactive toolbar, preserves A4 & page-break boundary, and never includes language switcher
     assert.ok(!pdfHtml.includes('class="report-toolbar'));
     assert.ok(pdfHtml.includes("@page { size: A4;"));
     assert.ok(pdfHtml.includes('class="page-one has-followup"'));
     assert.ok(pdfHtml.includes("break-after: page"));
-    if (lang === "bilingual") {
-      assert.ok(html.includes('data-set-lang="bilingual"'));
-      assert.ok(html.includes('data-set-lang="en"'));
-      assert.ok(html.includes('data-set-lang="vi"'));
-    }
+    assert.ok(!html.includes("data-set-lang"));
+    assert.ok(!html.includes("Bilingual"));
+    assert.ok(!html.includes("Tiếng Việt"));
 
     // 6. Chart-level requirements
     const barSvg = getSvgByDiagramId(html, "tier-bar-comparison");
@@ -282,7 +290,7 @@ test("populated snapshot exports Page-1 Executive layout with 4 charts, exact pa
     assert.ok(md.includes("payment.service.js"));
 
     assert.equal(json.reportMeta.schemaVersion, "2.0");
-    assert.equal(json.reportMeta.language, lang);
+    assert.equal(json.reportMeta.language, "en");
     assert.equal(json.execution.total, vm.execution.total);
     assert.equal(json.execution.passed, vm.execution.passed);
     assert.equal(json.execution.failed, vm.execution.failed);
@@ -332,18 +340,18 @@ test("6+ trend runs render multi-run polyline trajectory with passRate and 80% d
 
 test("single-point trend (< 2 runs) renders clean baseline fallback without polyline, and empty matrix renders readiness heatmap", () => {
   const vm = makePopulatedVm({ withTrend: false, withMatrix: false });
-  const html = generateHtmlReport(vm, { language: "bilingual" });
-  const md = generateMarkdownReport(vm, DEFAULT_EXPORT_SECTIONS, { language: "bilingual" });
-  const json = buildFilteredJsonPayload(vm, { language: "bilingual" });
+  const html = generateHtmlReport(vm);
+  const md = generateMarkdownReport(vm, DEFAULT_EXPORT_SECTIONS);
+  const json = buildFilteredJsonPayload(vm);
 
   assert.equal(countSvgs(html), 4);
   const trendSvg = getSvgByDiagramId(html, "coverage-passrate-trend");
   assert.ok(!trendSvg.includes("<polyline"), "Single-run fallback must NOT render a fake polyline");
-  assert.ok(trendSvg.includes("Baseline (&lt; 2 runs)") || trendSvg.includes("Baseline (< 2 runs)"));
+  assert.ok(trendSvg.includes("Baseline Only (&lt; 2 runs)") || trendSvg.includes("Baseline Only (< 2 runs)"));
 
   const heatmapSvg = getSvgByDiagramId(html, "module-tier-heatmap");
   assert.ok(heatmapSvg.includes("3-Tier Readiness Strip"));
-  assert.ok(heatmapSvg.includes("No module matrix rows"));
+  assert.ok(heatmapSvg.includes("No module-level matrix rows"));
 
   assert.equal(json.coverageDiagrams.coveragePassRateTrend.mode, "baseline");
   assert.equal(json.coverageDiagrams.moduleTierHeatmap.mode, "readiness");
@@ -356,9 +364,9 @@ test("single-point trend (< 2 runs) renders clean baseline fallback without poly
 
 test("partial snapshot clearly marks unrun layers as NOT_RUN, handles 100% single-slice donut, and isolates uncoveredApis", () => {
   const vm = makePartialVm();
-  const html = generateHtmlReport(vm, DEFAULT_EXPORT_SECTIONS, { language: "bilingual" });
-  const md = generateMarkdownReport(vm, DEFAULT_EXPORT_SECTIONS, { language: "bilingual" });
-  const json = buildFilteredJsonPayload(vm, DEFAULT_EXPORT_SECTIONS, { language: "bilingual" });
+  const html = generateHtmlReport(vm, DEFAULT_EXPORT_SECTIONS);
+  const md = generateMarkdownReport(vm, DEFAULT_EXPORT_SECTIONS);
+  const json = buildFilteredJsonPayload(vm, DEFAULT_EXPORT_SECTIONS);
 
   assert.equal(countSvgs(html), 4);
   assert.equal(json.execution.total, 20);
@@ -369,21 +377,21 @@ test("partial snapshot clearly marks unrun layers as NOT_RUN, handles 100% singl
   assert.equal(json.layerDefinitions.system.state, "NOT_RUN");
 
   const barSvg = getSvgByDiagramId(html, "tier-bar-comparison");
-  assert.ok(barSvg.includes("NOT RUN (0)"));
+  assert.ok(barSvg.includes("Not Run (0)"));
   const donutSvg = getSvgByDiagramId(html, "tier-outcome-donut");
   assert.ok(donutSvg.includes("100%"), "Single 100%-passing slice must render complete ring with 100% label");
-  assert.ok(donutSvg.includes("Untested APIs / API chưa phủ: 3"));
+  assert.ok(donutSvg.includes("Untested AST APIs: 3"));
   assert.ok(md.includes("NOT RUN"));
-  assert.ok(md.includes("Chưa chạy"));
+  assert.ok(!md.includes("Chưa chạy"));
   assert.ok(!html.includes("NaN"));
 });
 
 test("completely unrun snapshot renders UNVERIFIED/NOT_RUN cleanly with 4 SVG charts and zero NaN", () => {
   const vm = makeUnrunVm();
-  const html = generateHtmlReport(vm, DEFAULT_EXPORT_SECTIONS, { language: "bilingual" });
-  const pdfHtml = generatePdfHtmlReport(vm, DEFAULT_EXPORT_SECTIONS, { language: "vi" });
-  const md = generateMarkdownReport(vm, DEFAULT_EXPORT_SECTIONS, { language: "en" });
-  const json = buildFilteredJsonPayload(vm, DEFAULT_EXPORT_SECTIONS, { language: "bilingual" });
+  const html = generateHtmlReport(vm, DEFAULT_EXPORT_SECTIONS);
+  const pdfHtml = generatePdfHtmlReport(vm, DEFAULT_EXPORT_SECTIONS);
+  const md = generateMarkdownReport(vm, DEFAULT_EXPORT_SECTIONS);
+  const json = buildFilteredJsonPayload(vm, DEFAULT_EXPORT_SECTIONS);
 
   assert.equal(countSvgs(html), 4);
   assert.equal(countSvgs(pdfHtml), 4);
@@ -394,7 +402,8 @@ test("completely unrun snapshot renders UNVERIFIED/NOT_RUN cleanly with 4 SVG ch
   const donutSvg = getSvgByDiagramId(html, "tier-outcome-donut");
   assert.ok(donutSvg.includes('stroke-dasharray="5 4"'), "0-test donut must render dashed neutral ring");
   assert.ok(html.includes("UNVERIFIED"));
-  assert.ok(pdfHtml.includes("Chưa xác minh"));
+  assert.ok(pdfHtml.includes("Unverified"));
+  assert.ok(!pdfHtml.includes("Chưa xác minh"));
   assert.ok(md.includes("NOT RUN"));
   assert.ok(!html.includes("NaN"));
   assert.ok(!pdfHtml.includes("NaN"));
@@ -416,7 +425,7 @@ test("backward-compatible 2-argument section filtering works for ExportReportMod
   const json = buildFilteredJsonPayload(vm, partialSections);
 
   assert.ok(pdfHtml.includes('id="sec-executive-summary"'));
-  assert.ok(!pdfHtml.includes('class="page-one has-followup"'), "No trailing page break when follow-up sections are all disabled");
+  assert.ok(!pdfHtml.includes('class="charts-page-two has-followup"'), "No trailing page break when follow-up sections are all disabled");
   assert.ok(!pdfHtml.includes('id="sec-key-findings"'));
   assert.ok(md.includes("Executive Summary"));
   assert.ok(!md.includes("Critical Gaps & Failures"));
@@ -513,7 +522,8 @@ test("exportUnifiedDashboardReport, exportUnifiedDashboardPdf, and buildDashboar
     assert.equal(pdfStarted, true);
     await new Promise((resolve) => setTimeout(resolve, 25));
     assert.equal(printed, true);
-    assert.ok(fakeIframeWin.document.writtenHtml.includes("Kiểm thử Đơn vị"));
+    assert.ok(fakeIframeWin.document.writtenHtml.includes("Unit Tests"));
+    assert.ok(!fakeIframeWin.document.writtenHtml.includes("Kiểm thử Đơn vị"));
   } finally {
     globalThis.document = originalDocument;
     globalThis.window = originalWindow;
@@ -605,46 +615,37 @@ test("markdown escaping: pipe characters inside table cells do not split columns
   checkTableRows("| Run ID |", 8);
 });
 
-test("vi-only and en-only localization purity: zero stray cross-language tokens", () => {
-  const vm = makePopulatedVm({ withTrend: false, withMatrix: false });
-  const viHtml = generateHtmlReport(vm, DEFAULT_EXPORT_SECTIONS, { language: "vi" });
-  const viMd = generateMarkdownReport(vm, DEFAULT_EXPORT_SECTIONS, { language: "vi" });
-  const enHtml = generateHtmlReport(vm, DEFAULT_EXPORT_SECTIONS, { language: "en" });
-  const enMd = generateMarkdownReport(vm, DEFAULT_EXPORT_SECTIONS, { language: "en" });
+test("English-only purity: zero Vietnamese text, bilingual duplication, or language-switcher UI even with legacy options", () => {
+  const vm = makePopulatedVm({ withTrend: true, withMatrix: true });
+  const viPattern = /(Đơn vị|Tích hợp|Hệ thống|Đạt|Trượt|Bỏ qua|Chưa chạy|Mô-đun|Ngưỡng|Tổng phủ|Tóm tắt|Khoảng trống|Phương pháp|Tiếng Việt|Bilingual|In \/ Lưu PDF)/i;
 
-  // VI mode must render pure Vietnamese labels
-  assert.ok(viHtml.includes("Tóm tắt Điều hành"));
-  assert.ok(viHtml.includes("Tổng quan Thống kê 3 Tầng"));
-  assert.ok(viHtml.includes("In / Lưu PDF"));
-  assert.ok(viHtml.includes("Độ phủ Nhánh Đơn vị &gt;= 75%") || viHtml.includes("Độ phủ Nhánh Đơn vị >= 75%"));
-  assert.ok(viMd.includes("Điểm nóng Mã nguồn Độ phủ Thấp"));
-  assert.ok(viMd.includes("Phân rã Độ phủ Điểm cuối API"));
-  assert.ok(viMd.includes("Danh mục Kiểm tra Cổng Chất lượng"));
+  for (const lang of [undefined, "en", "vi", "bilingual"]) {
+    const html = generateHtmlReport(vm, DEFAULT_EXPORT_SECTIONS, lang ? { language: lang } : {});
+    const pdfHtml = generatePdfHtmlReport(vm, DEFAULT_EXPORT_SECTIONS, lang ? { language: lang } : {});
+    const md = generateMarkdownReport(vm, DEFAULT_EXPORT_SECTIONS, lang ? { language: lang } : {});
+    const jsonStr = JSON.stringify(buildFilteredJsonPayload(vm, DEFAULT_EXPORT_SECTIONS, lang ? { language: lang } : {}));
 
-  // Stray English UI tokens must NOT appear in vi-only mode
-  assert.ok(!viHtml.includes("Executive Summary"));
-  assert.ok(!viHtml.includes("(0 tests)"));
-  assert.ok(!viHtml.includes("Unit Branch Coverage >= 75%"));
-  assert.ok(!viHtml.includes("Print / Save PDF"));
-  assert.ok(!viHtml.includes("Not Run (0)"));
-  assert.ok(!viHtml.includes("Covered APIs"));
-  assert.ok(!viHtml.includes("Baseline (&lt; 2 runs)"));
-  assert.ok(!viMd.includes("Executive Summary"));
-  assert.ok(!viMd.includes("Release Verdict:"));
+    for (const [label, out] of [
+      ["html", html],
+      ["pdfHtml", pdfHtml],
+      ["md", md],
+      ["json", jsonStr],
+    ]) {
+      assert.ok(!viPattern.test(out), `${label} (${lang}) leaked Vietnamese or bilingual token`);
+    }
 
-  // EN mode must NOT contain stray Vietnamese tokens
-  assert.ok(enHtml.includes("Executive Summary"));
-  assert.ok(enHtml.includes("3-Tier Statistical Overview"));
-  assert.ok(!enHtml.includes("Tóm tắt Điều hành"));
-  assert.ok(!enHtml.includes("Kiểm thử Đơn vị"));
-  assert.ok(!enMd.includes("Tóm tắt Điều hành"));
+    assert.ok(html.includes("Executive Summary"));
+    assert.ok(html.includes("3-Tier Statistical Overview"));
+    assert.ok(html.includes("Print / Save PDF"));
+    assert.ok(!html.includes("data-set-lang"));
+    assert.ok(!html.includes("data-lang="));
+    assert.ok(!html.includes("Language:"));
+  }
 
-  // Completely unrun vi-only HTML/SVG must localize all statuses
-  const unrunViHtml = generateHtmlReport(makeUnrunVm(), DEFAULT_EXPORT_SECTIONS, { language: "vi" });
-  assert.ok(unrunViHtml.includes("Chưa chạy"));
-  assert.ok(unrunViHtml.includes("Chưa xác minh"));
-  assert.ok(!unrunViHtml.includes(">NOT_RUN<"));
-  assert.ok(!unrunViHtml.includes(">NOT RUN<"));
+  const unrunHtml = generateHtmlReport(makeUnrunVm(), DEFAULT_EXPORT_SECTIONS, { language: "vi" });
+  assert.ok(unrunHtml.includes("NOT RUN"));
+  assert.ok(unrunHtml.includes("Unverified"));
+  assert.ok(!viPattern.test(unrunHtml));
 });
 
 test("regression: trend 80% gate label avoids Y-axis 75% tick and 0%/100% end labels stay >= 13px apart", () => {
@@ -719,15 +720,13 @@ test("regression: donut and bar charts do not double-count flakyTests into skipp
   });
 
   const model = buildReportMetricsModel(vm);
-  const donutEn = renderTierOutcomeDonutSvg(model, "en");
-  const donutVi = renderTierOutcomeDonutSvg(model, "vi");
-  const barEn = renderTierBarComparisonSvg(model, "en");
+  const donutEn = renderTierOutcomeDonutSvg(model);
+  const barEn = renderTierBarComparisonSvg(model);
 
   assert.ok(donutEn.includes("Skip 0"), "Donut must show Skip 0 when skippedTests is 0 and flakyTests is 2");
   assert.ok(!donutEn.includes("Skip 2"), "Donut must not add flakyTests into Skip");
   assert.ok(!donutEn.includes("<path"), "100% passing suite with flakyTests must remain a full 100% ring");
   assert.ok(donutEn.includes("2 flaky"), "Donut footnote must display non-additive flaky annotation");
-  assert.ok(donutVi.includes("Bỏ qua 0") && donutVi.includes("2 chập chờn"));
   assert.ok(!barEn.includes("#b45309"), "Bar chart must not render amber skip segment for flakyTests when skippedTests === 0");
 });
 
@@ -780,27 +779,26 @@ test("regression: bar chart clamps stacked pass/fail/skip segments inside track 
   assert.ok(barSvg.includes("11,990P/10F") || barSvg.includes("11.990P/10F"), "Bar passReadout must format counts via fmtCount");
 });
 
-test("regression: vi Markdown avoids fmtRelativeTime English leakage, onlyActions omits empty Page-1 break, and footnote blocks stay separate", () => {
+test("regression: English Markdown date formatting, onlyActions omits empty Page-1 break, and footnote renders cleanly", () => {
   const vm = makePopulatedVm({ withTrend: true, withMatrix: true });
   vm.context.updatedAt = new Date().toISOString();
   vm.actions = {
     items: [{ priority: "high", pillar: "unit", title: "Fix branch gap", targetName: "calc.js" }],
   };
 
-  const viMdRecent = generateMarkdownReport(vm, DEFAULT_EXPORT_SECTIONS, { language: "vi" });
-  assert.ok(!/\bago\b/i.test(viMdRecent), `vi Markdown leaked English relative time: ${viMdRecent.slice(0, 300)}`);
-  assert.ok(!viMdRecent.includes("Never") && !viMdRecent.includes("Unknown date"));
-  assert.ok(viMdRecent.includes("Cập nhật:"));
+  const mdRecent = generateMarkdownReport(vm, DEFAULT_EXPORT_SECTIONS);
+  assert.ok(!/\bago\b/i.test(mdRecent), `Markdown leaked relative time: ${mdRecent.slice(0, 300)}`);
+  assert.ok(!mdRecent.includes("Never") && !mdRecent.includes("Unknown date"));
+  assert.ok(mdRecent.includes("Updated:"));
 
   const vmNoUpdated = makeUnrunVm();
   vmNoUpdated.context.updatedAt = null;
-  const viMdNull = generateMarkdownReport(vmNoUpdated, DEFAULT_EXPORT_SECTIONS, { language: "vi" });
-  assert.ok(viMdNull.includes("Chưa ghi nhận"));
-  assert.ok(!viMdNull.includes("Never") && !/\bago\b/i.test(viMdNull));
+  const mdNull = generateMarkdownReport(vmNoUpdated, DEFAULT_EXPORT_SECTIONS);
+  assert.ok(mdNull.includes("Not recorded"));
+  assert.ok(!mdNull.includes("Never") && !/\bago\b/i.test(mdNull));
 
-  // Normalize lowercase priority in executive summary VI
-  const viHtml = generateHtmlReport(vm, DEFAULT_EXPORT_SECTIONS, { language: "vi" });
-  assert.ok(viHtml.includes("[CAO]"), "Executive summary must uppercase priority before VI label lookup");
+  const html = generateHtmlReport(vm, DEFAULT_EXPORT_SECTIONS);
+  assert.ok(html.includes(">HIGH<"), "Actions must uppercase priority badge");
 
   // onlyActions filter must NOT emit empty .page-one.has-followup or .page1-footnote
   const onlyActionsSections = {
@@ -810,13 +808,445 @@ test("regression: vi Markdown avoids fmtRelativeTime English leakage, onlyAction
     actionCenter: true,
     trendsHistory: false,
   };
-  const onlyActionsPdf = generatePdfHtmlReport(vm, onlyActionsSections, { language: "bilingual" });
+  const onlyActionsPdf = generatePdfHtmlReport(vm, onlyActionsSections);
   assert.ok(!onlyActionsPdf.includes('class="page-one has-followup"'), "onlyActions must not force a blank Page 1 break");
   assert.ok(!onlyActionsPdf.includes('class="page1-footnote"'), "onlyActions must not emit Page-1 footnote when Page-1 content is absent");
   assert.ok(onlyActionsPdf.includes('id="sec-actions"'));
 
-  // Bilingual .page1-footnote renders EN and VI in separate block divs (no inline concatenation)
-  const biPdf = generatePdfHtmlReport(vm, DEFAULT_EXPORT_SECTIONS, { language: "bilingual" });
-  assert.ok(biPdf.includes('<div class="footnote-line" data-lang="en">Note:'));
-  assert.ok(biPdf.includes('<div class="footnote-line" data-lang="vi">Lưu ý:'));
+  const pdfDoc = generatePdfHtmlReport(vm, DEFAULT_EXPORT_SECTIONS);
+  assert.ok(pdfDoc.includes('<div class="page1-footnote">'));
+  assert.ok(pdfDoc.includes("Note: Layers marked NOT RUN"));
+});
+
+test("R1 & R2: HTML and Print/PDF reports lift 13pt constraint, use sans/mono typography, and prevent mid-word wrapping in tables and badges", () => {
+  const vm = makePopulatedVm({ withTrend: true, withMatrix: true });
+  const html = generateHtmlReport(vm, DEFAULT_EXPORT_SECTIONS);
+  const pdfHtml = generatePdfHtmlReport(vm, DEFAULT_EXPORT_SECTIONS);
+
+  for (const doc of [html, pdfHtml]) {
+    assert.ok(!doc.includes("Times New Roman"), "Times New Roman must be replaced with clean sans/mono pairing");
+    assert.ok(!doc.includes("font-size: 13pt;"), "Fixed 13pt base font-size constraint must be lifted");
+    assert.ok(doc.includes("--font-sans:"), "CSS must define clean sans-serif font stack");
+    assert.ok(doc.includes("--font-mono:"), "CSS must define monospace font stack");
+    assert.ok(doc.includes("font-variant-numeric: tabular-nums"), "Numeric cells must preserve tabular-nums");
+    assert.ok(doc.includes("table-layout: fixed"), "Tables must use deterministic column sizing");
+    assert.ok(doc.includes("<colgroup>"), "Tables must specify explicit colgroup column proportions");
+    assert.match(doc, /th,\s*td\s*\{[^}]*overflow-wrap:\s*normal;\s*word-break:\s*normal;/, "Table headers and cells must not break mid-word by default");
+    assert.match(doc, /\.badge\s*\{[^}]*white-space:\s*nowrap;/, "Status badges must not wrap mid-word");
+    assert.match(doc, /\.matrix-pill\s*\{[^}]*overflow-wrap:\s*break-word;\s*word-break:\s*normal;/, "Matrix pills must wrap at word boundaries and break unspaced oversized tokens instead of overflowing");
+  }
+
+  // Print flow & A4 max-2-charts-per-page stack rules
+  assert.ok(pdfHtml.includes(".table-wrap { overflow-x: visible;"));
+  assert.match(pdfHtml, /\.charts-stack\s*\{[^}]*grid-template-columns:\s*1fr;/);
+  assert.ok(!pdfHtml.includes("charts-grid-2x2"), "Report must not cram 4 charts into a 2x2 grid");
+  assert.match(pdfHtml, /\.kpi-grid\s*\{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\);/);
+  const mediaPrintBlock = pdfHtml.match(/@media print\s*\{([\s\S]*?)\n\s*\}\s*\n\s*<\/style>/);
+  assert.ok(mediaPrintBlock, "Print/PDF must include @media print CSS block");
+  assert.match(mediaPrintBlock[1], /\.charts-stack\s*\{[^}]*grid-template-columns:\s*1fr;/);
+  assert.match(mediaPrintBlock[1], /\.kpi-grid\s*\{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\);/);
+  assert.ok(pdfHtml.includes("break-after: page;"));
+
+  // All 4 SVG diagrams use clean sans/mono fonts without 13pt override and retain 460x250 viewBox
+  for (const id of EXPECTED_PAGE1_DIAGRAM_IDS) {
+    const svg = getSvgByDiagramId(html, id);
+    assert.ok(!svg.includes("Times New Roman"), `${id} SVG must not use Times New Roman`);
+    assert.ok(!svg.includes('font-size="13pt"'), `${id} SVG must lift 13pt constraint`);
+    assert.ok(svg.includes('viewBox="0 0 460 250"'), `${id} SVG must keep 460x250 viewBox`);
+  }
+});
+
+test("R2: reproduces & verifies fixes for Screenshot 1-3 bugs (Core Module 0/1, separated pass vs coverage, zero-API diagnosis & hidden 0-row API table) in English", () => {
+  const screenshotVm = adaptUnifiedDashboard({
+    context: {
+      projectId: "proj-consent",
+      projectName: "Cookie Consent Manager",
+      branch: "main",
+      snapshotId: "snap-consent-1",
+      snapshotLabel: "#1 (abc1234)",
+    },
+    unifiedBackendRaw: {
+      pillars: {
+        unit: {
+          framework: "Vitest",
+          totalTests: 225,
+          passedTests: 223,
+          failedTests: 2,
+          skippedTests: 0,
+          durationMs: 1450,
+          coverageMetrics: { lines: 98.9, branches: 96.2, functions: 95.0, statements: 98.8 },
+          lowCoverageItems: [
+            { filePath: "src/core/lawDeterminer.ts", branchesPct: 100, linesPct: 98.7, functionsPct: 100 },
+            { filePath: "src/presets/index.ts", branchesPct: 100, linesPct: 99.4, functionsPct: 100 },
+            { filePath: "src/core/cdnDetection.ts", branchesPct: 100, linesPct: 100, functionsPct: 100 },
+            { filePath: "src/core/complianceReport.ts", branchesPct: 100, linesPct: 100, functionsPct: 100 },
+          ],
+          coverageFiles: [
+            { filePath: "src/core/lawDeterminer.ts", branchesPct: 100, linesPct: 98.7, functionsPct: 100 },
+            { filePath: "src/presets/index.ts", branchesPct: 100, linesPct: 99.4, functionsPct: 100 },
+            { filePath: "src/core/cdnDetection.ts", branchesPct: 100, linesPct: 100, functionsPct: 100 },
+            { filePath: "src/core/complianceReport.ts", branchesPct: 100, linesPct: 100, functionsPct: 100 },
+          ],
+        },
+        integration: {
+          framework: "Supertest",
+          totalTests: 0,
+          passedTests: 0,
+          failedTests: 0,
+          skippedTests: 0,
+          durationMs: 0,
+          coverageMetrics: { totalApis: 0, coveredApis: 0, failedApis: 0, uncoveredApis: 0, apiEndpoint: 0 },
+        },
+        system: {
+          framework: "Playwright",
+          totalTests: 0,
+          passedTests: 0,
+          failedTests: 0,
+          skippedTests: 0,
+          durationMs: 0,
+          coverageMetrics: { lines: 0, flow: 0 },
+        },
+      },
+      matrix: {
+        rows: [
+          {
+            id: "mod-consent",
+            moduleName: "Consent Module",
+            unit: { status: "fail", label: "44/45 passed (100%)", passed: 44, failed: 1, total: 45 },
+            integration: { status: "untested", label: "0/0 APIs", passed: 0, failed: 0, total: 0 },
+            system: { status: "untested", label: "0/0 Journeys", passed: 0, failed: 0, total: 0 },
+            rootCause: { suspectLayer: "unit", summary: "Unit test assertion failure" },
+          },
+          {
+            id: "mod-law",
+            moduleName: "Law Module",
+            unit: { status: "pass", label: "54/54 passed (98.7%)", passed: 54, failed: 0, total: 54 },
+            integration: { status: "untested", label: "0/0 APIs", passed: 0, failed: 0, total: 0 },
+            system: { status: "untested", label: "0/0 Journeys", passed: 0, failed: 0, total: 0 },
+            rootCause: { suspectLayer: "integration", summary: "API coverage gap" },
+          },
+          {
+            id: "mod-core",
+            moduleName: "Core Module",
+            unit: { status: "pass", label: "99.4% lines · 100% branch", passed: 0, failed: 0, total: 1 },
+            integration: { status: "untested", label: "0/0 APIs", passed: 0, failed: 0, total: 0 },
+            system: { status: "untested", label: "0/0 Journeys", passed: 0, failed: 0, total: 0 },
+            rootCause: { suspectLayer: "integration", summary: "API coverage gap" },
+          },
+        ],
+      },
+    },
+  });
+
+  const enHtml = generateHtmlReport(screenshotVm, DEFAULT_EXPORT_SECTIONS);
+  const enPdf = generatePdfHtmlReport(screenshotVm, DEFAULT_EXPORT_SECTIONS);
+  const enMd = generateMarkdownReport(screenshotVm, DEFAULT_EXPORT_SECTIONS);
+  const json = buildFilteredJsonPayload(screenshotVm, DEFAULT_EXPORT_SECTIONS);
+
+  // 1. Screenshot 1 fix: Heatmap for Core Module must NOT emit 0/1; must show 99.4%
+  const heatmap = getSvgByDiagramId(enHtml, "module-tier-heatmap");
+  assert.ok(!heatmap.includes(">0/1<"), "Core Module Heatmap must never display 0/1");
+  assert.ok(heatmap.includes(">99.4%<"), "Core Module Heatmap tile & Health column must display 99.4%");
+
+  // 2. Screenshot 2 fix: Separated pass rate vs line coverage in English
+  assert.ok(!enHtml.includes("44/45 passed (100%)"));
+  assert.ok(!enHtml.includes("54/54 passed (98.7%)"));
+  assert.ok(enHtml.includes("44/45 passed (97.8%) · 100% lines"), "Consent Module must separate pass rate from 100% lines");
+  assert.ok(enHtml.includes("54/54 passed (100%) · 98.7% lines"), "Law Module must separate 100% pass rate from 98.7% lines");
+  assert.ok(enHtml.includes("99.4% lines · 100% branch"));
+  assert.ok(enMd.includes("44/45 passed (97.8%) · 100% lines"));
+
+  // 3. Screenshot 2 fix: 0/0 APIs must NEVER diagnose "API coverage gap"
+  for (const out of [enHtml, enPdf, enMd]) {
+    assert.ok(!out.includes("API coverage gap"), "0/0 API modules must never receive 'API coverage gap' diagnosis");
+  }
+  assert.ok(!JSON.stringify(json.coverageDiagrams.moduleTierHeatmap.rows).includes("API coverage gap"));
+
+  // 4. Screenshot 3 fix: totalApis === 0 hides 0-row AST API Summary table and shows explicit note
+  assert.ok(!enHtml.includes("<td><strong>Endpoints</strong></td>"), "0-row AST API table must be hidden in HTML");
+  assert.ok(!enMd.includes("| Total AST APIs |"), "0-row AST API table must be hidden in Markdown");
+  assert.ok(enHtml.includes("No AST API endpoints were discovered"));
+  assert.ok(enMd.includes("No AST API endpoints were discovered"));
+
+  // 5. Screenshot 3 fix: 100%-covered files (cdnDetection.ts, complianceReport.ts) excluded from Low-Coverage table
+  assert.ok(enHtml.includes("src/core/lawDeterminer.ts"));
+  assert.ok(enHtml.includes("src/presets/index.ts"));
+  assert.ok(!enHtml.includes("src/core/cdnDetection.ts"), "100%-covered file must be excluded");
+  assert.ok(!enHtml.includes("src/core/complianceReport.ts"), "100%-covered file must be excluded");
+  assert.ok(!enMd.includes("src/core/cdnDetection.ts"));
+  assert.equal(json.coverageDiagrams.moduleTierHeatmap.unitLowCoverageItems.length, 2);
+});
+
+test("R3: Low-Coverage Hotspot table includes Functions column, removes 4-5 row cap, excludes 100% all-3-metric files, and preserves Top-4 on-screen UI", () => {
+  const rawFiles = [
+    { filePath: "src/a.ts", branchesPct: 40.0, linesPct: 55.0, funcsPct: 50.0 },
+    { filePath: "src/b.ts", branchesPct: 60.0, linesPct: 70.0, funcsPct: 75.0 },
+    { filePath: "src/c.ts", branchesPct: 70.0, linesPct: 80.0, funcsPct: 85.0 },
+    { filePath: "src/d.ts", branchesPct: 78.0, linesPct: 88.0, funcsPct: 90.0 },
+    { filePath: "src/e.ts", branchesPct: 85.0, linesPct: 92.0, funcsPct: 95.0 },
+    { filePath: "src/f.ts", branchesPct: 100.0, linesPct: 98.5, funcsPct: 100.0 },
+    { filePath: "src/g-func-only.ts", branchesPct: 100.0, linesPct: 100.0, funcsPct: 80.0 },
+    { filePath: "src/h-perfect.ts", branchesPct: 100.0, linesPct: 100.0, funcsPct: 100.0 },
+    { filePath: "src/i-perfect.ts", branchesPct: 100.0, linesPct: 100.0, funcsPct: 100.0 },
+  ];
+
+  const vm = adaptUnifiedDashboard({
+    context: {
+      projectId: "proj-r3",
+      projectName: "Full Coverage Export",
+      branch: "main",
+      snapshotId: "snap-r3-1",
+    },
+    unitRaw: {
+      summary: {
+        testExecution: { numTotalTests: 50, numPassedTests: 50, numFailedTests: 0, numPendingTests: 0, durationMs: 500 },
+        coverage: { lines: 89.0, branches: 81.0, functions: 87.0, statements: 90.0 },
+      },
+      files: rawFiles,
+    },
+  });
+
+  // On-screen UI contract: lowCoverageItems remains capped at 4
+  assert.equal(vm.pillars.unit.lowCoverageItems.length, 4);
+  // Report contract: coverageFiles carries all 9 files with functionsPct
+  assert.equal(vm.pillars.unit.coverageFiles.length, 9);
+  assert.equal(vm.pillars.unit.coverageFiles[0].functionsPct, 50.0);
+
+  const enHtml = generateHtmlReport(vm, DEFAULT_EXPORT_SECTIONS);
+  const enPdf = generatePdfHtmlReport(vm, DEFAULT_EXPORT_SECTIONS);
+  const enMd = generateMarkdownReport(vm, DEFAULT_EXPORT_SECTIONS);
+  const json = buildFilteredJsonPayload(vm, DEFAULT_EXPORT_SECTIONS);
+
+  // Functions column headers present across HTML, Print/PDF, and Markdown
+  assert.ok(enHtml.includes("<th>Functions</th>"));
+  assert.ok(enPdf.includes("<th>Functions</th>"));
+  assert.ok(enMd.includes("| Function Coverage |"));
+
+  // All 7 files with < 100% on Branches, Lines, OR Functions are listed (no 4-5 cap!)
+  for (const expectedPath of [
+    "src/a.ts",
+    "src/b.ts",
+    "src/c.ts",
+    "src/d.ts",
+    "src/e.ts",
+    "src/f.ts",
+    "src/g-func-only.ts",
+  ]) {
+    assert.ok(enHtml.includes(expectedPath), `HTML missing <100% file: ${expectedPath}`);
+    assert.ok(enPdf.includes(expectedPath), `PDF missing <100% file: ${expectedPath}`);
+    assert.ok(enMd.includes(expectedPath), `Markdown missing <100% file: ${expectedPath}`);
+  }
+  assert.ok(enHtml.includes("80.0%"), "HTML must include Functions coverage 80.0% for g-func-only.ts");
+
+  // 100% on all 3 metrics must be excluded everywhere
+  for (const excludedPath of ["src/h-perfect.ts", "src/i-perfect.ts"]) {
+    assert.ok(!enHtml.includes(excludedPath), `HTML must exclude 100%-covered file: ${excludedPath}`);
+    assert.ok(!enPdf.includes(excludedPath), `PDF must exclude 100%-covered file: ${excludedPath}`);
+    assert.ok(!enMd.includes(excludedPath), `Markdown must exclude 100%-covered file: ${excludedPath}`);
+  }
+
+  // JSON includes all 7 filtered files with functionsPct
+  const jsonItems = json.coverageDiagrams.moduleTierHeatmap.unitLowCoverageItems;
+  assert.equal(jsonItems.length, 7);
+  assert.equal(jsonItems.find((x) => x.filePath === "src/g-func-only.ts")?.functionsPct, 80.0);
+
+  // Legacy partial mocks without functionsPct render "—" (never "0.0%") and exclude 100%/100% files
+  const partialVm = makePartialVm();
+  partialVm.pillars.unit.coverageFiles = [
+    { filePath: "src/legacy-low.js", branchesPct: 90, linesPct: 100, functionsPct: null },
+    { filePath: "src/legacy-full.js", branchesPct: 100, linesPct: 100, functionsPct: null },
+  ];
+  const partialHtml = generateHtmlReport(partialVm, DEFAULT_EXPORT_SECTIONS);
+  assert.ok(partialHtml.includes("src/legacy-low.js"));
+  assert.ok(!partialHtml.includes("src/legacy-full.js"));
+  assert.ok(partialHtml.includes(">—<"), "Missing functionsPct must render '—', never '0.0%'");
+
+  // All 100%-covered unit files render graceful explicit notice
+  const allPerfectVm = makePartialVm();
+  allPerfectVm.pillars.unit.coverageFiles = [
+    { filePath: "src/perfect.js", branchesPct: 100, linesPct: 100, functionsPct: 100 },
+  ];
+  const allPerfectHtml = generateHtmlReport(allPerfectVm, DEFAULT_EXPORT_SECTIONS);
+  const allPerfectMd = generateMarkdownReport(allPerfectVm, DEFAULT_EXPORT_SECTIONS);
+  assert.ok(allPerfectHtml.includes("100.0% coverage across Branches, Lines, and Functions"));
+  assert.ok(allPerfectMd.includes("100.0% coverage across Branches, Lines, and Functions"));
+});
+
+test("report language is strictly English-only across helpers, SVGs, HTML, PDF, Markdown, and JSON", () => {
+  const vm = makePopulatedVm({ withTrend: true, withMatrix: true });
+  const defaultHtml = generateHtmlReport(vm);
+  const defaultPdfHtml = generatePdfHtmlReport(vm);
+  const defaultMd = generateMarkdownReport(vm);
+  const defaultJson = buildFilteredJsonPayload(vm);
+
+  assert.equal(normalizeReportLanguage(), "en");
+  assert.equal(normalizeReportLanguage("vi"), "en");
+  assert.equal(normalizeReportLanguage("bilingual"), "en");
+  assert.equal(defaultJson.reportMeta.language, "en");
+  assert.ok(defaultHtml.includes('data-report-lang="en"'));
+  assert.ok(defaultPdfHtml.includes('data-report-lang="en"'));
+  assert.ok(defaultHtml.includes("Executive Summary"));
+  assert.ok(defaultPdfHtml.includes("Executive Summary"));
+  assert.ok(!defaultHtml.includes("Tóm tắt Điều hành"));
+  assert.ok(!defaultPdfHtml.includes("Tóm tắt Điều hành"));
+  assert.ok(!defaultMd.includes("Tóm tắt Điều hành"));
+
+  // Direct i18n helper calls remain strictly English-only regardless of extra arguments
+  const defaultDate = formatHumanDate(new Date("2026-11-27T00:00:00Z"));
+  assert.ok(!defaultDate.includes("(") && !defaultDate.includes("27/11/2026"), `formatHumanDate() must be English-only: ${defaultDate}`);
+  assert.equal(pickText("Unit Tests", "Kiểm thử Đơn vị"), "Unit Tests");
+  assert.equal(pickText("Unit Tests", "Kiểm thử Đơn vị", "bilingual"), "Unit Tests");
+  assert.equal(pickText("Unit Tests", "Kiểm thử Đơn vị", "vi"), "Unit Tests");
+  assert.deepEqual(translateChecklistItem({ id: "chk-api-endpoint", currentValue: "60%" }), {
+    label: "API Endpoint Coverage >= 80%",
+    currentValue: "60%",
+  });
+  assert.equal(translateSuspectLayer("integration", "vi"), "integration");
+  assert.equal(translateMatrixCellLabel("10/12 passed (83.3%)", "fail"), "10/12 passed (83.3%) · 83.3% lines");
+  assert.equal(translateMatrixCellLabel("0/0 (Not run)", "untested"), "0/0 (Not run)");
+  assert.equal(translateHistoryStatus("PASS", "vi"), "PASS");
+
+  // Direct SVG renderer calls remain English-only
+  const model = buildReportMetricsModel(vm);
+  const partialModel = buildReportMetricsModel(makePartialVm());
+  const defaultBarSvg = renderTierBarComparisonSvg(partialModel);
+  const defaultDonutSvg = renderTierOutcomeDonutSvg(partialModel);
+  const defaultTrendSvg = renderCoveragePassRateTrendSvg(model);
+  const defaultTrendBaselineSvg = renderCoveragePassRateTrendSvg(partialModel);
+  const defaultHeatmapSvg = renderModuleTierHeatmapSvg(model);
+  const defaultHeatmapEmptySvg = renderModuleTierHeatmapSvg(partialModel);
+
+  for (const [name, svg] of [
+    ["tierBar", defaultBarSvg],
+    ["outcomeDonut", defaultDonutSvg],
+    ["trend", defaultTrendSvg],
+    ["trendBaseline", defaultTrendBaselineSvg],
+    ["heatmap", defaultHeatmapSvg],
+    ["heatmapEmpty", defaultHeatmapEmptySvg],
+  ]) {
+    assert.ok(!/(Đơn vị|Tích hợp|Hệ thống|Đạt|Trượt|Bỏ qua|Chưa chạy|Mô-đun|Ngưỡng|Tổng phủ)/i.test(svg), `${name} SVG leaked Vietnamese: ${svg}`);
+  }
+  assert.ok(defaultBarSvg.includes("Coverage %") && defaultBarSvg.includes("Not Run (0)"));
+  assert.ok(defaultDonutSvg.includes("Execution Mix") && defaultDonutSvg.includes("3-Tier Volume &amp; Outcomes"));
+  assert.ok(defaultTrendSvg.includes("Overall") && defaultTrendSvg.includes("Pass Rate"));
+  assert.ok(defaultHeatmapSvg.includes("Module") && defaultHeatmapSvg.includes("Health"));
+
+  const biJson = buildFilteredJsonPayload(vm, DEFAULT_EXPORT_SECTIONS, { language: "bilingual" });
+  const viJson = buildFilteredJsonPayload(vm, DEFAULT_EXPORT_SECTIONS, { language: "vi" });
+  assert.equal(biJson.reportMeta.language, "en");
+  assert.equal(viJson.reportMeta.language, "en");
+});
+
+test("R3: Each chart page renders at most 2 large full-width SVGs (2 on Page 1, 2 on Page 2) for HTML and Print/PDF", () => {
+  const vm = makePopulatedVm({ withTrend: true, withMatrix: true });
+
+  for (const [modeName, doc] of [
+    ["html", generateHtmlReport(vm, DEFAULT_EXPORT_SECTIONS)],
+    ["pdf", generatePdfHtmlReport(vm, DEFAULT_EXPORT_SECTIONS)],
+  ]) {
+    const pageOneStart = doc.indexOf('<div class="page-one');
+    const pageTwoStart = doc.indexOf('<div class="charts-page-two');
+    const followupStart = doc.indexOf('<div class="followup-pages">');
+    assert.ok(
+      pageOneStart > 0 && pageTwoStart > pageOneStart && followupStart > pageTwoStart,
+      `${modeName} missing .page-one / .charts-page-two / .followup-pages boundaries`,
+    );
+    const pageOneSlice = doc.slice(pageOneStart, pageTwoStart);
+    const pageTwoSlice = doc.slice(pageTwoStart, followupStart);
+
+    assert.ok(pageOneSlice.includes('id="sec-overview-charts"'), `${modeName} missing overview charts section in .page-one`);
+    assert.ok(pageOneSlice.includes('class="charts-stack"'), `${modeName} missing single-column charts stack in .page-one`);
+    assert.ok(pageTwoSlice.includes('id="sec-overview-charts-2"'), `${modeName} missing second charts section in .charts-page-two`);
+    assert.ok(pageTwoSlice.includes('class="charts-stack"'), `${modeName} missing single-column charts stack in .charts-page-two`);
+    assert.ok(!doc.includes('class="charts-grid-2x2"'), `${modeName} must not use cramped 2x2 grid`);
+    assert.ok(pageOneSlice.includes('class="sec-sub"'), `${modeName} missing overviewChartsSubtitle`);
+    assert.ok(pageOneSlice.includes('class="chart-takeaway-box"'), `${modeName} missing aligned chart takeaway divider box`);
+
+    // Strictly at most 2 charts per page container
+    assert.equal(countSvgs(pageOneSlice), 2, `${modeName} Page 1 must render exactly 2 charts`);
+    assert.equal(countSvgs(pageTwoSlice), 2, `${modeName} Page 2 must render exactly 2 charts`);
+    assert.ok(getSvgByDiagramId(pageOneSlice, "tier-bar-comparison"), `${modeName} missing tier-bar-comparison on Page 1`);
+    assert.ok(getSvgByDiagramId(pageOneSlice, "tier-outcome-donut"), `${modeName} missing tier-outcome-donut on Page 1`);
+    assert.ok(getSvgByDiagramId(pageTwoSlice, "coverage-passrate-trend"), `${modeName} missing coverage-passrate-trend on Page 2`);
+    assert.ok(getSvgByDiagramId(pageTwoSlice, "module-tier-heatmap"), `${modeName} missing module-tier-heatmap on Page 2`);
+
+    for (const id of EXPECTED_PAGE1_DIAGRAM_IDS) {
+      const svg = getSvgByDiagramId(doc, id);
+      assert.ok(svg, `${modeName} missing ${id}`);
+      assert.ok(svg.includes('viewBox="0 0 460 250"'), `${id} must retain 460x250 viewBox`);
+      assert.ok(svg.includes('stroke="none"'), `${id} outer background rect must avoid double border inside .chart-card`);
+    }
+
+    // Verify single-column charts-stack & 4-col KPI rules remain intact in CSS
+    assert.match(doc, /\.charts-stack\s*\{[^}]*grid-template-columns:\s*1fr;/);
+    assert.match(doc, /\.kpi-grid\s*\{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\);/);
+    assert.ok(!/linear-gradient|radial-gradient/i.test(doc), `${modeName} must contain zero gradients`);
+  }
+
+  // Interactive HTML must separate chart pages cleanly (non-zero gap + subtle divider)
+  const htmlDoc = generateHtmlReport(vm, DEFAULT_EXPORT_SECTIONS);
+  assert.match(htmlDoc, /\.page-one\.has-followup,\s*\.charts-page-two\.has-followup\s*\{[^}]*margin-bottom:\s*18px;[^}]*padding-bottom:\s*14px;[^}]*border-bottom:\s*1px solid var\(--border-soft\);/);
+
+  // Trend SVG 80% gate label avoids series crossing 80% near Run #1 and keeps white halo
+  const crossVm = makePopulatedVm({ withTrend: true, withMatrix: false });
+  crossVm.trend.series = [
+    { runLabel: "Run #1", overallCoverage: 45, unitCoverage: 78, integrationCoverage: 0, systemCoverage: 0, passRate: 80 },
+    { runLabel: "Run #2", overallCoverage: 50, unitCoverage: 100, integrationCoverage: 0, systemCoverage: 0, passRate: 88.5 },
+  ];
+  const crossTrendSvg = renderCoveragePassRateTrendSvg(buildReportMetricsModel(crossVm));
+  const crossGateMatch = crossTrendSvg.match(/<text x="([0-9.]+)" y="([0-9.]+)"[^>]*paint-order="stroke"[^>]*>80%<\/text>/);
+  assert.ok(crossGateMatch, "Trend SVG 80% gate label must include white stroke halo for legibility");
+  assert.ok(Number(crossGateMatch[1]) > 100, `80% gate label must avoid Run #1 crossing at x=${crossGateMatch[1]}`);
+
+  // Regression: Executed (P/F/S/Total) uses <wbr> slash boundaries + wrap-cell, and Quality Gate / History cells guard against unspaced overflow
+  assert.ok(htmlDoc.includes("40/<wbr>2/<wbr>0/<wbr>42"), "Executed column must allow clean wrapping at / boundaries for large counts");
+  assert.ok(htmlDoc.includes('<td class="mono wrap-cell">run-101</td>'));
+  assert.ok(htmlDoc.includes('<td class="mono wrap-cell">UNIT</td>'));
+});
+
+test("R2 Parity: fifa-wc2026-stadium-ai live Unit metrics (97.6% lines, 99.4% branches, 98.1% fn, 0.2s) pass Branch Gate across all 4 formats", () => {
+  const fifaVm = adaptUnifiedDashboard({
+    context: {
+      projectId: "proj-fifa",
+      projectName: "fifa-wc2026-stadium-ai",
+      branch: "main",
+      snapshotId: "snap-4b775ba",
+      snapshotLabel: "#1 (4b775ba)",
+    },
+    unifiedBackendRaw: {
+      pillars: {
+        unit: {
+          framework: "Vitest",
+          totalTests: 108,
+          passedTests: 106,
+          failedTests: 2,
+          skippedTests: 0,
+          durationMs: 200,
+          coverageMetrics: { lines: 97.6, branches: 99.4, functions: 98.1, statements: 97.6 },
+        },
+        integration: { framework: "Express", totalTests: 0, passedTests: 0, failedTests: 0, skippedTests: 0, coverage: { apiEndpoint: 0, totalApis: 0, coveredApis: 0, uncoveredApis: 0 } },
+        system: { framework: "Playwright", totalTests: 0, passedTests: 0, failedTests: 0, skippedTests: 0 },
+      },
+      matrix: { rows: [] },
+      trend: { series: [] },
+    },
+  });
+
+  const html = generateHtmlReport(fifaVm, DEFAULT_EXPORT_SECTIONS);
+  const pdf = generatePdfHtmlReport(fifaVm, DEFAULT_EXPORT_SECTIONS);
+  const md = generateMarkdownReport(fifaVm, DEFAULT_EXPORT_SECTIONS);
+  const json = buildFilteredJsonPayload(fifaVm, DEFAULT_EXPORT_SECTIONS);
+
+  for (const doc of [html, pdf, md]) {
+    assert.ok(doc.includes("97.6%"), "Must report exact 97.6% lines");
+    assert.ok(doc.includes("99.4%"), "Must report exact 99.4% branches (not 72.9%)");
+    assert.ok(doc.includes("98.1%"), "Must report exact 98.1% functions (not 99.3%)");
+    assert.ok(doc.includes("0.2s"), "Must report 0.2s suite duration (not 1ms)");
+  }
+  assert.ok(html.includes("Lines 97.6% · Branch 99.4% · Fn 98.1% · Stmt 97.6%"));
+  assert.ok(pdf.includes("Lines 97.6% · Branch 99.4% · Fn 98.1% · Stmt 97.6%"));
+  const branchGate = json.qualityGate.checklist.find((c) => /branch/i.test(c.label));
+  assert.ok(branchGate && branchGate.passed === true, "Unit Branch Coverage >= 75% must be PASSED at 99.4%");
+  assert.equal(json.layerDefinitions.unit.metrics.coverage.branches, 99.4);
+  assert.equal(json.layerDefinitions.unit.metrics.coverage.functions, 98.1);
 });

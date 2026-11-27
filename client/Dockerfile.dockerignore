@@ -1,0 +1,14 @@
+# Ignore everything at root context except client/ and shared/
+*
+!client/
+!shared/
+
+# Exclude host-only / heavy / secret artifacts inside client/
+client/node_modules/
+client/dist/
+client/dist-ssr/
+client/.covai-temp/
+client/.env
+client/.env.*
+!client/.env.example
+**/*.log

@@ -230,7 +230,10 @@ export const processCoverageJob = async (jobId) => {
 
             try {
                 // SCRUM-85: Parse coverage-summary.json → DB (lines/branches/functions/statements)
-                const { total, fileCount } = await parseCoverageSummary(coverageDir, snapshotId);
+                const { total, fileCount } = await parseCoverageSummary(coverageDir, snapshotId, {
+                    rootDir,
+                    filterBusinessLogic: job.type !== "SUPERTEST_COVERAGE",
+                });
                 await addJobLog(jobId, "INFO",
                     `Coverage parsed: lines=${total.lines.pct}%, branches=${total.branches.pct}%, ` +
                     `functions=${total.functions.pct}%, statements=${total.statements.pct}% | files=${fileCount}`

@@ -3,6 +3,7 @@ import path from 'node:path';
 import {installPackageInWorkspace} from './dependencyResolution.service.js';
 import {parseJavaScriptCode} from './babelParser.service.js';
 import {ServiceError} from '../utils/serviceError.js';
+import {extractExecutionDurationMs} from './testResultParser.service.js';
 
 export const VITEST_CONFIG_NAMES = ['vitest.config.ts','vitest.config.mts','vitest.config.cts','vitest.config.js','vitest.config.mjs','vitest.config.cjs','vite.config.ts','vite.config.mts','vite.config.cts','vite.config.js','vite.config.mjs','vite.config.cjs'];
 export const findVitestConfig = directory => VITEST_CONFIG_NAMES.find(name => fs.existsSync(path.join(directory,name)));
@@ -169,6 +170,7 @@ export function discoverVitestFiles(rootDir, classify) {
 }
 
 export async function runVitestProjectGroups({rootDir,groups,coverageDir,run,mergeFinal,mergeSummaries}) {
+    const groupStartedAt = Date.now();
     fs.mkdirSync(coverageDir,{recursive:true});
     const suites=[], outputs=[];
     const projectResults = new Map();
@@ -271,6 +273,9 @@ export async function runVitestProjectGroups({rootDir,groups,coverageDir,run,mer
         exitCode = 1;
     }
 
+    const elapsedMs = Math.max(0, Date.now() - groupStartedAt);
+    const durationMs = extractExecutionDurationMs({ testResults: suites }, elapsedMs);
+
     const report={
         success,
         exitCode,
@@ -279,7 +284,8 @@ export async function runVitestProjectGroups({rootDir,groups,coverageDir,run,mer
         numFailedTests,
         numPassedTests,
         numTotalTestSuites: suites.length,
-        numFailedTestSuites
+        numFailedTestSuites,
+        durationMs
     };
 
     for(const name of ['vitest-results.json','test-results.json']) {
@@ -299,6 +305,8 @@ export async function runVitestProjectGroups({rootDir,groups,coverageDir,run,mer
     return {
         exitCode,
         success,
+        elapsedMs,
+        durationMs,
         stdout:outputs.join('\n'),
         stderr:'',
         coverageDir,

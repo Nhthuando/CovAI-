@@ -1,5 +1,11 @@
 import { UNIFIED_DASHBOARD_CONFIG } from "./unifiedDashboard.config.js";
 
+function toFiniteOrNull(val) {
+  if (val === null || val === undefined || val === "") return null;
+  const num = Number(val);
+  return Number.isFinite(num) ? num : null;
+}
+
 /**
  * Compute pass rate percentage (0 - 100) from passed and failed counts.
  * Returns null if no executed tests.
@@ -127,17 +133,17 @@ export function computeQualityGate(pillars = {}, matrixRows = []) {
   }
 
   // 3. Coverage Threshold Checks
-  if (unit?.coverageMetrics?.lines != null && unit.coverageMetrics.lines < thresholds.unitLinesPct) {
+  if ((unit?.totalTests || 0) > 0 && unit?.coverageMetrics?.lines != null && unit.coverageMetrics.lines < thresholds.unitLinesPct) {
     isWarning = true;
     reasons.push(`Unit: Code coverage (${unit.coverageMetrics.lines}%) is below recommended ${thresholds.unitLinesPct}%.`);
   }
 
-  if (integration?.coverageMetrics?.apiEndpoint != null && integration.coverageMetrics.apiEndpoint < thresholds.integrationApiPct) {
+  if ((integration?.totalTests || 0) > 0 && (integration?.coverageMetrics?.totalApis || 0) > 0 && integration?.coverageMetrics?.apiEndpoint != null && integration.coverageMetrics.apiEndpoint < thresholds.integrationApiPct) {
     isWarning = true;
     reasons.push(`Integration: API endpoint coverage (${integration.coverageMetrics.apiEndpoint}%) is below recommended ${thresholds.integrationApiPct}%.`);
   }
 
-  if (system?.coverageMetrics?.flow != null && system.coverageMetrics.flow < thresholds.systemFlowPct) {
+  if ((system?.totalTests || 0) > 0 && system?.coverageAvailable !== false && system?.coverageMetrics?.flow != null && system.coverageMetrics.flow < thresholds.systemFlowPct) {
     isWarning = true;
     reasons.push(`System E2E: User flow coverage (${system.coverageMetrics.flow}%) is below recommended ${thresholds.systemFlowPct}%.`);
   }
@@ -161,8 +167,11 @@ export function computeQualityGate(pillars = {}, matrixRows = []) {
   }
 
   // Build structured 4-item prerequisite checklist for Popover
-  const unitBranchVal = unit?.coverageMetrics?.branches ?? unit?.coverageMetrics?.lines ?? null;
-  const unitBranchPassed = unitBranchVal !== null && Number(unitBranchVal) >= 75 && (unit?.totalTests || 0) > 0;
+  const hasUnitTests = (unit?.totalTests || 0) > 0;
+  const unitBranchVal = hasUnitTests
+    ? toFiniteOrNull(unit?.coverageMetrics?.branches) ?? toFiniteOrNull(unit?.coverageMetrics?.lines)
+    : null;
+  const unitBranchPassed = unitBranchVal !== null && unitBranchVal >= 75 && hasUnitTests;
 
   const apiCovVal = integration?.coverageMetrics?.apiEndpoint ?? null;
   const apiCovPassed = apiCovVal !== null && Number(apiCovVal) >= 80 && (integration?.passedTests || 0) > 0;
@@ -301,7 +310,12 @@ export function computeCoverageIndex(pillars = {}) {
     intTotal > 0 && totalApis > 0
       ? Number(pillars.integration?.coverageMetrics?.apiEndpoint ?? 0)
       : 0;
-  const flowPct = sysTotal > 0 ? Number(pillars.system?.coverageMetrics?.flow ?? 0) : 0;
+  const flowAvailable =
+    sysTotal > 0 &&
+    (typeof pillars.system?.coverageAvailable === "boolean"
+      ? pillars.system.coverageAvailable
+      : pillars.system?.coverageMetrics?.flow != null);
+  const flowPct = flowAvailable ? Number(pillars.system?.coverageMetrics?.flow ?? 0) : 0;
 
   const weights = UNIFIED_DASHBOARD_CONFIG.weights;
   const overall =
@@ -321,6 +335,7 @@ export function computeCoverageIndex(pillars = {}) {
     branchPct,
     apiPct,
     flowPct,
+    flowAvailable,
   };
 }
 

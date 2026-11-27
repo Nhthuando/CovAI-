@@ -29,6 +29,120 @@ function toFixedPct(val, fallback = 0) {
   return Number(num.toFixed(1));
 }
 
+function toOptionalPct(val) {
+  if (val === null || val === undefined || val === "") return null;
+  const num = Number(val);
+  if (Number.isNaN(num)) return null;
+  return Number(num.toFixed(1));
+}
+
+function mapCoverageFileEntry(f) {
+  return {
+    filePath: f.filePath,
+    name: f.name || (f.filePath || "").split(/[/\\]/).pop(),
+    branchesPct: toFixedPct(f.branchesPct),
+    linesPct: toFixedPct(f.linesPct),
+    functionsPct: toOptionalPct(f.functionsPct ?? f.funcsPct ?? f.functions),
+    statementsPct: toOptionalPct(f.statementsPct ?? f.stmtsPct ?? f.statements),
+    line: f.line || 1,
+  };
+}
+
+const TOOLING_DOMAIN_STOP_WORDS = new Set([
+  "vitest",
+  "jest",
+  "playwright",
+  "cypress",
+  "mocha",
+  "chai",
+  "supertest",
+  "setup",
+  "config",
+  "workspace",
+  "teardown",
+  "mock",
+  "mocks",
+  "fixture",
+  "fixtures",
+  "index",
+  "app",
+  "main",
+  "core",
+  "service",
+  "services",
+  "controller",
+  "controllers",
+  "route",
+  "routes",
+  "util",
+  "utils",
+  "helper",
+  "helpers",
+]);
+
+function isExcludedUnitFilePath(filePath, configExclusions = []) {
+  if (!filePath || typeof filePath !== "string") return true;
+  const cleanNorm = filePath.replace(/\\/g, "/").replace(/^\.?\//, "").replace(/^\/+/, "");
+  const lower = cleanNorm.toLowerCase();
+  if (!lower) return true;
+  if (
+    /(^|\/)(node_modules|coverage|dist|build|\.next|\.nuxt|\.covai-temp)(\/|$)/i.test(lower) ||
+    /\.d\.ts$/i.test(lower) ||
+    /\.(test|spec)\.[cm]?[jt]sx?$/i.test(lower) ||
+    /(^|\/)(__tests__|__mocks__)(\/|$)/i.test(lower)
+  ) {
+    return true;
+  }
+  if (
+    /(^|\/)(?:vitest|jest|playwright|cypress|babel|eslint|prettier|tailwind|postcss|vite|webpack|rollup|tsconfig)(?:\.[^/]+)*\.(?:c|m)?[jt]sx?$/i.test(lower) ||
+    /(^|\/)(?:setup|global-?setup|setup-?tests?|teardown|test-?setup|vitest\.setup|vitest\.workspace|jest\.setup)(?:\.[^/]+)*\.[cm]?[jt]sx?$/i.test(lower) ||
+    /\.config\.[cm]?[jt]sx?$/i.test(lower)
+  ) {
+    return true;
+  }
+  if (Array.isArray(configExclusions) || configExclusions instanceof Set) {
+    for (const exc of configExclusions) {
+      if (!exc) continue;
+      const cleanExc = String(exc)
+        .replace(/\\/g, "/")
+        .toLowerCase()
+        .replace(/^\.?\//, "")
+        .replace(/\/+$/, "");
+      if (!cleanExc) continue;
+      if (cleanExc.includes("*")) {
+        const regexPattern =
+          "^" +
+          cleanExc
+            .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+            .replace(/\*\*/g, ".*")
+            .replace(/\*/g, "[^/]*") +
+          "$";
+        try {
+          if (new RegExp(regexPattern, "i").test(lower)) return true;
+        } catch (_) {}
+      } else if (
+        lower === cleanExc ||
+        lower.startsWith(`${cleanExc}/`) ||
+        lower.endsWith(`/${cleanExc}`) ||
+        lower.includes(`/${cleanExc}/`)
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function computeCompositeCoverageScore(cov) {
+  if (!cov || typeof cov !== "object") return 0;
+  return (
+    Number(cov.lines || 0) * 0.4 +
+    Number(cov.branches || 0) * 0.25 +
+    Number(cov.functions || 0) * 0.2 +
+    Number(cov.statements || 0) * 0.15
+  );
+}
+
 /**
  * Adapt Raw Unit Test Data into PillarVM (100% Real Data)
  */
@@ -45,6 +159,9 @@ export function adaptUnit(raw, unifiedUnit = null) {
     const avgDurationMs =
       Number(unifiedUnit.avgDurationMs) ||
       (totalTests > 0 ? Math.round(durationMs / totalTests) : 0);
+    const avgTestDurationMs = Number(unifiedUnit.avgTestDurationMs ?? avgDurationMs);
+    const pillarState =
+      unifiedUnit.state || resolvePillarState({ passedTests, failedTests, totalTests });
 
     const cov = unifiedUnit.coverageMetrics || {};
     const coverageMetrics =
@@ -54,23 +171,51 @@ export function adaptUnit(raw, unifiedUnit = null) {
             branches: toFixedPct(cov.branches),
             functions: toFixedPct(cov.functions),
             statements: toFixedPct(cov.statements),
+            linesCovered: cov.linesCovered ?? null,
+            linesTotal: cov.linesTotal ?? null,
+            branchesCovered: cov.branchesCovered ?? null,
+            branchesTotal: cov.branchesTotal ?? null,
+            functionsCovered: cov.functionsCovered ?? null,
+            functionsTotal: cov.functionsTotal ?? null,
+            statementsCovered: cov.statementsCovered ?? null,
+            statementsTotal: cov.statementsTotal ?? null,
           }
-        : { lines: 0, branches: 0, functions: 0, statements: 0 };
+        : {
+            lines: 0,
+            branches: 0,
+            functions: 0,
+            statements: 0,
+            linesCovered: null,
+            linesTotal: null,
+            branchesCovered: null,
+            branchesTotal: null,
+            functionsCovered: null,
+            functionsTotal: null,
+            statementsCovered: null,
+            statementsTotal: null,
+          };
 
     const lowCoverageItems = Array.isArray(unifiedUnit.lowCoverageItems)
-      ? unifiedUnit.lowCoverageItems.slice(0, 4).map((f) => ({
-          filePath: f.filePath,
-          name: f.name || (f.filePath || "").split(/[/\\]/).pop(),
-          branchesPct: toFixedPct(f.branchesPct),
-          linesPct: toFixedPct(f.linesPct),
-          line: f.line || 1,
-        }))
+      ? unifiedUnit.lowCoverageItems
+          .filter((f) => f?.filePath && !isExcludedUnitFilePath(f.filePath))
+          .slice(0, 4)
+          .map(mapCoverageFileEntry)
       : [];
+
+    const rawCoverageFiles = Array.isArray(unifiedUnit.coverageFiles)
+      ? unifiedUnit.coverageFiles
+      : Array.isArray(unifiedUnit.lowCoverageItems)
+      ? unifiedUnit.lowCoverageItems
+      : [];
+    const coverageFiles = rawCoverageFiles
+      .filter((f) => f?.filePath && !isExcludedUnitFilePath(f.filePath))
+      .map(mapCoverageFileEntry);
 
     return {
       id: "unit",
       label: "Unit Test",
       framework: unifiedUnit.framework || "Jest",
+      state: pillarState,
       totalTests,
       passedTests,
       failedTests,
@@ -79,8 +224,11 @@ export function adaptUnit(raw, unifiedUnit = null) {
       passRate,
       durationMs,
       avgDurationMs,
+      avgTestDurationMs,
+      coverageSource: unifiedUnit.coverageSource || null,
       coverageMetrics,
       lowCoverageItems,
+      coverageFiles,
       failedScenarios: Array.isArray(unifiedUnit.failedScenarios) ? unifiedUnit.failedScenarios : [],
       failureDistribution: unifiedUnit.failureDistribution || {},
       errorMessage: unifiedUnit.errorMessage || null,
@@ -92,6 +240,7 @@ export function adaptUnit(raw, unifiedUnit = null) {
       id: "unit",
       label: "Unit Test",
       framework: "Jest",
+      state: "NOT_RUN",
       totalTests: 0,
       passedTests: 0,
       failedTests: 0,
@@ -100,8 +249,24 @@ export function adaptUnit(raw, unifiedUnit = null) {
       passRate: 0,
       durationMs: 0,
       avgDurationMs: 0,
-      coverageMetrics: { lines: 0, branches: 0, functions: 0, statements: 0 },
+      avgTestDurationMs: 0,
+      coverageSource: "none",
+      coverageMetrics: {
+        lines: 0,
+        branches: 0,
+        functions: 0,
+        statements: 0,
+        linesCovered: null,
+        linesTotal: null,
+        branchesCovered: null,
+        branchesTotal: null,
+        functionsCovered: null,
+        functionsTotal: null,
+        statementsCovered: null,
+        statementsTotal: null,
+      },
       lowCoverageItems: [],
+      coverageFiles: [],
       failedScenarios: [],
       failureDistribution: {},
       errorMessage: null,
@@ -116,21 +281,110 @@ export function adaptUnit(raw, unifiedUnit = null) {
     (executions?.vitest ? "Vitest" : executions?.jest ? "Jest" : "Jest");
   const framework = String(fwName).charAt(0).toUpperCase() + String(fwName).slice(1);
 
-  // Test execution counts
-  const runInfo = summary?.testExecution || executions?.jest || executions?.vitest || {};
-  const passedTests = Number(runInfo.numPassedTests ?? runInfo.passedTests ?? 0);
-  const failedTests = Number(runInfo.numFailedTests ?? runInfo.failedTests ?? 0);
+  // Test execution counts (merge executions.jest + executions.vitest if summary.testExecution is empty)
+  const execList = [executions?.jest, executions?.vitest].filter(Boolean);
+  const summaryRunInfo = summary?.testExecution || {};
+  const hasSummaryCounts =
+    Number(summaryRunInfo.numTotalTests ?? summaryRunInfo.totalTests ?? 0) > 0;
+  const runInfo = hasSummaryCounts
+    ? summaryRunInfo
+    : execList.length > 0
+    ? {
+        passedTests: execList.reduce(
+          (acc, ex) => acc + Number(ex.numPassedTests ?? ex.passedTests ?? 0),
+          0
+        ),
+        failedTests: execList.reduce(
+          (acc, ex) => acc + Number(ex.numFailedTests ?? ex.failedTests ?? 0),
+          0
+        ),
+        skippedTests: execList.reduce(
+          (acc, ex) => acc + Number(ex.numPendingTests ?? ex.skippedTests ?? 0),
+          0
+        ),
+        totalTests: execList.reduce(
+          (acc, ex) =>
+            acc +
+            Number(
+              ex.numTotalTests ??
+                ex.totalTests ??
+                Number(ex.numPassedTests ?? ex.passedTests ?? 0) +
+                  Number(ex.numFailedTests ?? ex.failedTests ?? 0) +
+                  Number(ex.numPendingTests ?? ex.skippedTests ?? 0)
+            ),
+          0
+        ),
+        durationMs: execList.reduce(
+          (acc, ex) => acc + Number(ex.durationMs ?? ex.duration ?? 0),
+          0
+        ),
+      }
+    : {};
+
+  let passedTests = Number(runInfo.numPassedTests ?? runInfo.passedTests ?? 0);
+  let failedTests = Number(runInfo.numFailedTests ?? runInfo.failedTests ?? 0);
   const skippedTests = Number(runInfo.numPendingTests ?? runInfo.skippedTests ?? 0);
-  const totalTests = Number(
+  let totalTests = Number(
     runInfo.numTotalTests ?? runInfo.totalTests ?? passedTests + failedTests + skippedTests
   );
   const flakyTests = 0;
-  const durationMs = Number(runInfo.durationMs ?? runInfo.duration ?? 0);
+  let durationMs = Number(runInfo.durationMs ?? runInfo.duration ?? 0);
+  if (durationMs === 0 && execList.length > 0) {
+    durationMs = execList.reduce(
+      (acc, ex) => acc + Number(ex.durationMs ?? ex.duration ?? 0),
+      0
+    );
+  }
+
+  // Coverage percentages (honor peakReport parity with UnitTestWorkspace.jsx)
+  const liveCovCandidate =
+    summary?.coverage ||
+    (summaryRunInfo?.coverageLinesPct != null
+      ? {
+          lines: summaryRunInfo.coverageLinesPct,
+          branches: summaryRunInfo.coverageBranchesPct,
+          functions: summaryRunInfo.coverageFunctionsPct,
+          statements: summaryRunInfo.coverageStatementsPct,
+        }
+      : null) ||
+    summary?.previousCoverage ||
+    null;
+
+  const peakReport = summary?.peakReport || null;
+  const peakCovCandidate =
+    peakReport?.coverageSummary || peakReport?.peakMeta
+      ? {
+          lines: peakReport.coverageSummary?.lines ?? peakReport.peakMeta?.linesPct ?? 0,
+          branches: peakReport.coverageSummary?.branches ?? peakReport.peakMeta?.branchesPct ?? 0,
+          functions: peakReport.coverageSummary?.functions ?? peakReport.peakMeta?.funcsPct ?? 0,
+          statements: peakReport.coverageSummary?.statements ?? peakReport.peakMeta?.stmtsPct ?? 0,
+        }
+      : null;
+
+  const liveScore = computeCompositeCoverageScore(liveCovCandidate);
+  const peakScore = computeCompositeCoverageScore(peakCovCandidate);
+  const usePeak = Boolean(peakReport && peakScore > 0 && peakScore >= liveScore);
+
+  if (usePeak && peakReport?.testStats && Number(peakReport.testStats.total || 0) > totalTests) {
+    totalTests = Number(peakReport.testStats.total || 0);
+    passedTests = Number(peakReport.testStats.passed || 0);
+    failedTests = Number(peakReport.testStats.failed || 0);
+    if (durationMs === 0 && Number(peakReport.testStats.durationMs || 0) > 0) {
+      durationMs = Number(peakReport.testStats.durationMs);
+    }
+  }
+
   const passRate = getPassRate(passedTests, failedTests) ?? 0;
   const avgDurationMs = totalTests > 0 ? Math.round(durationMs / totalTests) : 0;
 
-  // Coverage percentages
-  const cov = summary?.coverage || {};
+  const cov = usePeak ? peakCovCandidate || {} : liveCovCandidate || {};
+  const rawTotals = usePeak ? peakReport?.rawTotals || summary?.rawTotals || null : summary?.rawTotals || null;
+  const coverageSource = usePeak
+    ? "peak-report"
+    : totalTests > 0 || liveCovCandidate
+    ? "filtered-summary"
+    : "none";
+
   const coverageMetrics =
     totalTests > 0
       ? {
@@ -138,30 +392,49 @@ export function adaptUnit(raw, unifiedUnit = null) {
           branches: toFixedPct(cov.branches ?? cov.branch),
           functions: toFixedPct(cov.functions ?? cov.function),
           statements: toFixedPct(cov.statements ?? cov.statement),
+          linesCovered: rawTotals?.lines?.covered ?? null,
+          linesTotal: rawTotals?.lines?.total ?? null,
+          branchesCovered: rawTotals?.branches?.covered ?? null,
+          branchesTotal: rawTotals?.branches?.total ?? null,
+          functionsCovered: rawTotals?.functions?.covered ?? null,
+          functionsTotal: rawTotals?.functions?.total ?? null,
+          statementsCovered: rawTotals?.statements?.covered ?? null,
+          statementsTotal: rawTotals?.statements?.total ?? null,
         }
-      : { lines: 0, branches: 0, functions: 0, statements: 0 };
+      : {
+          lines: 0,
+          branches: 0,
+          functions: 0,
+          statements: 0,
+          linesCovered: null,
+          linesTotal: null,
+          branchesCovered: null,
+          branchesTotal: null,
+          functionsCovered: null,
+          functionsTotal: null,
+          statementsCovered: null,
+          statementsTotal: null,
+        };
+
+  const configExclusions = raw?.configExclusions || summary?.configExclusions || [];
+  const sourceFileList =
+    usePeak && Array.isArray(peakReport?.fileCoverages) && peakReport.fileCoverages.length > 0 && (!Array.isArray(files) || files.length === 0)
+      ? peakReport.fileCoverages
+      : files;
 
   // Top 4 lowest branch coverage files
-  const validFiles = Array.isArray(files)
-    ? files.filter(
-        (f) =>
-          f?.filePath &&
-          !f.filePath.includes("node_modules") &&
-          !f.filePath.includes(".test.") &&
-          !f.filePath.includes(".spec.")
-      )
+  const validFiles = Array.isArray(sourceFileList)
+    ? sourceFileList.filter((f) => f?.filePath && !isExcludedUnitFilePath(f.filePath, configExclusions))
     : [];
 
   const sortedFiles = [...validFiles].sort(
-    (a, b) => (a.branchesPct ?? 0) - (b.branchesPct ?? 0) || (a.linesPct ?? 0) - (b.linesPct ?? 0)
+    (a, b) =>
+      (a.branchesPct ?? 0) - (b.branchesPct ?? 0) ||
+      (a.linesPct ?? 0) - (b.linesPct ?? 0) ||
+      (a.funcsPct ?? a.functionsPct ?? 0) - (b.funcsPct ?? b.functionsPct ?? 0)
   );
-  const lowCoverageItems = sortedFiles.slice(0, 4).map((f) => ({
-    filePath: f.filePath,
-    name: (f.filePath || "").split(/[/\\]/).pop(),
-    branchesPct: toFixedPct(f.branchesPct),
-    linesPct: toFixedPct(f.linesPct),
-    line: 1,
-  }));
+  const lowCoverageItems = sortedFiles.slice(0, 4).map(mapCoverageFileEntry);
+  const coverageFiles = sortedFiles.map(mapCoverageFileEntry);
 
   const pillarState = resolvePillarState({ passedTests, failedTests, totalTests });
   return {
@@ -177,8 +450,11 @@ export function adaptUnit(raw, unifiedUnit = null) {
     passRate,
     durationMs,
     avgDurationMs,
+    avgTestDurationMs: avgDurationMs,
+    coverageSource,
     coverageMetrics,
     lowCoverageItems,
+    coverageFiles,
     failedScenarios: [],
     failureDistribution: {},
     failuresByCategory: [],
@@ -199,18 +475,28 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
       unifiedIntegration.totalTests ?? passedTests + failedTests + skippedTests
     );
     const durationMs = Number(unifiedIntegration.durationMs ?? 0);
-    const avgDurationMs = Number(unifiedIntegration.avgDurationMs ?? 0);
+    const avgEndpointLatencyMs = Number(
+      unifiedIntegration.avgEndpointLatencyMs ?? unifiedIntegration.avgDurationMs ?? 0
+    );
+    const avgDurationMs = Number(unifiedIntegration.avgDurationMs ?? avgEndpointLatencyMs);
     const passRate = getPassRate(passedTests, failedTests) ?? Number(unifiedIntegration.passRate ?? 0);
+    const pillarState =
+      unifiedIntegration.state || resolvePillarState({ passedTests, failedTests, totalTests });
 
     const cov = unifiedIntegration.coverageMetrics || {};
     const totalApis = Number(cov.totalApis ?? 0);
     const uncoveredApis = Number(cov.uncoveredApis ?? 0);
+    const failedApis = Number(cov.failedApis ?? 0);
+    const partialApis = Number(cov.partialApis ?? 0);
     const hasIntExecuted = totalTests > 0;
     const coveredApis =
       hasIntExecuted && totalApis > 0
         ? Math.min(
             totalApis,
-            Number(cov.coveredApis ?? Math.max(0, totalApis - uncoveredApis))
+            Number(
+              cov.coveredApis ??
+                Math.max(0, totalApis - uncoveredApis - failedApis - partialApis)
+            )
           )
         : 0;
     const coverageMetrics = {
@@ -220,7 +506,8 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
       statements: hasIntExecuted ? toFixedPct(cov.statements) : 0,
       apiEndpoint: hasIntExecuted && totalApis > 0 ? toFixedPct(cov.apiEndpoint) : 0,
       coveredApis,
-      failedApis: Number(cov.failedApis ?? 0),
+      partialApis,
+      failedApis,
       uncoveredApis,
       totalApis,
     };
@@ -240,6 +527,7 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
       id: "integration",
       label: "Integration Test",
       framework: unifiedIntegration.framework || "Supertest",
+      state: pillarState,
       totalTests,
       passedTests,
       failedTests,
@@ -248,6 +536,7 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
       passRate,
       durationMs,
       avgDurationMs,
+      avgEndpointLatencyMs,
       coverageMetrics,
       lowCoverageItems: Array.isArray(unifiedIntegration.lowCoverageItems)
         ? unifiedIntegration.lowCoverageItems
@@ -265,6 +554,7 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
       id: "integration",
       label: "Integration Test",
       framework: "Supertest",
+      state: "NOT_RUN",
       totalTests: 0,
       passedTests: 0,
       failedTests: 0,
@@ -273,12 +563,16 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
       passRate: 0,
       durationMs: 0,
       avgDurationMs: 0,
+      avgEndpointLatencyMs: 0,
       coverageMetrics: {
         lines: 0,
         branches: 0,
         functions: 0,
         statements: 0,
         apiEndpoint: 0,
+        coveredApis: 0,
+        partialApis: 0,
+        failedApis: 0,
         uncoveredApis: 0,
         totalApis: 0,
       },
@@ -298,12 +592,13 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
   const endpoints = Array.isArray(workspaceData?.endpoints) ? workspaceData.endpoints : [];
 
   const coveredCountFromEndpoints = endpoints.filter((e) => e.status === "Covered").length;
-  const failedCountFromEndpoints = endpoints.filter(
+  const partialCountFromEndpoints = endpoints.filter((e) => e.status === "Partial").length;
+  const errorCountFromEndpoints = endpoints.filter(
     (e) => e.status === "Failed" || e.status === "Script Error"
   ).length;
 
   const passedTests = Number(wsSummary.passedTests ?? wsSummary.testedApis ?? coveredCountFromEndpoints ?? 0);
-  const failedTests = Number(wsSummary.failedTests ?? failedCountFromEndpoints ?? 0);
+  const failedTests = Number(wsSummary.failedTests ?? errorCountFromEndpoints ?? 0);
   const skippedTests = Number(wsSummary.skippedTests ?? 0);
 
   // Executed test count: only actual executed tests (never counting Uncovered APIs as executed or failed)
@@ -317,13 +612,17 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
           totalApis,
           Number(
             wsSummary.endpointCoverageMetrics?.coveredEndpoints ??
-              (coveredCountFromEndpoints > 0 ? coveredCountFromEndpoints : passedTests)
+              (endpoints.length > 0 ? coveredCountFromEndpoints : 0)
           )
         )
       : 0;
+  const partialApis = Math.min(
+    Math.max(0, totalApis - coveredApis),
+    Number(wsSummary.endpointCoverageMetrics?.partialEndpoints ?? partialCountFromEndpoints)
+  );
   const failedApis = Math.min(
     Math.max(0, totalApis - coveredApis),
-    failedCountFromEndpoints
+    errorCountFromEndpoints + partialCountFromEndpoints
   );
   const uncoveredApis = Math.max(0, totalApis - coveredApis);
 
@@ -349,6 +648,7 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
     statements: executedTests > 0 ? toFixedPct(codeCov.statement?.pct ?? codeCov.statement ?? codeCov.statements) : 0,
     apiEndpoint: apiEndpointPct,
     coveredApis,
+    partialApis,
     failedApis,
     uncoveredApis,
     totalApis,
@@ -405,6 +705,7 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
     id: "integration",
     label: "Integration Test",
     framework: workspaceData?.snapshot?.framework || "Supertest",
+    state: resolvePillarState({ passedTests, failedTests, totalTests: executedTests }),
     totalTests: executedTests,
     passedTests,
     failedTests,
@@ -413,6 +714,7 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
     passRate,
     durationMs,
     avgDurationMs,
+    avgEndpointLatencyMs: avgDurationMs,
     coverageMetrics,
     lowCoverageItems,
     failedScenarios: [],
@@ -438,9 +740,22 @@ export function adaptSystem(systemSummary, scenariosList = [], unifiedSystem = n
     const avgDurationMs =
       Number(unifiedSystem.avgDurationMs) ||
       (totalTests > 0 ? Math.round(durationMs / totalTests) : 0);
+    const avgTestDurationMs = Number(unifiedSystem.avgTestDurationMs ?? avgDurationMs);
+    const pillarState =
+      unifiedSystem.state || resolvePillarState({ passedTests, failedTests, totalTests });
 
     const cov = unifiedSystem.coverageMetrics || {};
-    const flowPct = totalTests > 0 ? toFixedPct(cov.flow ?? cov.lines) : 0;
+    const rawFlow = cov.flow ?? cov.lines ?? unifiedSystem.flowCoveragePct ?? null;
+    const explicitAvail = unifiedSystem.coverageAvailable ?? cov.coverageAvailable;
+    const coverageAvailable =
+      typeof explicitAvail === "boolean"
+        ? explicitAvail && totalTests > 0 && rawFlow !== null && rawFlow !== undefined
+        : totalTests > 0 &&
+          rawFlow !== null &&
+          rawFlow !== undefined &&
+          Number.isFinite(Number(rawFlow));
+    const flowPct = totalTests > 0 && coverageAvailable ? toOptionalPct(rawFlow) : null;
+    const linesPct = totalTests > 0 && coverageAvailable ? toOptionalPct(cov.lines ?? flowPct) : null;
 
     const fd = unifiedSystem.failureDistribution || {};
     const failureDistribution = {
@@ -454,6 +769,7 @@ export function adaptSystem(systemSummary, scenariosList = [], unifiedSystem = n
       id: "system",
       label: "System Test (E2E)",
       framework: unifiedSystem.framework || "Playwright",
+      state: pillarState,
       totalTests,
       passedTests,
       failedTests,
@@ -462,8 +778,10 @@ export function adaptSystem(systemSummary, scenariosList = [], unifiedSystem = n
       passRate,
       durationMs,
       avgDurationMs,
+      avgTestDurationMs,
+      coverageAvailable,
       coverageMetrics: {
-        lines: toFixedPct(cov.lines ?? flowPct),
+        lines: linesPct,
         flow: flowPct,
       },
       lowCoverageItems: [],
@@ -480,6 +798,7 @@ export function adaptSystem(systemSummary, scenariosList = [], unifiedSystem = n
       id: "system",
       label: "System Test (E2E)",
       framework: "Playwright",
+      state: "NOT_RUN",
       totalTests: 0,
       passedTests: 0,
       failedTests: 0,
@@ -488,7 +807,9 @@ export function adaptSystem(systemSummary, scenariosList = [], unifiedSystem = n
       passRate: 0,
       durationMs: 0,
       avgDurationMs: 0,
-      coverageMetrics: { lines: 0, flow: 0 },
+      avgTestDurationMs: 0,
+      coverageAvailable: false,
+      coverageMetrics: { lines: null, flow: null },
       lowCoverageItems: [],
       failedScenarios: [],
       failureDistribution: {
@@ -513,14 +834,24 @@ export function adaptSystem(systemSummary, scenariosList = [], unifiedSystem = n
   const passRate = getPassRate(passedTests, failedTests) ?? Number(s.passRatePct ?? 0);
   const avgDurationMs = totalTests > 0 ? Math.round(durationMs / totalTests) : 0;
 
-  // Flow coverage
-  const frontendCounters = s.coverageSummary?.frontend?.counters || {};
+  // Flow coverage (do NOT fabricate from passRate when unmeasured)
+  const frontendCounters =
+    s.coverageSummary?.frontend?.counters ||
+    s.coverageSummary?.tiers?.frontend?.counters ||
+    {};
+  const rawFeLinesPct = frontendCounters.lines?.pct;
+  const coverageAvailable =
+    typeof s.coverageAvailable === "boolean"
+      ? s.coverageAvailable &&
+        totalTests > 0 &&
+        rawFeLinesPct !== undefined &&
+        rawFeLinesPct !== null
+      : totalTests > 0 &&
+        rawFeLinesPct !== undefined &&
+        rawFeLinesPct !== null &&
+        Number.isFinite(Number(rawFeLinesPct));
   const flowCoveragePct =
-    totalTests <= 0
-      ? 0
-      : frontendCounters.lines?.pct !== undefined
-      ? toFixedPct(frontendCounters.lines.pct)
-      : toFixedPct(passRate);
+    totalTests > 0 && coverageAvailable ? toOptionalPct(rawFeLinesPct) : null;
 
   // Failure categories: strictly 0 when failedTests === 0
   const failureDistribution = {
@@ -566,6 +897,7 @@ export function adaptSystem(systemSummary, scenariosList = [], unifiedSystem = n
     id: "system",
     label: "System Test (E2E)",
     framework,
+    state: resolvePillarState({ passedTests, failedTests, totalTests }),
     totalTests,
     passedTests,
     failedTests,
@@ -574,6 +906,8 @@ export function adaptSystem(systemSummary, scenariosList = [], unifiedSystem = n
     passRate,
     durationMs,
     avgDurationMs,
+    avgTestDurationMs: avgDurationMs,
+    coverageAvailable,
     coverageMetrics: {
       lines: flowCoveragePct,
       flow: flowCoveragePct,
@@ -622,9 +956,12 @@ function buildLiveTraceMatrixRows(unitRaw, integrationRaw, pillars) {
     groups.get(groupId).endpoints.push(ep);
   }
 
-  // Match unit files to groups or create a Core Services group
+  const unitConfigExclusions =
+    unitRaw?.configExclusions || unitRaw?.summary?.configExclusions || [];
+
+  // Match unit files to groups or create a domain/core module group
   for (const f of files) {
-    if (!f.filePath || f.filePath.includes("node_modules") || f.filePath.includes(".test.")) continue;
+    if (!f?.filePath || isExcludedUnitFilePath(f.filePath, unitConfigExclusions)) continue;
     const base = f.filePath.split(/[/\\]/).pop().toLowerCase();
     let matched = false;
     for (const grp of groups.values()) {
@@ -634,8 +971,16 @@ function buildLiveTraceMatrixRows(unitRaw, integrationRaw, pillars) {
         break;
       }
     }
-    if (!matched && groups.size < 6) {
-      const key = base.split(".")[0] || "service";
+    if (!matched && groups.size < 12) {
+      const stem = base
+        .replace(/\.(js|jsx|ts|tsx|mjs|cjs|json)$/i, "")
+        .replace(/[._-](test|spec|e2e|cy)\b/gi, "");
+      const tokens = stem
+        .replace(/([a-z])([A-Z])/g, "$1 $2")
+        .split(/[^a-zA-Z0-9]+/)
+        .map((t) => t.toLowerCase().trim())
+        .filter((t) => t && !TOOLING_DOMAIN_STOP_WORDS.has(t));
+      const key = tokens[0] || "core";
       const groupId = `live-mod-${key}`;
       if (!groups.has(groupId)) {
         groups.set(groupId, {
@@ -654,18 +999,40 @@ function buildLiveTraceMatrixRows(unitRaw, integrationRaw, pillars) {
   for (const grp of groups.values()) {
     const totalEp = grp.endpoints.length;
     const coveredEp = grp.endpoints.filter((e) => e.status === "Covered").length;
+    const partialEp = grp.endpoints.filter((e) => e.status === "Partial").length;
     const failedEp = grp.endpoints.filter((e) => e.status === "Failed" || e.status === "Script Error").length;
+    const issueEp = failedEp + partialEp;
     const firstEp = grp.endpoints[0];
     const firstFile = grp.unitFiles[0];
 
     const unitHasTests = pillars.unit.totalTests > 0 && grp.unitFiles.length > 0;
+    const avgLines =
+      grp.unitFiles.length > 0
+        ? toFixedPct(
+            grp.unitFiles.reduce((acc, f) => acc + Number(f.linesPct ?? 0), 0) / grp.unitFiles.length
+          )
+        : null;
+    const avgBranches =
+      grp.unitFiles.length > 0
+        ? toFixedPct(
+            grp.unitFiles.reduce((acc, f) => acc + Number(f.branchesPct ?? 0), 0) / grp.unitFiles.length
+          )
+        : null;
     const unitStatus = !unitHasTests ? "untested" : pillars.unit.failedTests > 0 ? "fail" : "pass";
     const unitLabel = unitHasTests
-      ? `${firstFile?.linesPct ?? pillars.unit.coverageMetrics.lines}% cov`
+      ? `${avgLines ?? pillars.unit.coverageMetrics.lines}% lines · ${avgBranches ?? pillars.unit.coverageMetrics.branches}% branch`
       : "0/0 (Not run)";
 
     const intStatus =
-      failedEp > 0 ? "fail" : coveredEp > 0 && coveredEp === totalEp ? "pass" : totalEp > 0 ? "warn" : "untested";
+      totalEp === 0
+        ? "none"
+        : failedEp > 0
+        ? "fail"
+        : coveredEp === totalEp
+        ? "pass"
+        : coveredEp > 0 || partialEp > 0
+        ? "warn"
+        : "untested";
     const intLabel = totalEp > 0 ? `${coveredEp}/${totalEp} covered` : "0/0 APIs";
 
     const sysStatus =
@@ -685,9 +1052,13 @@ function buildLiveTraceMatrixRows(unitRaw, integrationRaw, pillars) {
       unit: {
         status: unitStatus,
         label: unitLabel,
-        passed: unitHasTests ? 1 : 0,
+        passed: 0,
         failed: 0,
-        total: grp.unitFiles.length,
+        total: 0,
+        coverageOnly: unitHasTests,
+        fileCount: grp.unitFiles.length,
+        avgLinesPct: avgLines,
+        avgBranchesPct: avgBranches,
         path: firstFile?.filePath || null,
       },
       integration: {
@@ -695,8 +1066,9 @@ function buildLiveTraceMatrixRows(unitRaw, integrationRaw, pillars) {
         label: intLabel,
         passed: coveredEp,
         failed: failedEp,
+        partial: partialEp,
         total: totalEp,
-        uncovered: Math.max(0, totalEp - coveredEp - failedEp),
+        uncovered: Math.max(0, totalEp - coveredEp - issueEp),
         endpoint: firstEp ? `${firstEp.method || "GET"} ${firstEp.path}` : null,
       },
       system: {
@@ -746,13 +1118,108 @@ function buildLiveTraceMatrixRows(unitRaw, integrationRaw, pillars) {
           type: "integration",
           name: `${e.method || "GET"} ${e.path} (${e.status || "Uncovered"})`,
           endpoint: `${e.method || "GET"} ${e.path}`,
-          status: e.status === "Covered" ? "pass" : e.status === "Failed" ? "fail" : "untested",
+          status:
+            e.status === "Covered"
+              ? "pass"
+              : e.status === "Failed" || e.status === "Script Error"
+              ? "fail"
+              : e.status === "Partial"
+              ? "warn"
+              : "untested",
         })),
       ],
     });
   }
 
   return rows;
+}
+
+function normalizeMatrixRow(row) {
+  if (!row || typeof row !== "object") return row;
+  const rawUnit = row.unit || {};
+  const rawInt = row.integration || {};
+  let unitLabel = String(rawUnit.label || "").trim();
+  let unitPassRate = rawUnit.passRate ?? null;
+  let avgLinesPct = rawUnit.avgLinesPct ?? null;
+  let avgBranchesPct = rawUnit.avgBranchesPct ?? null;
+
+  const legacyPassedMatch = unitLabel.match(/^(\d+)\s*\/\s*(\d+)\s+passed\s*\(([0-9.]+)%\)$/i);
+  if (legacyPassedMatch) {
+    const p = Number(legacyPassedMatch[1]);
+    const t = Number(legacyPassedMatch[2]);
+    const cov = legacyPassedMatch[3];
+    const rate = t > 0 ? Number(((p / t) * 100).toFixed(1)) : 0;
+    unitPassRate = unitPassRate ?? rate;
+    avgLinesPct = avgLinesPct ?? Number(cov);
+    unitLabel = `${p}/${t} passed (${rate}%) · ${cov}% lines`;
+  }
+
+  const isCoverageOnly =
+    Boolean(rawUnit.coverageOnly) ||
+    (Number(rawUnit.passed ?? 0) === 0 &&
+      Number(rawUnit.failed ?? 0) === 0 &&
+      !/^\s*\d+\s*\/\s*\d+/.test(unitLabel) &&
+      /%\s*(?:lines|branch|cov)/i.test(unitLabel));
+
+  if (isCoverageOnly) {
+    if (avgLinesPct == null) {
+      const mLines = unitLabel.match(/([0-9]+(?:\.[0-9]+)?)\s*%\s*(?:lines|cov)/i);
+      if (mLines) avgLinesPct = Number(mLines[1]);
+    }
+    if (avgBranchesPct == null) {
+      const mBranch = unitLabel.match(/([0-9]+(?:\.[0-9]+)?)\s*%\s*branch/i);
+      if (mBranch) avgBranchesPct = Number(mBranch[1]);
+    }
+  }
+
+  const normalizedUnit = {
+    ...rawUnit,
+    label: unitLabel || rawUnit.label,
+    total: isCoverageOnly ? 0 : Number(rawUnit.total ?? 0),
+    coverageOnly: isCoverageOnly,
+    fileCount: rawUnit.fileCount ?? (isCoverageOnly && Number(rawUnit.total) > 0 ? Number(rawUnit.total) : undefined),
+    avgLinesPct,
+    avgBranchesPct,
+    passRate: unitPassRate,
+  };
+
+  const intTotal = Number(rawInt.total ?? 0);
+  const intLabelStr = String(rawInt.label || "");
+  const isZeroApi =
+    intTotal === 0 &&
+    (!intLabelStr || /^0\s*\/\s*0\b/i.test(intLabelStr));
+  const normalizedInt = isZeroApi
+    ? {
+        ...rawInt,
+        total: 0,
+        status:
+          !rawInt.status || String(rawInt.status).toLowerCase() === "untested"
+            ? "none"
+            : rawInt.status,
+      }
+    : rawInt;
+
+  let rootCause = row.rootCause;
+  if (
+    isZeroApi &&
+    String(rootCause?.summary || "").toLowerCase().includes("api coverage gap")
+  ) {
+    rootCause = {
+      suspectLayer: "none",
+      summary:
+        normalizedUnit.status === "pass"
+          ? "Unit verified (no APIs)"
+          : "Partial verification",
+      diagnosis: "Unit suite verified; no API endpoints mapped to this module.",
+    };
+  }
+
+  return {
+    ...row,
+    unit: normalizedUnit,
+    integration: normalizedInt,
+    rootCause,
+  };
 }
 
 /**
@@ -799,7 +1266,7 @@ export function adaptUnifiedDashboard({
 
   const liveMatrixRows =
     Array.isArray(unifiedBackendRaw?.matrix?.rows) && unifiedBackendRaw.matrix.rows.length > 0
-      ? unifiedBackendRaw.matrix.rows
+      ? unifiedBackendRaw.matrix.rows.map(normalizeMatrixRow)
       : buildLiveTraceMatrixRows(unitRaw, integrationRaw, pillars);
 
   const qualityGate = unifiedBackendRaw?.qualityGate || computeQualityGate(pillars, liveMatrixRows);
@@ -905,7 +1372,7 @@ export function adaptUnifiedDashboard({
             timestamp: Date.now(),
             unitCoverage: coverage.codePct || 0,
             integrationCoverage: coverage.apiPct || 0,
-            systemCoverage: coverage.flowPct || 0,
+            systemCoverage: systemPillar.coverageAvailable ? coverage.flowPct : null,
             overallCoverage: coverage.overall || 0,
             passRate: execution.passRate || 0,
             unitPassRate: unitPillar.passRate || 0,
@@ -927,7 +1394,7 @@ export function adaptUnifiedDashboard({
     after: {
       unit: coverage.codePct || 0,
       integration: coverage.apiPct || 0,
-      system: coverage.flowPct || 0,
+      system: systemPillar.coverageAvailable ? coverage.flowPct : null,
       unitPassRate: unitPillar.passRate || 0,
       integrationPassRate: integrationPillar.passRate || 0,
       systemPassRate: systemPillar.passRate || 0,

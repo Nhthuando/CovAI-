@@ -5,6 +5,11 @@ import { stagePreparedValue,stagePreparedPublication } from "./projectOperationW
 import { ServiceError } from "../utils/serviceError.js";
 import { upsertCoverageFileRows } from './coverageFilePersistence.service.js';
 import { canonicalizeFilePath } from "../utils/pathSanitizer.js";
+import {
+    isBusinessLogicSourceFile,
+    extractProjectCoverageExclusions,
+} from "../utils/businessLogicFileDetector.js";
+import { resolveProjectRelativePath } from "./unitCoverageSummary.service.js";
 
 /**
  * SCRUM-85: Coverage Summary Parser
@@ -201,12 +206,59 @@ export const parseCoverageSummary = async (coverageDir, snapshotId, options = {}
     // Read file
     const raw = readCoverageSummaryFile(coverageDir);
 
-    // Parse overall summary metrics
-    const total = raw.total;
-    const lines = parseLineCoverage(total);       // SCRUM-118
-    const branches = parseBranchCoverage(total);  // SCRUM-119
-    const functions = parseFunctionCoverage(total); // SCRUM-120
-    const statements = parseStatementCoverage(total); // SCRUM-121
+    const allFileEntries = Object.entries(raw).filter(([key]) => key !== "total");
+    let fileEntries = allFileEntries;
+
+    let lines = parseLineCoverage(raw.total);       // SCRUM-118
+    let branches = parseBranchCoverage(raw.total);  // SCRUM-119
+    let functions = parseFunctionCoverage(raw.total); // SCRUM-120
+    let statements = parseStatementCoverage(raw.total); // SCRUM-121
+
+    if (options?.filterBusinessLogic || options?.filterUnitFiles) {
+        const configExclusions = rootDir ? extractProjectCoverageExclusions(rootDir) : [];
+        const thresholdExceptions =
+            options?.thresholdExceptions instanceof Set ? options.thresholdExceptions : new Set();
+
+        fileEntries = allFileEntries.filter(([rawPath, data]) => {
+            if (!data) return false;
+            const can = (rootDir ? resolveProjectRelativePath(rawPath, rootDir) : canonicalizeFilePath(rawPath)) || rawPath;
+            const norm = String(can).replace(/\\/g, "/").toLowerCase();
+            if (thresholdExceptions.size > 0 && Array.from(thresholdExceptions).some((exc) => norm === exc || norm.endsWith(exc))) {
+                return false;
+            }
+            return isBusinessLogicSourceFile(can, configExclusions);
+        });
+
+        if (fileEntries.length > 0) {
+            let linesCovered = 0, linesTotal = 0;
+            let branchesCovered = 0, branchesTotal = 0;
+            let funcsCovered = 0, funcsTotal = 0;
+            let stmtsCovered = 0, stmtsTotal = 0;
+
+            for (const [, data] of fileEntries) {
+                linesCovered += parseNum(data?.lines?.covered);
+                linesTotal += parseNum(data?.lines?.total);
+                branchesCovered += parseNum(data?.branches?.covered);
+                branchesTotal += parseNum(data?.branches?.total);
+                funcsCovered += parseNum(data?.functions?.covered);
+                funcsTotal += parseNum(data?.functions?.total);
+                stmtsCovered += parseNum(data?.statements?.covered);
+                stmtsTotal += parseNum(data?.statements?.total);
+            }
+
+            const linesPct = linesTotal > 0 ? Number(((linesCovered / linesTotal) * 100).toFixed(1)) : 0;
+            const stmtsPct = stmtsTotal > 0 ? Number(((stmtsCovered / stmtsTotal) * 100).toFixed(1)) : 0;
+            const funcsPct = funcsTotal > 0 ? Number(((funcsCovered / funcsTotal) * 100).toFixed(1)) : 0;
+            const branchesPct = branchesTotal > 0
+                ? Number(((branchesCovered / branchesTotal) * 100).toFixed(1))
+                : (linesCovered > 0 && linesPct === 100 ? 100 : 0);
+
+            lines = { total: linesTotal, covered: linesCovered, skipped: 0, pct: linesPct };
+            branches = { total: branchesTotal, covered: branchesCovered, skipped: 0, pct: branchesPct };
+            functions = { total: funcsTotal, covered: funcsCovered, skipped: 0, pct: funcsPct };
+            statements = { total: stmtsTotal, covered: stmtsCovered, skipped: 0, pct: stmtsPct };
+        }
+    }
 
     // Persist CoverageSummary unless explicitly skipped (e.g. integration runs).
     let summary = null;
@@ -215,7 +267,6 @@ export const parseCoverageSummary = async (coverageDir, snapshotId, options = {}
     }
 
     // Write CoverageFile per file (excluding "total" key) unless caller handles canonical file persistence separately
-    const fileEntries = Object.entries(raw).filter(([key]) => key !== "total");
     if (!options?.skipFileUpsert) {
         await upsertCoverageFiles(snapshotId, fileEntries, rootDir);
     }

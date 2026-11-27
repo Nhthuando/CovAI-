@@ -16,7 +16,8 @@ export const extractProjectCoverageExclusions = (rootDir = "") => {
         return Array.from(exclusions);
     }
     const candidateFiles = [
-        "vitest.config.ts", "vitest.config.mts", "vitest.config.js", "vitest.config.mjs",
+        "vitest.config.ts", "vitest.config.mts", "vitest.config.cts", "vitest.config.js", "vitest.config.mjs", "vitest.config.cjs",
+        "vite.config.ts", "vite.config.mts", "vite.config.js", "vite.config.mjs",
         "jest.config.js", "jest.config.ts", "jest.config.mjs", "jest.config.cjs", "jest.config.json",
         "package.json"
     ];
@@ -121,12 +122,14 @@ export const isBusinessLogicSourceFile = (filePath = "", configExclusions = []) 
         return false;
     }
 
-    // 6. Reject setup, helper, and config files
+    // 6. Reject setup, workspace, helper, and config files
     if (
-        /^(setup|global-?setup|setup-?tests|teardown|fixtures?)\.[a-z0-9]+$/i.test(base) ||
+        /^(?:setup|global-?setup|setup-?tests?|teardown|test-?setup|fixtures?)\.[cm]?[jt]s$/i.test(base) ||
+        /^(?:vitest|jest|playwright|cypress)\.(?:setup|global-?setup|teardown|workspace|config)(?:\.[a-z0-9]+)+$/i.test(base) ||
+        /\.(?:setup|global-?setup|teardown)\.[cm]?[jt]s$/i.test(base) ||
         /(^|\/|\.)config\.[a-z0-9]+$/i.test(norm) ||
         /\.config\.[a-z0-9]+$/i.test(base) ||
-        /(tsup|vite|vitest|webpack|rollup|babel|eslint|prettier|tailwind|postcss)\.config/i.test(norm)
+        /(tsup|vite|vitest|jest|playwright|cypress|webpack|rollup|babel|eslint|prettier|tailwind|postcss)\.(?:config|workspace)/i.test(norm)
     ) {
         return false;
     }
@@ -165,8 +168,18 @@ export const isBusinessLogicSourceFile = (filePath = "", configExclusions = []) 
     if (configExclusions && (Array.isArray(configExclusions) || configExclusions instanceof Set)) {
         for (const exc of configExclusions) {
             if (!exc) continue;
-            const normExc = String(exc).replace(/\\/g, "/").toLowerCase().replace(/^\.?\//, "");
-            if (norm.endsWith(normExc) || norm.includes(`/${normExc}`)) {
+            const cleanExc = String(exc)
+                .replace(/\\/g, "/")
+                .toLowerCase()
+                .replace(/^\.?\//, "")
+                .replace(/\/+$/, "");
+            if (!cleanExc) continue;
+            if (
+                norm === cleanExc ||
+                norm.startsWith(`${cleanExc}/`) ||
+                norm.endsWith(`/${cleanExc}`) ||
+                norm.includes(`/${cleanExc}/`)
+            ) {
                 return false;
             }
         }

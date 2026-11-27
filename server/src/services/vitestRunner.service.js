@@ -325,6 +325,7 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
     const coverageAllFlag = "--coverage.all=false";
 
     let result;
+    const vitestStartMs = Date.now();
     if (hasBackendDir) {
         // Fast-path: Execute inside backend targeting unit tests
         let targetArg = "tests/unit";
@@ -480,6 +481,7 @@ export const runVitestCoverage = async (jobId, rootDir, vitestCommand, specificF
 
         return {
             ...result,
+            elapsedMs: result?.elapsedMs ?? Math.max(0, Date.now() - vitestStartMs),
             coverageDir: rootCoverageDir,
             createdStubs: setupValidation?.createdStubs || [],
         };

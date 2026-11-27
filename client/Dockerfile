@@ -13,10 +13,12 @@ ENV VITE_GITHUB_CLIENT_ID=$VITE_GITHUB_CLIENT_ID
 
 # Copy package.json của client vào trước để tận dụng cache
 COPY client/package*.json ./
-RUN npm install
+RUN npm ci --no-audit --no-fund
 
-# Copy toàn bộ code client vào /app
-COPY client/ ./
+# Copy chỉ mã nguồn & cấu hình cần build (tránh COPY đè client/node_modules của host vào container)
+COPY client/index.html client/vite.config.js ./
+COPY client/public/ ./public/
+COPY client/src/ ./src/
 
 # Copy thư mục shared ra ngoài cấp tương ứng để các import "../../../shared" tìm thấy
 COPY shared/ /shared/

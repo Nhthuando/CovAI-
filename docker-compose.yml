@@ -7,10 +7,6 @@ services:
     ports:
       - "127.0.0.1:5000:5000"
     mem_limit: 1800m
-    volumes:
-      # Persists Git workspaces (.git) and immutable Snapshot CAS blobs (storage/projects/*/vcs/objects/*.gz)
-      - ./server/storage:/app/storage
-      - ./shared:/shared:ro
     environment:
       - NODE_ENV=production
       - DATABASE_URL=postgresql://covai_user:CovaiDbPass2026!@postgres:5432/covai_db?schema=public
@@ -24,8 +20,10 @@ services:
     env_file:
       - ./server/.env
     volumes:
+      # Persists Git workspaces (.git) and immutable Snapshot CAS blobs (storage/projects/*/vcs/objects/*.gz)
       - server_storage_prod:/app/storage
       - server_uploads_prod:/app/uploads
+      - ./shared:/shared:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -38,10 +36,11 @@ services:
       context: .
       dockerfile: client/Dockerfile
       args:
-        - VITE_API_URL=https://covai.tech/api
+        - VITE_API_URL=/api
         - VITE_GITHUB_CLIENT_ID=Ov23liQ1Hyb1oaqmSTXi
     container_name: covai_client_prod
     ports:
+      - "127.0.0.1:5173:80"
       - "127.0.0.1:4173:80"
     mem_limit: 128m
     depends_on:

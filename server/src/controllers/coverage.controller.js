@@ -156,59 +156,24 @@ import {
   readFullSystemConfig,
 } from "../services/fullSystemLifecycle.service.js";
 
+import {
+  resolveProjectRelativePath,
+  getNormalizedMatchKey,
+  resolveSnapshotRootDir,
+  findUnitCoverageArtifacts,
+  hasUnitExecutionEvidence,
+  findBestUnitCoverageSummary,
+  extractThresholdExceptions,
+  computeFilteredUnitCoverageFromRaw,
+} from "../services/unitCoverageSummary.service.js";
+
 // ── Canonical project-relative path resolution & matching ────────────────────
-export const resolveProjectRelativePath = (p, rootDir = "") => {
-  if (!p || typeof p !== "string") return "";
-  let clean = cleanStoragePath(p) || p;
-  clean = clean
-    .replace(/\\/g, "/")
-    .replace(/^\.?\//, "")
-    .trim();
-
-  if (rootDir) {
-    const normRoot = rootDir
-      .replace(/\\/g, "/")
-      .replace(/^\.?\//, "")
-      .replace(/\/+$/, "");
-    if (clean.toLowerCase().startsWith(normRoot.toLowerCase() + "/")) {
-      clean = clean.slice(normRoot.length + 1).replace(/^\/+/, "");
-    }
-    // If file exists as-is relative to rootDir, it is already the canonical project-relative path
-    try {
-      if (fs.existsSync(path.join(rootDir, clean))) {
-        return clean;
-      }
-      // Check standard monorepo/subproject prefixes
-      const candidatePrefixes = [
-        "server",
-        "backend",
-        "client",
-        "frontend",
-        "services",
-        "src",
-        "app",
-        "api",
-      ];
-      for (const prefix of candidatePrefixes) {
-        if (
-          !clean.startsWith(prefix + "/") &&
-          fs.existsSync(path.join(rootDir, prefix, clean))
-        ) {
-          return `${prefix}/${clean}`;
-        }
-      }
-    } catch (_) {}
-  }
-  const canon = canonicalizeFilePath(clean, rootDir);
-  return canon || clean;
-};
-
-export const getNormalizedMatchKey = (p = "") => {
-  return (p || "")
-    .replace(/\\/g, "/")
-    .replace(/^\.?\//, "")
-    .replace(/^(?:server|backend|client|frontend|app|api)\//i, "")
-    .toLowerCase();
+export {
+  resolveProjectRelativePath,
+  getNormalizedMatchKey,
+  resolveSnapshotRootDir,
+  findUnitCoverageArtifacts,
+  hasUnitExecutionEvidence,
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -230,39 +195,6 @@ const ALLOWED_FUNC_SORT_FIELDS = [
 
 import { isApiFilePath } from "../utils/apiFileDetector.js";
 export { isApiFilePath };
-
-export const resolveSnapshotRootDir = (rootDir) => {
-  if (!rootDir) return null;
-  let candidate = rootDir;
-  if (!fs.existsSync(rootDir)) {
-    const normalized = String(rootDir).replace(/\\/g, "/");
-    if (normalized.startsWith("/app/")) {
-      const hostCandidate = path.resolve(
-        process.cwd(),
-        normalized.replace(/^\/app\//, ""),
-      );
-      if (fs.existsSync(hostCandidate)) candidate = hostCandidate;
-    } else {
-      const storageMatch = normalized.match(
-        /(?:^|\/)((?:storage|uploads)\/.+)$/i,
-      );
-      if (storageMatch) {
-        const subPath = storageMatch[1];
-        const containerCandidate = path.posix.join("/app", subPath);
-        if (fs.existsSync(containerCandidate)) candidate = containerCandidate;
-        else {
-          const hostCandidate = path.resolve(process.cwd(), subPath);
-          if (fs.existsSync(hostCandidate)) candidate = hostCandidate;
-        }
-      }
-    }
-  }
-  const resolved =
-    typeof resolveProjectRoot === "function"
-      ? resolveProjectRoot(candidate)
-      : candidate;
-  return resolved || candidate;
-};
 
 const ensureSnapshotSourceOnDisk = async (snapshot, resolvedRootDir) => {
   if (resolvedRootDir && fs.existsSync(resolvedRootDir)) {
@@ -357,56 +289,6 @@ const testSuitesCache = new Map();
 const frameworksCache = new Map();
 const unitFilesCache = new Map();
 const UNIT_FILES_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-const findUnitCoverageArtifacts = (rootDir) => {
-  if (!rootDir || !fs.existsSync(rootDir)) {
-    return { summaryPath: null, finalPath: null };
-  }
-  const summaryCandidates = [
-    path.join(rootDir, "coverage", "unit", "coverage-summary.json"),
-    path.join(rootDir, "coverage", "jest-coverage-summary.json"),
-    path.join(rootDir, "coverage", "vitest-coverage-summary.json"),
-    path.join(rootDir, "coverage", "unit", "jest-coverage-summary.json"),
-    path.join(rootDir, "coverage", "unit", "vitest-coverage-summary.json"),
-  ];
-  const finalCandidates = [
-    path.join(rootDir, "coverage", "unit", "coverage-final.json"),
-    path.join(rootDir, "coverage", "jest-coverage-final.json"),
-    path.join(rootDir, "coverage", "vitest-coverage-final.json"),
-  ];
-  return {
-    summaryPath: summaryCandidates.find((p) => fs.existsSync(p)) || null,
-    finalPath: finalCandidates.find((p) => fs.existsSync(p)) || null,
-  };
-};
-
-const hasUnitExecutionEvidence = async (snapshotId, rootDir) => {
-  const artifacts = findUnitCoverageArtifacts(rootDir);
-  if (artifacts.summaryPath || artifacts.finalPath) return true;
-  if (prisma.testRun?.findFirst) {
-    const unitRun = await prisma.testRun
-      .findFirst({
-        where: { snapshotId, type: { in: ["JEST", "VITEST"] } },
-        select: { id: true },
-      })
-      .catch(() => null);
-    if (unitRun) return true;
-  }
-  if (prisma.job?.findFirst) {
-    const unitJob = await prisma.job
-      .findFirst({
-        where: {
-          snapshotId,
-          type: { in: ["RUN_TESTS", "VITEST_COVERAGE"] },
-          status: "SUCCESS",
-        },
-        select: { id: true },
-      })
-      .catch(() => null);
-    if (unitJob) return true;
-  }
-  return false;
-};
 
 export const invalidateCoverageCache = (snapshotId, rootDir = null) => {
   if (snapshotId) {
@@ -915,116 +797,138 @@ export const getCoverageSummary = async (req, res) => {
     // Read rawTotals from namespaced coverage-summary.json based on typeFilter
     let rawTotals = null;
     if (resolvedRootDir && (typeFilter !== "unit" || hasUnitEvidence)) {
-      let candidateSummaryFiles = [];
-      if (typeFilter === "integration") {
-        candidateSummaryFiles = [
-          path.join(
+      if (typeFilter === "unit") {
+        const bestUnit = findBestUnitCoverageSummary(resolvedRootDir);
+        const raw = bestUnit?.raw || null;
+        if (raw) {
+          const thresholdExceptions = await extractThresholdExceptions(
             resolvedRootDir,
-            "coverage",
-            "integration",
-            "coverage-summary.json",
-          ),
-          path.join(
+            snapshot.jestConfigPath,
+          );
+          const configExclusions =
+            extractProjectCoverageExclusions(resolvedRootDir);
+          const filteredResult = await computeFilteredUnitCoverageFromRaw(raw, {
             resolvedRootDir,
-            "coverage",
-            "supertest-coverage-summary.json",
-          ),
-          path.join(resolvedRootDir, "coverage", "coverage-summary.json"),
-        ];
-      } else if (typeFilter === "system") {
-        candidateSummaryFiles = [
-          path.join(
-            resolvedRootDir,
-            "coverage",
-            "system",
-            "coverage-summary.json",
-          ),
-          path.join(
-            resolvedRootDir,
-            "coverage",
-            "playwright-coverage-summary.json",
-          ),
-          path.join(
-            resolvedRootDir,
-            "coverage",
-            "cypress-coverage-summary.json",
-          ),
-        ];
+            configExclusions,
+            thresholdExceptions,
+            includeUncoveredLogicFiles: true,
+          });
+          if (filteredResult) {
+            if (filteredResult.files.length > 0) {
+              rawTotals = filteredResult.rawTotals;
+              coverage = filteredResult.coverage;
+            } else if (raw.total) {
+              rawTotals = filteredResult.rawTotals;
+              if (
+                !coverage.statements &&
+                !coverage.lines &&
+                raw.total.statements?.pct != null
+              ) {
+                coverage = filteredResult.coverage;
+              }
+            }
+          }
+        }
       } else {
-        // Unit test coverage: strictly read unit/jest/vitest artifacts;
-        // never read root coverage/coverage-summary.json (owned by Integration Supertest).
-        candidateSummaryFiles = [
-          path.join(
-            resolvedRootDir,
-            "coverage",
-            "unit",
-            "coverage-summary.json",
-          ),
-          path.join(
-            resolvedRootDir,
-            "coverage",
-            "unit",
-            "jest-coverage-summary.json",
-          ),
-          path.join(
-            resolvedRootDir,
-            "coverage",
-            "unit",
-            "vitest-coverage-summary.json",
-          ),
-          path.join(resolvedRootDir, "coverage", "jest-coverage-summary.json"),
-          path.join(
-            resolvedRootDir,
-            "coverage",
-            "vitest-coverage-summary.json",
-          ),
-          path.join(
-            resolvedRootDir,
-            "server",
-            "coverage",
-            "unit",
-            "coverage-summary.json",
-          ),
-          path.join(
-            resolvedRootDir,
-            "client",
-            "coverage",
-            "unit",
-            "coverage-summary.json",
-          ),
-          path.join(
-            resolvedRootDir,
-            "backend",
-            "coverage",
-            "unit",
-            "coverage-summary.json",
-          ),
-        ];
-      }
+        let candidateSummaryFiles = [];
+        if (typeFilter === "integration") {
+          candidateSummaryFiles = [
+            path.join(
+              resolvedRootDir,
+              "coverage",
+              "integration",
+              "coverage-summary.json",
+            ),
+            path.join(
+              resolvedRootDir,
+              "coverage",
+              "supertest-coverage-summary.json",
+            ),
+            path.join(resolvedRootDir, "coverage", "coverage-summary.json"),
+          ];
+        } else if (typeFilter === "system") {
+          candidateSummaryFiles = [
+            path.join(
+              resolvedRootDir,
+              "coverage",
+              "system",
+              "coverage-summary.json",
+            ),
+            path.join(
+              resolvedRootDir,
+              "coverage",
+              "playwright-coverage-summary.json",
+            ),
+            path.join(
+              resolvedRootDir,
+              "coverage",
+              "cypress-coverage-summary.json",
+            ),
+          ];
+        } else {
+          // Default (no typeFilter): strictly read unit/jest/vitest artifacts;
+          // never read root coverage/coverage-summary.json (owned by Integration Supertest).
+          candidateSummaryFiles = [
+            path.join(
+              resolvedRootDir,
+              "coverage",
+              "unit",
+              "coverage-summary.json",
+            ),
+            path.join(
+              resolvedRootDir,
+              "coverage",
+              "unit",
+              "jest-coverage-summary.json",
+            ),
+            path.join(
+              resolvedRootDir,
+              "coverage",
+              "unit",
+              "vitest-coverage-summary.json",
+            ),
+            path.join(resolvedRootDir, "coverage", "jest-coverage-summary.json"),
+            path.join(
+              resolvedRootDir,
+              "coverage",
+              "vitest-coverage-summary.json",
+            ),
+            path.join(
+              resolvedRootDir,
+              "server",
+              "coverage",
+              "unit",
+              "coverage-summary.json",
+            ),
+            path.join(
+              resolvedRootDir,
+              "client",
+              "coverage",
+              "unit",
+              "coverage-summary.json",
+            ),
+            path.join(
+              resolvedRootDir,
+              "backend",
+              "coverage",
+              "unit",
+              "coverage-summary.json",
+            ),
+          ];
+        }
 
-      // Scan immediate subdirectories for monorepo packages (e.g. server, app, pkg)
-      try {
-        const subEntries = fs.readdirSync(resolvedRootDir, {
-          withFileTypes: true,
-        });
-        for (const entry of subEntries) {
-          if (
-            entry.isDirectory() &&
-            !["node_modules", ".git", "dist", ".gemini", "storage", "coverage"].includes(
-              entry.name,
-            )
-          ) {
-            if (typeFilter === "unit") {
-              candidateSummaryFiles.push(
-                path.join(
-                  resolvedRootDir,
-                  entry.name,
-                  "coverage",
-                  "unit",
-                  "coverage-summary.json",
-                ),
-              );
-            } else {
+        // Scan immediate subdirectories for monorepo packages (e.g. server, app, pkg)
+        try {
+          const subEntries = fs.readdirSync(resolvedRootDir, {
+            withFileTypes: true,
+          });
+          for (const entry of subEntries) {
+            if (
+              entry.isDirectory() &&
+              !["node_modules", ".git", "dist", ".gemini", "storage", "coverage"].includes(
+                entry.name,
+              )
+            ) {
               candidateSummaryFiles.push(
                 path.join(
                   resolvedRootDir,
@@ -1038,280 +942,45 @@ export const getCoverageSummary = async (req, res) => {
               );
             }
           }
+        } catch (_) {}
+
+        let bestSummary = null;
+        let bestSummaryMtime = 0;
+        let bestHasNonZero = false;
+
+        for (const summaryFile of candidateSummaryFiles) {
+          if (fs.existsSync(summaryFile)) {
+            try {
+              const stat = fs.statSync(summaryFile);
+              const parsed = JSON.parse(fs.readFileSync(summaryFile, "utf8"));
+              if (parsed && typeof parsed === "object") {
+                const hasNonZero =
+                  (parsed.total?.lines?.pct || 0) > 0 ||
+                  (parsed.total?.statements?.pct || 0) > 0 ||
+                  Object.values(parsed).some(
+                    (v) =>
+                      v !== parsed.total &&
+                      typeof v === "object" &&
+                      ((v.lines?.pct || 0) > 0 || (v.statements?.pct || 0) > 0),
+                  );
+                if (
+                  !bestSummary ||
+                  (hasNonZero && !bestHasNonZero) ||
+                  (hasNonZero === bestHasNonZero &&
+                    stat.mtimeMs > bestSummaryMtime)
+                ) {
+                  bestSummary = parsed;
+                  bestSummaryMtime = stat.mtimeMs;
+                  bestHasNonZero = hasNonZero;
+                }
+              }
+            } catch (_) {}
+          }
         }
-      } catch (_) {}
+        let raw = bestSummary;
 
-      let bestSummary = null;
-      let bestSummaryMtime = 0;
-      let bestHasNonZero = false;
-
-      for (const summaryFile of candidateSummaryFiles) {
-        if (fs.existsSync(summaryFile)) {
-          try {
-            const stat = fs.statSync(summaryFile);
-            const parsed = JSON.parse(fs.readFileSync(summaryFile, "utf8"));
-            if (parsed && typeof parsed === "object") {
-              const hasNonZero =
-                (parsed.total?.lines?.pct || 0) > 0 ||
-                (parsed.total?.statements?.pct || 0) > 0 ||
-                Object.values(parsed).some(
-                  (v) =>
-                    v !== parsed.total &&
-                    typeof v === "object" &&
-                    ((v.lines?.pct || 0) > 0 || (v.statements?.pct || 0) > 0),
-                );
-              if (
-                !bestSummary ||
-                (hasNonZero && !bestHasNonZero) ||
-                (hasNonZero === bestHasNonZero &&
-                  stat.mtimeMs > bestSummaryMtime)
-              ) {
-                bestSummary = parsed;
-                bestSummaryMtime = stat.mtimeMs;
-                bestHasNonZero = hasNonZero;
-              }
-            }
-          } catch (_) {}
-        }
-      }
-      let raw = bestSummary;
-
-      if (raw) {
-        if (typeFilter === "unit") {
-          // Extract path-matched threshold exceptions from Jest's coverageThreshold (if any)
-          const thresholdExceptions = new Set();
-          try {
-            const { readProjectJestConfig } =
-              await import("../services/runTestsJob.service.js");
-            const projectJestConfig = await readProjectJestConfig(
-              resolvedRootDir,
-              snapshot.jestConfigPath,
-            );
-            const coverageThreshold = projectJestConfig?.coverageThreshold;
-            if (coverageThreshold && typeof coverageThreshold === "object") {
-              for (const pattern of Object.keys(coverageThreshold)) {
-                if (pattern === "global") continue;
-                const normPattern = pattern
-                  .replace(/^\.\//, "")
-                  .replace(/\\/g, "/")
-                  .toLowerCase();
-                thresholdExceptions.add(normPattern);
-              }
-            }
-          } catch {}
-
-          // Filter out non-business logic files (examples, configs, types, hooks, i18n, routes, frontend)
-          const configExclusions =
-            extractProjectCoverageExclusions(resolvedRootDir);
-          const canonicalMap = new Map();
-          const canonicalByMatchKey = new Map();
-          for (const [filePath, data] of Object.entries(raw)) {
-            if (filePath === "total" || !data) continue;
-            const can =
-              resolveProjectRelativePath(filePath, resolvedRootDir) || filePath;
-            const norm = can.replace(/\\/g, "/").toLowerCase();
-            const isThresholdException = Array.from(thresholdExceptions).some(
-              (exc) => norm.endsWith(exc),
-            );
-            if (
-              isBusinessLogicSourceFile(can, configExclusions) &&
-              !isThresholdException
-            ) {
-              const matchKey = getNormalizedMatchKey(can);
-              const existingKey = canonicalMap.has(can)
-                ? can
-                : canonicalByMatchKey.get(matchKey) || null;
-              if (
-                !existingKey ||
-                (canonicalMap.get(existingKey).statements?.total || 0) <
-                  (data.statements?.total || 0)
-              ) {
-                if (existingKey && existingKey !== can)
-                  canonicalMap.delete(existingKey);
-                canonicalMap.set(can, data);
-                canonicalByMatchKey.set(matchKey, can);
-              }
-            }
-          }
-
-          // Ensure ALL project business logic files are accounted for in unit coverage totals
-          const logicFiles = findLogicSourceFiles(resolvedRootDir);
-          for (const lf of logicFiles) {
-            const can =
-              resolveProjectRelativePath(lf.relativePath, resolvedRootDir) ||
-              lf.relativePath;
-            const norm = can.replace(/\\/g, "/").toLowerCase();
-            const isThresholdException = Array.from(thresholdExceptions).some(
-              (exc) => norm.endsWith(exc),
-            );
-            if (
-              isThresholdException ||
-              !isBusinessLogicSourceFile(can, configExclusions)
-            )
-              continue;
-
-            const matchKey = getNormalizedMatchKey(can);
-            const existingKey = canonicalMap.has(can)
-              ? can
-              : canonicalByMatchKey.get(matchKey) || null;
-
-            if (!existingKey) {
-              let content = "";
-              try {
-                content = fs.readFileSync(lf.absolutePath, "utf8");
-              } catch {}
-              const codeLines = content.split("\n");
-              const totalLines = Math.max(1, codeLines.length);
-              let funcs = [];
-              try {
-                funcs = extractFunctions(content) || [];
-              } catch {
-                funcs = [];
-              }
-              let branchList = [];
-              try {
-                branchList = extractBranches(content) || [];
-              } catch {
-                branchList = [];
-              }
-
-              canonicalMap.set(can, {
-                lines: { total: totalLines, covered: 0, skipped: 0, pct: 0 },
-                statements: {
-                  total: totalLines,
-                  covered: 0,
-                  skipped: 0,
-                  pct: 0,
-                },
-                functions: {
-                  total: funcs.length,
-                  covered: 0,
-                  skipped: 0,
-                  pct: 0,
-                },
-                branches: {
-                  total: branchList.reduce(
-                    (s, b) => s + (b.locations?.length || 1),
-                    0,
-                  ),
-                  covered: 0,
-                  skipped: 0,
-                  pct: 0,
-                },
-              });
-              canonicalByMatchKey.set(matchKey, can);
-            } else if (existingKey !== can) {
-              const existingData = canonicalMap.get(existingKey);
-              canonicalMap.delete(existingKey);
-              canonicalMap.set(can, existingData);
-              canonicalByMatchKey.set(matchKey, can);
-            }
-          }
-
-          const unitFileEntries = Array.from(canonicalMap.entries());
-
-          if (unitFileEntries.length > 0) {
-            let stmtsCovered = 0,
-              stmtsTotal = 0;
-            let branchesCovered = 0,
-              branchesTotal = 0;
-            let funcsCovered = 0,
-              funcsTotal = 0;
-            let linesCovered = 0,
-              linesTotal = 0;
-
-            for (const [, data] of unitFileEntries) {
-              stmtsCovered += data.statements?.covered || 0;
-              stmtsTotal += data.statements?.total || 0;
-              branchesCovered += data.branches?.covered || 0;
-              branchesTotal += data.branches?.total || 0;
-              funcsCovered += data.functions?.covered || 0;
-              funcsTotal += data.functions?.total || 0;
-              linesCovered += data.lines?.covered || 0;
-              linesTotal += data.lines?.total || 0;
-            }
-
-            const stmtsPct =
-              stmtsTotal > 0
-                ? Number(((stmtsCovered / stmtsTotal) * 100).toFixed(1))
-                : 0;
-            const linesPct =
-              linesTotal > 0
-                ? Number(((linesCovered / linesTotal) * 100).toFixed(1))
-                : 0;
-            const funcsPct =
-              funcsTotal > 0
-                ? Number(((funcsCovered / funcsTotal) * 100).toFixed(1))
-                : 0;
-            const branchesPct =
-              branchesTotal > 0
-                ? Number(((branchesCovered / branchesTotal) * 100).toFixed(1))
-                : linesCovered > 0 && linesPct === 100
-                  ? 100
-                  : 0;
-
-            rawTotals = {
-              statements: {
-                total: stmtsTotal,
-                covered: stmtsCovered,
-                pct: stmtsPct,
-              },
-              branches: {
-                total: branchesTotal,
-                covered: branchesCovered,
-                pct: branchesPct,
-              },
-              functions: {
-                total: funcsTotal,
-                covered: funcsCovered,
-                pct: funcsPct,
-              },
-              lines: {
-                total: linesTotal,
-                covered: linesCovered,
-                pct: linesPct,
-              },
-            };
-
-            coverage = {
-              statements: stmtsPct,
-              branches: branchesPct,
-              functions: funcsPct,
-              lines: linesPct,
-            };
-          } else if (raw.total) {
-            let rawBranchesPct = raw.total.branches?.pct ?? 0;
-            if (
-              (raw.total.branches?.covered === 0 ||
-                raw.total.branches?.total === 0) &&
-              (raw.total.statements?.pct === 0 ||
-                raw.total.lines?.pct === 0 ||
-                (raw.total.lines?.covered || 0) === 0)
-            ) {
-              rawBranchesPct = 0;
-            }
-            rawTotals = {
-              statements: raw.total.statements || null,
-              branches: raw.total.branches
-                ? { ...raw.total.branches, pct: rawBranchesPct }
-                : null,
-              functions: raw.total.functions || null,
-              lines: raw.total.lines || null,
-            };
-            if (
-              !coverage.statements &&
-              !coverage.lines &&
-              raw.total.statements?.pct != null
-            ) {
-              coverage = {
-                statements: raw.total.statements.pct ?? 0,
-                branches: rawBranchesPct,
-                functions: raw.total.functions.pct ?? 0,
-                lines: raw.total.lines.pct ?? 0,
-              };
-            }
-          }
-        } else if (typeFilter === "integration") {
+        if (raw) {
+          if (typeFilter === "integration") {
           const apiFileEntries = Object.entries(raw).filter(([filePath]) => {
             if (filePath === "total") return false;
             return isApiFilePath(filePath);
@@ -1458,6 +1127,7 @@ export const getCoverageSummary = async (req, res) => {
             functions: raw.total.functions || null,
             lines: raw.total.lines || null,
           };
+        }
         }
       }
     }
@@ -1917,6 +1587,9 @@ export const getCoverageSummary = async (req, res) => {
                 },
               })
               .catch(() => []);
+            const peakConfigExclusions = resolvedRootDir
+              ? extractProjectCoverageExclusions(resolvedRootDir)
+              : [];
             peakReport = await capturePeakUnitReportIfHigher(snapshot.id, {
               summaryTotal: rawTotals || {
                 lines: { total: 100, covered: Math.round(curCov.lines || 0), pct: curCov.lines || 0 },
@@ -1924,7 +1597,7 @@ export const getCoverageSummary = async (req, res) => {
                 functions: { total: 100, covered: Math.round(curCov.functions || 0), pct: curCov.functions || 0 },
                 statements: { total: 100, covered: Math.round(curCov.statements || 0), pct: curCov.statements || 0 },
               },
-              fileCoverages: dbFilesForPeak.filter((f) => isBusinessLogicSourceFile(f.filePath)),
+              fileCoverages: dbFilesForPeak.filter((f) => isBusinessLogicSourceFile(f.filePath, peakConfigExclusions)),
               testStats: latestTestRun
                 ? {
                     total: latestTestRun.totalTests || 0,

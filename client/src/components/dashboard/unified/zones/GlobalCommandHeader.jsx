@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
   Sparkles,
   FileText,
@@ -8,7 +7,6 @@ import {
   RefreshCw,
   X,
   ChevronDown,
-  Globe,
   FileCode2,
   Printer,
 } from "lucide-react";
@@ -21,8 +19,6 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuCheckboxItem,
-  DropdownMenuSeparator,
   DropdownMenuLabel,
 } from "../../../ui/dropdown-menu.jsx";
 import { fmtRelativeTime } from "../../../../services/unifiedDashboard/format.js";
@@ -33,12 +29,6 @@ import {
   exportUnifiedDashboardReport,
 } from "../../../../services/unifiedDashboard/unifiedDashboard.export.js";
 import { activateProjectSnapshotApi } from "../../../../services/project.service.js";
-
-const REPORT_LANGUAGE_LABELS = {
-  bilingual: "EN/VI",
-  en: "EN",
-  vi: "VI",
-};
 
 export function GlobalCommandHeader({
   vm,
@@ -54,7 +44,6 @@ export function GlobalCommandHeader({
   className = "",
 }) {
   const { addToast } = useToast?.() || {};
-  const [reportLanguage, setReportLanguage] = useState("bilingual");
 
   const {
     isRunning,
@@ -113,12 +102,11 @@ export function GlobalCommandHeader({
   const handleQuickExportPdf = () => {
     if (!vm) return;
     try {
-      exportUnifiedDashboardPdf(vm, DEFAULT_EXPORT_SECTIONS, {
-        language: reportLanguage,
-      });
+      exportUnifiedDashboardPdf(vm, DEFAULT_EXPORT_SECTIONS);
       addToast?.({
         title: "PDF Print Ready",
-        message: `Prepared formatted A4 quality report (${REPORT_LANGUAGE_LABELS[reportLanguage] || "EN/VI"}) for printing or saving as PDF.`,
+        message:
+          "Prepared formatted A4 quality report for printing or saving as PDF.",
         type: "success",
       });
     } catch (err) {
@@ -143,11 +131,10 @@ export function GlobalCommandHeader({
         vm,
         format,
         DEFAULT_EXPORT_SECTIONS,
-        { language: reportLanguage },
       );
       addToast?.({
         title: `${label} Exported`,
-        message: `Downloaded ${filename} (${REPORT_LANGUAGE_LABELS[reportLanguage] || "EN/VI"})`,
+        message: `Downloaded ${filename}`,
         type: "success",
       });
     } catch (err) {
@@ -288,12 +275,12 @@ export function GlobalCommandHeader({
             disabled={!vm}
             onClick={handleQuickExportPdf}
             className="ud-no-print"
-            title={`Export formatted A4 PDF report (${REPORT_LANGUAGE_LABELS[reportLanguage] || "EN/VI"})`}
+            title="Export formatted A4 PDF report"
           >
             Export PDF
           </Button>
 
-          {/* Action 3: Quick Export Format & Language Menu */}
+          {/* Action 3: Quick Export Format Menu */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -304,48 +291,15 @@ export function GlobalCommandHeader({
                 iconPosition="right"
                 disabled={!vm}
                 className="ud-no-print"
-                title="Download Overview report in HTML, Markdown, JSON, or PDF and choose report language"
+                title="Download Overview report in HTML, Markdown, JSON, or PDF"
               >
-                <span className="inline-flex items-center gap-1.5">
-                  <span>Quick Export</span>
-                  <span className="font-mono text-[10px] px-1 py-0.5 rounded-[var(--radius-sm)] bg-[var(--ud-surface-2)] border border-[var(--ud-border)] text-[var(--ud-text-muted)]">
-                    {REPORT_LANGUAGE_LABELS[reportLanguage] || "EN/VI"}
-                  </span>
-                </span>
+                Quick Export
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"
-              className="w-64 bg-[var(--ud-surface)] border-[var(--ud-border)] text-[var(--ud-text)]"
+              className="w-56 bg-[var(--ud-surface)] border-[var(--ud-border)] text-[var(--ud-text)]"
             >
-              <DropdownMenuLabel className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-[var(--ud-text-muted)]">
-                <Globe className="size-3.5" />
-                <span>Report Language</span>
-              </DropdownMenuLabel>
-              <DropdownMenuCheckboxItem
-                id="ud-header-lang-bilingual"
-                checked={reportLanguage === "bilingual"}
-                onCheckedChange={() => setReportLanguage("bilingual")}
-              >
-                <span>Bilingual (EN / VI)</span>
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem
-                id="ud-header-lang-en"
-                checked={reportLanguage === "en"}
-                onCheckedChange={() => setReportLanguage("en")}
-              >
-                <span>English (EN)</span>
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem
-                id="ud-header-lang-vi"
-                checked={reportLanguage === "vi"}
-                onCheckedChange={() => setReportLanguage("vi")}
-              >
-                <span>Tiếng Việt (VI)</span>
-              </DropdownMenuCheckboxItem>
-
-              <DropdownMenuSeparator className="bg-[var(--ud-border)]" />
-
               <DropdownMenuLabel className="text-[11px] uppercase tracking-wider text-[var(--ud-text-muted)]">
                 Export Format
               </DropdownMenuLabel>

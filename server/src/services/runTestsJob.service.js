@@ -6591,9 +6591,10 @@ export const processRunTestsJob = async (jobId, options = {}) => {
           "Parsing coverage summaries and files...",
         );
 
+        const runnerElapsedMs = runnerResult?.elapsedMs || 0;
         const testResults =
-          parseVitestResults(activeUnitCoverageDir, { rootDir }) ||
-          parseVitestResults(activeCoverageDir, { rootDir });
+          parseVitestResults(activeUnitCoverageDir, { rootDir, runnerElapsedMs }) ||
+          parseVitestResults(activeCoverageDir, { rootDir, runnerElapsedMs });
         if (testResults) {
           reportedScenarios.push(...(testResults.scenarios || []));
           const dataPayload = buildPrismaTestRunData(
@@ -6642,9 +6643,10 @@ export const processRunTestsJob = async (jobId, options = {}) => {
           "Parsing coverage summaries and files...",
         );
 
+        const runnerElapsedMs = runnerResult?.elapsedMs || 0;
         const testResults =
-          parseJestResults(activeUnitCoverageDir, { rootDir }) ||
-          parseJestResults(activeCoverageDir, { rootDir });
+          parseJestResults(activeUnitCoverageDir, { rootDir, runnerElapsedMs }) ||
+          parseJestResults(activeCoverageDir, { rootDir, runnerElapsedMs });
         if (testResults) {
           reportedScenarios.push(...(testResults.scenarios || []));
           const dataPayload = buildPrismaTestRunData(

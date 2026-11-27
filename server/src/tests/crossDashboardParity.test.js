@@ -1,6 +1,12 @@
 import { extractExecutionDurationMs } from "../services/testResultParser.service.js";
 import { healProjectLifecycleStatusIfNeeded } from "../services/project.service.js";
-import { getDashboardFingerprint } from "../services/unifiedQualityDashboard.service.js";
+import {
+    getDashboardFingerprint,
+    diagnoseModuleRootCause,
+    buildCrossLayerMatrix,
+    buildCausalTrendSeries,
+    isExcludedCausalRun,
+} from "../services/unifiedQualityDashboard.service.js";
 import { getPortfolioFingerprint } from "../services/portfolioDashboard.service.js";
 import { isMatch } from "../services/integrationWorkspace.service.js";
 
@@ -263,6 +269,451 @@ describe("Cross-Dashboard Logic Synchronization Parity Tests", () => {
                     sys: { total: 2, passed: 2, failed: 0, cov: 60 },
                 })
             ).toEqual({ score: 80, grade: "A" });
+        });
+    });
+
+    describe("Executive Report Parity: Coverage-Only Modules, Separated Labels & Zero-API Diagnosis", () => {
+        test("diagnoseModuleRootCause never reports 'API coverage gap' when totalEpCount === 0", () => {
+            const zeroApiDiag = diagnoseModuleRootCause("pass", "none", "untested", {
+                totalEpCount: 0,
+                uncoveredEpCount: 0,
+                totalProjectApis: 0,
+            });
+            expect(zeroApiDiag.summary).not.toMatch(/API coverage gap/i);
+            expect(zeroApiDiag.suspectLayer).toBe("none");
+            expect(zeroApiDiag.summary).toBe("Unit verified (no APIs)");
+
+            // Legacy caller passing "untested" with 0 endpoints must also not diagnose API coverage gap
+            const legacyZeroDiag = diagnoseModuleRootCause("pass", "untested", "untested", {
+                totalEpCount: 0,
+                uncoveredEpCount: 0,
+                totalProjectApis: 4,
+            });
+            expect(legacyZeroDiag.summary).not.toMatch(/API coverage gap/i);
+            expect(legacyZeroDiag.suspectLayer).toBe("none");
+
+            // Genuine discovered endpoints without coverage still report API coverage gap
+            const realApiGap = diagnoseModuleRootCause("pass", "untested", "untested", {
+                totalEpCount: 3,
+                uncoveredEpCount: 3,
+                totalProjectApis: 3,
+                endpoint: "GET /api/orders",
+            });
+            expect(realApiGap.summary).toBe("API coverage gap");
+            expect(realApiGap.suspectLayer).toBe("integration");
+        });
+
+        test("buildCrossLayerMatrix separates pass rate from line coverage and marks coverage-only Core Module accurately", () => {
+            const rows = buildCrossLayerMatrix({
+                unitFiles: [
+                    { filePath: "src/consent/consentManager.ts", linesPct: 100, branchesPct: 100, funcsPct: 100 },
+                    { filePath: "src/core/lawDeterminer.ts", linesPct: 98.7, branchesPct: 100, funcsPct: 100 },
+                    { filePath: "src/presets/index.ts", linesPct: 99.4, branchesPct: 100, funcsPct: 100 },
+                ],
+                unitScenarios: [
+                    ...Array.from({ length: 44 }, (_, i) => ({
+                        id: `c-p-${i}`,
+                        title: `consent pass ${i}`,
+                        testFile: "tests/consent.test.ts",
+                        status: "passed",
+                    })),
+                    {
+                        id: "c-f-1",
+                        title: "consent fail 1",
+                        testFile: "tests/consent.test.ts",
+                        status: "failed",
+                    },
+                    ...Array.from({ length: 54 }, (_, i) => ({
+                        id: `l-p-${i}`,
+                        title: `law pass ${i}`,
+                        testFile: "tests/law.test.ts",
+                        status: "passed",
+                    })),
+                ],
+                endpoints: [],
+                systemScenarios: [],
+                unitPillar: { totalTests: 99, passedTests: 98, failedTests: 1 },
+                systemPillar: { totalTests: 0, passedTests: 0, failedTests: 0 },
+            });
+
+            const consent = rows.find((r) => r.moduleName === "Consent Module");
+            const law = rows.find((r) => r.moduleName === "Law Module");
+            const core = rows.find((r) => r.moduleName === "Core Module");
+
+            expect(consent).toBeDefined();
+            expect(consent.unit.total).toBe(45);
+            expect(consent.unit.passed).toBe(44);
+            expect(consent.unit.failed).toBe(1);
+            expect(consent.unit.coverageOnly).toBe(false);
+            expect(consent.unit.label).toBe("44/45 passed (97.8%) · 100% lines");
+
+            expect(law).toBeDefined();
+            expect(law.unit.total).toBe(54);
+            expect(law.unit.label).toBe("54/54 passed (100%) · 98.7% lines");
+            expect(law.integration.status).toBe("none");
+            expect(law.integration.total).toBe(0);
+            expect(law.rootCause.summary).not.toMatch(/API coverage gap/i);
+
+            expect(core).toBeDefined();
+            expect(core.unit.total).toBe(0);
+            expect(core.unit.passed).toBe(0);
+            expect(core.unit.coverageOnly).toBe(true);
+            expect(core.unit.fileCount).toBe(1);
+            expect(core.unit.avgLinesPct).toBe(99.4);
+            expect(core.unit.label).toBe("99.4% lines · 100% branch");
+            expect(core.integration.status).toBe("none");
+            expect(core.rootCause.summary).not.toMatch(/API coverage gap/i);
+        });
+    });
+
+    describe("Causal Trend Series: No Look-Ahead Leakage & Cumulative Pass Rate", () => {
+        test("starts unexecuted tiers at 0 before their first run and computes cumulative passRate + epCovPct on latest Integration run", () => {
+            // combinedHistoricalRuns is ordered newest -> oldest
+            const combinedHistoricalRuns = [
+                {
+                    id: "run-3-unit",
+                    type: "JEST",
+                    snapshotId: "snap-1",
+                    passedTests: 10,
+                    failedTests: 0,
+                    totalTests: 10,
+                    coverageLinesPct: 100,
+                    createdAt: "2026-11-27T03:00:00Z",
+                },
+                {
+                    id: "run-2-int",
+                    type: "SUPERTEST",
+                    snapshotId: "snap-1",
+                    passedTests: 18,
+                    failedTests: 10,
+                    totalTests: 28,
+                    coverageLinesPct: 71.5, // Istanbul line cov != API endpoint cov
+                    createdAt: "2026-11-27T02:00:00Z",
+                },
+                {
+                    id: "run-1-unit",
+                    type: "JEST",
+                    snapshotId: "snap-1",
+                    passedTests: 10,
+                    failedTests: 0,
+                    totalTests: 10,
+                    coverageLinesPct: 100,
+                    createdAt: "2026-11-27T01:00:00Z",
+                },
+            ];
+
+            const series = buildCausalTrendSeries({
+                combinedHistoricalRuns,
+                snapshotId: "snap-1",
+                latestUnitRunId: "run-3-unit",
+                latestIntRunId: "run-2-int",
+                latestSysRunId: null,
+                unitLinesPct: 100,
+                epCovPct: 60,
+                sysFlowCoveragePct: 0,
+            });
+
+            expect(series).toHaveLength(3);
+
+            // Run #1 (only Unit has run): Integration must still be 0 (no look-ahead leakage!)
+            expect(series[0].unitCoverage).toBe(100);
+            expect(series[0].integrationCoverage).toBe(0);
+            expect(series[0].systemCoverage).toBe(0);
+            expect(series[0].overallCoverage).toBe(50);
+            expect(series[0].passRate).toBe(100);
+
+            // Run #2 (latest Integration run uses epCovPct=60 and cumulative pass rate = (10+18)/(10+28) = 73.7%)
+            expect(series[1].unitCoverage).toBe(100);
+            expect(series[1].integrationCoverage).toBe(60);
+            expect(series[1].overallCoverage).toBe(68); // 100*0.5 + 60*0.3
+            expect(series[1].passRate).toBe(73.7);
+
+            // Run #3 (Unit re-run): cumulative pass rate combines Unit (10/10) + Integration (18/28) = 28/38 = 73.7%
+            expect(series[2].unitCoverage).toBe(100);
+            expect(series[2].integrationCoverage).toBe(60);
+            expect(series[2].overallCoverage).toBe(68);
+            expect(series[2].passRate).toBe(73.7);
+        });
+
+        test("multiple Integration runs on same snapshotId never inherit latestIntRunId epCovPct or mix Istanbul coverageLinesPct", () => {
+            const combinedHistoricalRuns = [
+                {
+                    id: "run-2-int",
+                    type: "SUPERTEST",
+                    snapshotId: "snap-same",
+                    passedTests: 16,
+                    failedTests: 4,
+                    totalTests: 20,
+                    coverageLinesPct: 71.5, // Istanbul line cov != endpoint cov
+                    createdAt: "2026-11-27T02:00:00Z",
+                    snapshot: { id: "snap-same", commitSha: "abc1234", createdAt: "2026-11-27T00:00:00Z" },
+                },
+                {
+                    id: "run-1-int",
+                    type: "SUPERTEST",
+                    snapshotId: "snap-same",
+                    passedTests: 10,
+                    failedTests: 10,
+                    totalTests: 20,
+                    coverageLinesPct: 68.4, // Istanbul line cov must NOT be mixed into endpoint cov series
+                    createdAt: "2026-11-27T01:00:00Z",
+                    snapshot: { id: "snap-same", commitSha: "abc1234", createdAt: "2026-11-27T00:00:00Z" },
+                },
+            ];
+
+            const series = buildCausalTrendSeries({
+                combinedHistoricalRuns,
+                snapshotId: "snap-same",
+                latestIntRunId: "run-2-int",
+                epCovPct: 80,
+            });
+
+            expect(series).toHaveLength(2);
+            // Earlier run on SAME snapshot must NOT inherit epCovPct=80 or Istanbul 68.4%
+            expect(series[0].integrationCoverage).toBe(0);
+            expect(series[0].overallCoverage).toBe(0);
+            expect(series[0].passRate).toBe(50);
+
+            // Latest Integration run uses epCovPct=80
+            expect(series[1].integrationCoverage).toBe(80);
+            expect(series[1].overallCoverage).toBe(24); // 80 * 0.3
+            expect(series[1].passRate).toBe(80);
+        });
+
+        test("historical Integration run with null/0 coverage never leaks current epCovPct backward, while explicit endpointCoveragePct is honored", () => {
+            const combinedHistoricalRuns = [
+                {
+                    id: "run-3-int",
+                    type: "PLAYWRIGHT_API",
+                    snapshotId: "snap-2",
+                    passedTests: 9,
+                    failedTests: 1,
+                    totalTests: 10,
+                    coverageLinesPct: null,
+                    createdAt: "2026-11-27T03:00:00Z",
+                    snapshot: { id: "snap-2", commitSha: "def5678", createdAt: "2026-11-27T02:30:00Z" },
+                },
+                {
+                    id: "run-2-int-null",
+                    type: "SUPERTEST",
+                    snapshotId: "snap-1",
+                    passedTests: 5,
+                    failedTests: 5,
+                    totalTests: 10,
+                    coverageLinesPct: 0,
+                    createdAt: "2026-11-27T02:00:00Z",
+                    snapshot: { id: "snap-1", commitSha: "abc1234", createdAt: "2026-11-27T00:00:00Z" },
+                },
+                {
+                    id: "run-1-int-explicit",
+                    type: "SUPERTEST",
+                    snapshotId: "snap-0",
+                    passedTests: 4,
+                    failedTests: 6,
+                    totalTests: 10,
+                    coverageLinesPct: null,
+                    endpointCoveragePct: 40,
+                    createdAt: "2026-11-27T01:00:00Z",
+                    snapshot: { id: "snap-0", commitSha: "0001112", createdAt: "2026-11-26T23:00:00Z" },
+                },
+            ];
+
+            const series = buildCausalTrendSeries({
+                combinedHistoricalRuns,
+                snapshotId: "snap-2",
+                latestIntRunId: "run-3-int",
+                epCovPct: 90,
+            });
+
+            expect(series).toHaveLength(3);
+            expect(series[0].integrationCoverage).toBe(40);
+            expect(series[1].integrationCoverage).toBe(40); // Preserves prior 40, never leaks future 90
+            expect(series[2].integrationCoverage).toBe(90);
+        });
+
+        test("excludes CANCELED and 0-test runs without wiping out prior rolling pass rate or coverage", () => {
+            expect(isExcludedCausalRun({ status: "CANCELED", passedTests: 2, failedTests: 0, totalTests: 2 })).toBe(true);
+            expect(isExcludedCausalRun({ status: "COMPLETED", passedTests: 0, failedTests: 0, totalTests: 0 })).toBe(true);
+            expect(isExcludedCausalRun({ status: "PASSED", passedTests: 5, failedTests: 0, totalTests: 5 })).toBe(false);
+
+            const combinedHistoricalRuns = [
+                {
+                    id: "run-4-empty",
+                    type: "JEST",
+                    snapshotId: "snap-1",
+                    status: "FAILED",
+                    passedTests: 0,
+                    failedTests: 0,
+                    totalTests: 0,
+                    coverageLinesPct: null,
+                    createdAt: "2026-11-27T04:00:00Z",
+                },
+                {
+                    id: "run-3-canceled",
+                    type: "SUPERTEST",
+                    snapshotId: "snap-1",
+                    status: "CANCELED",
+                    passedTests: 0,
+                    failedTests: 0,
+                    totalTests: 0,
+                    coverageLinesPct: null,
+                    createdAt: "2026-11-27T03:00:00Z",
+                },
+                {
+                    id: "run-2-int",
+                    type: "SUPERTEST",
+                    snapshotId: "snap-1",
+                    status: "PASSED",
+                    passedTests: 10,
+                    failedTests: 0,
+                    totalTests: 10,
+                    createdAt: "2026-11-27T02:00:00Z",
+                },
+                {
+                    id: "run-1-unit",
+                    type: "JEST",
+                    snapshotId: "snap-1",
+                    status: "PASSED",
+                    passedTests: 20,
+                    failedTests: 0,
+                    totalTests: 20,
+                    coverageLinesPct: 80,
+                    createdAt: "2026-11-27T01:00:00Z",
+                },
+            ];
+
+            const series = buildCausalTrendSeries({
+                combinedHistoricalRuns,
+                snapshotId: "snap-1",
+                latestUnitRunId: "run-1-unit",
+                latestIntRunId: "run-2-int",
+                unitLinesPct: 80,
+                epCovPct: 70,
+            });
+
+            // Only the 2 valid runs remain; rolling unit/int coverage & 100% passRate stay intact
+            expect(series).toHaveLength(2);
+            expect(series[0].unitCoverage).toBe(80);
+            expect(series[0].passRate).toBe(100);
+            expect(series[1].unitCoverage).toBe(80);
+            expect(series[1].integrationCoverage).toBe(70);
+            expect(series[1].passRate).toBe(100);
+        });
+
+        test("sanitizes appliedTx: commitSha in runLabel and excludes future-snapshot runs", () => {
+            const combinedHistoricalRuns = [
+                {
+                    id: "run-future-snap2",
+                    type: "JEST",
+                    snapshotId: "snap-2",
+                    status: "PASSED",
+                    passedTests: 50,
+                    failedTests: 0,
+                    totalTests: 50,
+                    coverageLinesPct: 95,
+                    createdAt: "2026-11-27T05:00:00Z",
+                    snapshot: {
+                        id: "snap-2",
+                        commitSha: "ff998877",
+                        createdAt: "2026-11-27T04:00:00Z",
+                    },
+                },
+                {
+                    id: "run-2-snap1",
+                    type: "SUPERTEST",
+                    snapshotId: "snap-1",
+                    status: "PASSED",
+                    passedTests: 10,
+                    failedTests: 0,
+                    totalTests: 10,
+                    createdAt: "2026-11-27T02:00:00Z",
+                    snapshot: {
+                        id: "snap-1",
+                        commitSha: "appliedTx:12345678",
+                        createdAt: "2026-11-27T01:00:00Z",
+                    },
+                },
+                {
+                    id: "run-1-snap1",
+                    type: "JEST",
+                    snapshotId: "snap-1",
+                    status: "PASSED",
+                    passedTests: 10,
+                    failedTests: 0,
+                    totalTests: 10,
+                    coverageLinesPct: 70,
+                    createdAt: "2026-11-27T01:30:00Z",
+                    snapshot: {
+                        id: "snap-1",
+                        commitSha: "appliedTx:12345678",
+                        createdAt: "2026-11-27T01:00:00Z",
+                    },
+                },
+            ];
+
+            const series = buildCausalTrendSeries({
+                combinedHistoricalRuns,
+                snapshotId: "snap-1",
+                snapshotCreatedAt: "2026-11-27T01:00:00Z",
+                latestUnitRunId: "run-1-snap1",
+                latestIntRunId: "run-2-snap1",
+                unitLinesPct: 70,
+                epCovPct: 50,
+            });
+
+            expect(series).toHaveLength(2);
+            expect(series[0].runLabel).toBe("#1 (snap-1)");
+            expect(series[0].runLabel).not.toContain("applie");
+            expect(series[1].runLabel).toBe("#2 (Current)");
+            expect(series.every((pt) => pt.unitCoverage === 70)).toBe(true);
+        });
+
+        test("uses historical systemMeasurement coverage on non-latest PLAYWRIGHT/CYPRESS runs before falling back to pass rate", () => {
+            const combinedHistoricalRuns = [
+                {
+                    id: "run-2-sys",
+                    type: "PLAYWRIGHT",
+                    snapshotId: "snap-2",
+                    status: "PASSED",
+                    passedTests: 4,
+                    failedTests: 0,
+                    totalTests: 4,
+                    createdAt: "2026-11-27T02:00:00Z",
+                    snapshot: { id: "snap-2", commitSha: "bbb222", createdAt: "2026-11-27T02:00:00Z" },
+                },
+                {
+                    id: "run-1-sys",
+                    type: "PLAYWRIGHT",
+                    snapshotId: "snap-1",
+                    status: "PASSED",
+                    passedTests: 5,
+                    failedTests: 0,
+                    totalTests: 5, // passRate = 100%, but systemMeasurement linesPct = 60%
+                    systemMeasurement: {
+                        status: "MEASURED",
+                        tiers: {
+                            frontend: {
+                                status: "MEASURED",
+                                counters: { lines: { covered: 30, total: 50 } },
+                            },
+                        },
+                    },
+                    createdAt: "2026-11-27T01:00:00Z",
+                    snapshot: { id: "snap-1", commitSha: "aaa111", createdAt: "2026-11-27T01:00:00Z" },
+                },
+            ];
+
+            const series = buildCausalTrendSeries({
+                combinedHistoricalRuns,
+                snapshotId: "snap-2",
+                snapshotCreatedAt: "2026-11-27T02:00:00Z",
+                latestSysRunId: "run-2-sys",
+                sysFlowCoveragePct: 82.5,
+            });
+
+            expect(series).toHaveLength(2);
+            expect(series[0].systemCoverage).toBe(60); // From systemMeasurement, not 100% passRate
+            expect(series[1].systemCoverage).toBe(82.5);
         });
     });
 });
