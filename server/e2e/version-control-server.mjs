@@ -16,6 +16,7 @@ const execFileAsync = promisify(execFile);
 
 process.env.NODE_ENV = "test";
 process.env.COVAI_WORKER_ENABLED = "false";
+process.env.PROJECT_EDITOR_ENABLED = "false";
 process.env.JWT_SECRET =
   process.env.JWT_SECRET || "e2e-vcs-jwt-secret-key-2026-32chars";
 process.env.JWT_REFRESH_SECRET =
@@ -376,6 +377,9 @@ app.get("/api/job/running", authMiddleware, (_req, res) =>
 app.get("/api/coverage/unified-summary/:projectId", authMiddleware, (_req, res) =>
   res.json({ success: true, data: null }),
 );
+app.get("/api/coverage/:snapshotId/file-coverage", authMiddleware, (_req, res) =>
+  res.json({ success: true, data: null }),
+);
 app.get("/api/ai-agents/profiles", authMiddleware, (_req, res) =>
   res.json({ success: true, data: [] }),
 );
@@ -579,6 +583,10 @@ app.post("/api/__test/seed-vcs", async (_req, res) => {
       cwd: gitRepoDir,
       windowsHide: true,
     });
+    await execFileAsync("git", ["config", "commit.gpgsign", "false"], {
+      cwd: gitRepoDir,
+      windowsHide: true,
+    });
 
     await fsp.writeFile(
       path.join(gitRepoDir, "src", "app.js"),
@@ -728,6 +736,66 @@ app.get("/api/__test/inspect-git", async (_req, res) => {
     remoteLog,
     currentBranch: currentBranch.trim(),
   });
+});
+
+app.post("/api/__test/push-peer-commit", async (req, res) => {
+  if (!e2eState.bareRemoteDir) {
+    return res.status(404).json({ ok: false, error: "Bare remote not seeded" });
+  }
+  const branch = String(req.body?.branch || "develop").trim() || "develop";
+  const tmpClone = await fsp.mkdtemp(path.join(os.tmpdir(), "covai-e2e-peer-"));
+  try {
+    await execFileAsync(
+      "git",
+      ["clone", "-b", branch, e2eState.bareRemoteDir, tmpClone],
+      { windowsHide: true },
+    );
+    await execFileAsync("git", ["config", "user.name", "Peer Collaborator"], {
+      cwd: tmpClone,
+      windowsHide: true,
+    });
+    await execFileAsync("git", ["config", "user.email", "peer@covai.test"], {
+      cwd: tmpClone,
+      windowsHide: true,
+    });
+    await execFileAsync("git", ["config", "commit.gpgsign", "false"], {
+      cwd: tmpClone,
+      windowsHide: true,
+    });
+
+    await fsp.mkdir(path.join(tmpClone, "src"), { recursive: true });
+    await fsp.writeFile(
+      path.join(tmpClone, "src", "app.js"),
+      "export const version = 'v99-remote-pulled';\nexport function greet() {\n  return 'hello from remote peer';\n}\n",
+      "utf8",
+    );
+    await fsp.writeFile(
+      path.join(tmpClone, "src", "utils.js"),
+      "export const add = (a, b) => Number(a) + Number(b) + 10;\n",
+      "utf8",
+    );
+    await fsp.writeFile(
+      path.join(tmpClone, "src", "remote-pulled.js"),
+      "export const pulledBanner = 'fresh from origin';\n",
+      "utf8",
+    );
+
+    await execFileAsync("git", ["add", "-A"], { cwd: tmpClone, windowsHide: true });
+    await execFileAsync(
+      "git",
+      ["commit", "-m", "feat: peer pushed remote update"],
+      { cwd: tmpClone, windowsHide: true },
+    );
+    await execFileAsync("git", ["push", "origin", branch], {
+      cwd: tmpClone,
+      windowsHide: true,
+    });
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err?.message || String(err) });
+  } finally {
+    await fsp.rm(tmpClone, { recursive: true, force: true }).catch(() => {});
+  }
 });
 
 app.get("/api/__test/inspect-snapshot", async (_req, res) => {

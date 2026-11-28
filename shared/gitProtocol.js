@@ -108,3 +108,64 @@ export function validateGithubRepoName(name) {
   if (!trimmed || trimmed === "." || trimmed === "..") return false;
   return /^[A-Za-z0-9._-]{1,100}$/.test(trimmed);
 }
+
+const toNonNegInt = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? Math.floor(num) : 0;
+};
+
+/**
+ * Computes normalized branch tracking / divergence flags against its remote tracking ref.
+ */
+export function computeBranchDivergence({
+  ahead = 0,
+  behind = 0,
+  tracking = null,
+  detached = false,
+  isUnborn = false,
+} = {}) {
+  const aheadCount = toNonNegInt(ahead);
+  const behindCount = toNonNegInt(behind);
+  const hasUpstream = Boolean(tracking) && !detached && !isUnborn;
+
+  return {
+    ahead: aheadCount,
+    behind: behindCount,
+    hasUpstream,
+    canFastForward: hasUpstream && behindCount > 0 && aheadCount === 0,
+    diverged: hasUpstream && behindCount > 0 && aheadCount > 0,
+    upToDate: hasUpstream && aheadCount === 0 && behindCount === 0,
+  };
+}
+
+/**
+ * Formats Git CLI-compatible tracking & divergence guidance lines (e.g. after checkout/status/fetch).
+ */
+export function formatGitTrackingMessage({
+  branch: _branch,
+  tracking,
+  ahead = 0,
+  behind = 0,
+  detached = false,
+  isUnborn = false,
+} = {}) {
+  if (detached || isUnborn || !tracking) return null;
+  const aheadCount = toNonNegInt(ahead);
+  const behindCount = toNonNegInt(behind);
+
+  if (behindCount > 0 && aheadCount === 0) {
+    const unit = behindCount === 1 ? "commit" : "commits";
+    return `Your branch is behind '${tracking}' by ${behindCount} ${unit}, and can be fast-forwarded.\n  (use "git pull" to update your local branch)`;
+  }
+
+  if (aheadCount > 0 && behindCount === 0) {
+    const unit = aheadCount === 1 ? "commit" : "commits";
+    return `Your branch is ahead of '${tracking}' by ${aheadCount} ${unit}.\n  (use "git push" to publish your local commits)`;
+  }
+
+  if (aheadCount > 0 && behindCount > 0) {
+    return `Your branch and '${tracking}' have diverged,\nand have ${aheadCount} and ${behindCount} different commits each, respectively.\n  (use "git pull" to merge the remote branch into yours)`;
+  }
+
+  return `Your branch is up to date with '${tracking}'.`;
+}

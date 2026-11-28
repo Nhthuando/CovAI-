@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertCircle,
   AlertTriangle,
   Archive,
   ArrowDown,
   ArrowUp,
   Check,
-  CheckCircle2,
   ChevronDown,
   ExternalLink,
   FolderGit2,
@@ -34,10 +32,14 @@ import VcsChangesTree from "../shared/VcsChangesTree";
 import VcsMonacoDiffEditor from "../shared/VcsMonacoDiffEditor";
 import VcsCommitGraph from "../shared/VcsCommitGraph";
 import VcsConflictResolver from "../shared/VcsConflictResolver";
+import VcsInlineBanner from "../shared/VcsInlineBanner";
 import GitOutputConsole from "./GitOutputConsole";
 import GitPublishModal from "./GitPublishModal";
 import GitPullRequestsPanel from "./GitPullRequestsPanel";
-import { gitService } from "../../../../services/git.service";
+import {
+  checkGitRemoteUpdatesApi,
+  gitService,
+} from "../../../../services/git.service";
 import {
   fetchGithubAuthorizeUrlApi,
   getGithubCapabilitiesApi,
@@ -47,10 +49,12 @@ import { useVcsSync } from "../../../../hooks/useVcsSync";
 import {
   applyOptimisticStage,
   applyOptimisticUnstage,
+  buildRemoteSyncBannerState,
   buildVcsPermissions,
   extractVcsStatusFromResponse,
   formatAiCommitSubject,
   formatRelativeTime,
+  formatRemoteCheckedAgo,
 } from "../../../../services/vcsUiHelpers";
 import { VC_MODES } from "../../../../../../shared/versionControlMode.js";
 
@@ -77,6 +81,8 @@ export default function GitWorkspace({
   const [logs, setLogs] = useState([]);
   const [showConsole, setShowConsole] = useState(false);
   const [runningConsole, setRunningConsole] = useState(false);
+  const [checkingRemote, setCheckingRemote] = useState(false);
+  const autoRemoteCheckedProjectRef = useRef(null);
 
   // Capabilities
   const [capabilities, setCapabilities] = useState(null);
@@ -158,19 +164,20 @@ export default function GitWorkspace({
   const [deleteRemoteTag, setDeleteRemoteTag] = useState(false);
 
   const noticeTimerRef = useRef(null);
+  const workspaceRef = useRef(null);
 
   const appendLog = useCallback((line, { isError = false } = {}) => {
     const stamp = new Date().toLocaleTimeString();
     setLogs((prev) =>
       [
+        ...prev,
         {
           id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           timestamp: stamp,
           text: String(line ?? ""),
           isError,
         },
-        ...prev,
-      ].slice(0, 80),
+      ].slice(-80),
     );
   }, []);
 
@@ -275,6 +282,74 @@ export default function GitWorkspace({
       appendLog(`tag list warning: ${err.message}`);
     }
   }, [projectId, appendLog]);
+
+  const hasGitRepo = Boolean(status?.hasGit);
+  const statusRepoUrl = status?.repoUrl || null;
+  const statusBranch = status?.branch || null;
+
+  const handleCheckRemote = useCallback(
+    async ({ force = false, silent = true } = {}) => {
+      if (
+        !projectId ||
+        !hasGitRepo ||
+        !statusRepoUrl ||
+        !perms.canRemoteWrite
+      ) {
+        return null;
+      }
+      setCheckingRemote(true);
+      const endLocalMutation = vcsSummary.beginLocalMutation?.() || (() => {});
+      try {
+        const res = await checkGitRemoteUpdatesApi(projectId, {
+          force,
+          branch: statusBranch,
+          silent,
+        });
+        const nextStatus = res?.data?.status;
+        if (nextStatus) {
+          vcsSummary.applyStatusData(nextStatus);
+        }
+        if (res?.data?.checked) {
+          void loadBranches();
+        }
+        return res;
+      } catch (err) {
+        if (!silent) {
+          showNotice("error", err?.message || "Failed to check remote updates");
+        }
+        return null;
+      } finally {
+        endLocalMutation();
+        setCheckingRemote(false);
+      }
+    },
+    [
+      projectId,
+      perms.canRemoteWrite,
+      hasGitRepo,
+      statusRepoUrl,
+      statusBranch,
+      vcsSummary,
+      loadBranches,
+      showNotice,
+    ],
+  );
+
+  // Non-blocking background remote comparison once per repository mount
+  useEffect(() => {
+    if (!projectId || !hasGitRepo || !statusRepoUrl || !perms.canRemoteWrite) {
+      return;
+    }
+    if (autoRemoteCheckedProjectRef.current === projectId) return;
+    autoRemoteCheckedProjectRef.current = projectId;
+    void handleCheckRemote({ force: false, silent: true });
+  }, [
+    projectId,
+    hasGitRepo,
+    statusRepoUrl,
+    perms.canRemoteWrite,
+    handleCheckRemote,
+  ]);
 
   const loadConflicts = useCallback(async () => {
     if (!projectId) return;
@@ -477,8 +552,17 @@ export default function GitWorkspace({
       if (result?.data?.localBranches) {
         setBranchesData(result.data);
       }
-      if (syncWorkspace) {
-        await onSync?.({ reason, skipVcsRefetch: Boolean(nextStatus) });
+      if (syncWorkspace || result?.workspaceChanged || result?.data?.workspaceChanged) {
+        await onSync?.({
+          reason,
+          skipVcsRefetch: Boolean(nextStatus),
+          updatedFiles: result?.updatedFiles || result?.data?.updatedFiles,
+          workspaceRevision:
+            result?.workspaceRevision ??
+            result?.data?.workspaceRevision ??
+            nextStatus?.workspaceRevision,
+          headOid: nextStatus?.headOid,
+        });
       }
       if (successText) showNotice("success", successText);
       return result;
@@ -490,6 +574,42 @@ export default function GitWorkspace({
       endLocalMutation();
       setBusyAction("");
     }
+  };
+
+  const handlePullRemote = async () => {
+    const res = await runAction(
+      "git pull",
+      () => gitService.pull(projectId),
+      { syncWorkspace: true, reason: "git_pull" },
+    );
+    if (res?.data?.conflicted) {
+      showNotice("error", "Pull resulted in merge conflicts");
+      await loadConflicts();
+    } else {
+      showNotice("success", "Pulled latest commits from origin");
+    }
+    void loadBranches();
+    return res;
+  };
+
+  const handleSyncRemote = async () => {
+    const res = await runAction(
+      "git sync",
+      () => gitService.sync(projectId),
+      { syncWorkspace: true, reason: "git_sync" },
+    );
+    if (res?.data?.conflicted) {
+      showNotice(
+        "error",
+        "Sync resulted in merge conflicts — resolve them in Diff Editor",
+      );
+      await loadConflicts();
+      setSubTab("diff");
+    } else {
+      showNotice("success", "Synchronized with GitHub");
+    }
+    void loadBranches();
+    return res;
   };
 
   const handleInitRepo = () =>
@@ -778,6 +898,7 @@ export default function GitWorkspace({
     const trimmed = String(rawInput || "").trim();
     if (!trimmed) return;
     setRunningConsole(true);
+    const endLocalMutation = vcsSummary.beginLocalMutation?.() || (() => {});
     try {
       const res = await gitService.runCommand(projectId, trimmed);
       const data = res?.data || {};
@@ -785,10 +906,12 @@ export default function GitWorkspace({
       const outText = data.output ?? res?.result ?? "";
       appendLog(`$ ${cmdLabel}\n${outText || "(no output)"}`);
 
+      if (data.status) {
+        vcsSummary.applyStatusData(data.status);
+      }
+
       if (data.mutated) {
-        if (data.status) {
-          vcsSummary.applyStatusData(data.status);
-        } else {
+        if (!data.status) {
           vcsSummary.invalidateAll();
         }
         if (data.branches) {
@@ -804,10 +927,14 @@ export default function GitWorkspace({
           await loadConflicts();
           setSubTab("diff");
         }
-        if (data.syncWorkspace) {
+        if (data.workspaceChanged || data.syncWorkspace) {
           await onSync?.({
             reason: "git_console",
             skipVcsRefetch: Boolean(data.status),
+            updatedFiles: data.updatedFiles,
+            workspaceRevision:
+              data.workspaceRevision ?? data.status?.workspaceRevision,
+            headOid: data.status?.headOid,
           });
         }
         if (subTab === "history") {
@@ -820,9 +947,16 @@ export default function GitWorkspace({
       appendLog(`$ ${trimmed}\nERROR${codeTag}: ${msg}`, { isError: true });
       showNotice("error", msg, err?.code || null);
     } finally {
+      endLocalMutation();
       setRunningConsole(false);
     }
   };
+
+  const remoteBanner = useMemo(() => buildRemoteSyncBannerState(status), [status]);
+  const remoteCheckedAgo = useMemo(
+    () => formatRemoteCheckedAgo(status?.remoteCheckedAt),
+    [status?.remoteCheckedAt],
+  );
 
   const hasConflicts =
     (status?.conflicts?.length || 0) > 0 ||
@@ -837,148 +971,121 @@ export default function GitWorkspace({
   // Capabilities check banner: visible when token revoked or missing repo scope
   const showScopeBanner =
     capabilities && (!capabilities.valid || !capabilities.hasRepoScope);
+  const canCommitNow =
+    perms.canLocalWrite &&
+    Boolean(commitMessage.trim()) &&
+    totalChanges > 0 &&
+    !busyAction;
+  const canOpenSplitMenu = perms.canLocalWrite && !busyAction;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div
+      ref={workspaceRef}
+      className="h-full min-h-0 flex flex-col overflow-hidden"
+    >
+      <div className="flex-1 min-h-0 flex flex-col overflow-hidden px-4 sm:px-5 pt-3 pb-3 gap-2.5">
       {/* Scope / Token Fallback Banner */}
       {showScopeBanner && (
-        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-lg border border-amber-500/30 bg-amber-500/10 text-xs">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <ShieldAlert size={16} className="text-amber-400 shrink-0" />
-            <div className="min-w-0">
-              <p className="font-semibold text-[var(--color-text)]">
-                {capabilities.valid
-                  ? "GitHub 'repo' write scope required for Push, Publish & PRs"
-                  : "GitHub OAuth session expired or revoked"}
-              </p>
-              <p className="text-[var(--color-text-secondary)]">
-                Authorize GitHub repository permissions to sync branches and Pull Requests seamlessly.
-              </p>
-            </div>
-          </div>
-          <Button
-            size="sm"
-            variant="primary"
-            icon={ExternalLink}
-            loading={reauthorizing}
-            onClick={handleGrantRepoScope}
-          >
-            Authorize Repo Access
-          </Button>
-        </div>
+        <VcsInlineBanner
+          tone="warning"
+          icon={ShieldAlert}
+          title={
+            capabilities.valid
+              ? "GitHub 'repo' write scope required for Push, Publish & PRs"
+              : "GitHub OAuth session expired or revoked"
+          }
+          detail="Authorize repository permissions to sync branches and Pull Requests."
+          actions={
+            <Button
+              size="sm"
+              variant="primary"
+              icon={ExternalLink}
+              loading={reauthorizing}
+              onClick={handleGrantRepoScope}
+            >
+              Authorize Repo Access
+            </Button>
+          }
+        />
       )}
 
       {/* Real-time BullMQ Operation Indicator */}
       {vcsSummary.activeOperation && (
-        <div className="flex items-center justify-between gap-3 px-4 py-2 rounded-lg border border-sky-500/25 bg-sky-500/10 text-xs font-mono text-sky-400">
-          <span className="flex items-center gap-2">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-500" />
+        <VcsInlineBanner
+          tone="info"
+          pulsing
+          mono
+          title={vcsSummary.activeOperation.message}
+          actions={
+            <span className="uppercase font-mono text-[10px] text-[var(--color-text-muted)]">
+              {vcsSummary.activeOperation.phase}
             </span>
-            <span>{vcsSummary.activeOperation.message}</span>
-          </span>
-          <span className="uppercase text-[10px]">
-            {vcsSummary.activeOperation.phase}
-          </span>
-        </div>
+          }
+        />
       )}
 
       {/* Transient Notice */}
       {notice && (
-        <div
-          className={`flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 rounded-lg border text-xs font-medium ${
-            notice.type === "error"
-              ? "bg-[var(--color-danger)]/10 text-[var(--color-danger)] border-[var(--color-danger)]/30"
-              : "bg-[var(--color-success)]/10 text-[var(--color-success)] border-[var(--color-success)]/30"
-          }`}
-        >
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            {notice.type === "error" ? (
-              <AlertCircle size={14} className="shrink-0" />
-            ) : (
-              <CheckCircle2 size={14} className="shrink-0" />
-            )}
-            <span>{notice.text}</span>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {notice.code === "GIT_PUSH_REJECTED" && (
-              <>
+        <VcsInlineBanner
+          tone={notice.type === "error" ? "danger" : "success"}
+          title={notice.text}
+          onDismiss={() => setNotice(null)}
+          actions={
+            <>
+              {notice.code === "GIT_PUSH_REJECTED" && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    loading={busyAction === "git sync"}
+                    disabled={!perms.canRemoteWrite || Boolean(busyAction)}
+                    onClick={handleSyncRemote}
+                  >
+                    Sync (Pull &amp; Push)
+                  </Button>
+                  {(() => {
+                    const curBranch = status?.branch || branchesData.current || "";
+                    const defaultBr = project?.defaultBranch || status?.defaultBranch || "main";
+                    const isProtectedBranch =
+                      curBranch === defaultBr ||
+                      curBranch === "main" ||
+                      curBranch === "master";
+                    return (
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        disabled={!perms.canRemoteWrite || isProtectedBranch || Boolean(busyAction)}
+                        title={
+                          isProtectedBranch
+                            ? `Force push is disabled on protected/default branch '${curBranch}'`
+                            : "Force push rewritten local history safely (--force-with-lease)"
+                        }
+                        onClick={() => setConfirmForcePush(true)}
+                      >
+                        Force Push (--force-with-lease)
+                      </Button>
+                    );
+                  })()}
+                </>
+              )}
+              {notice.code === "GIT_AUTH_FAILED" && (
                 <Button
                   size="sm"
-                  variant="secondary"
-                  loading={busyAction === "git sync"}
-                  disabled={!perms.canRemoteWrite || Boolean(busyAction)}
-                  onClick={async () => {
-                    const res = await runAction(
-                      "git sync",
-                      () => gitService.sync(projectId),
-                      { syncWorkspace: true, reason: "git_sync" },
-                    );
-                    if (res?.data?.conflicted) {
-                      showNotice(
-                        "error",
-                        "Sync resulted in merge conflicts — resolve them in Diff Editor",
-                      );
-                      await loadConflicts();
-                      setSubTab("diff");
-                    } else {
-                      showNotice("success", "Synchronized with GitHub");
-                    }
-                    void loadBranches();
-                  }}
+                  variant="primary"
+                  loading={reauthorizing}
+                  onClick={handleGrantRepoScope}
                 >
-                  Sync (Pull &amp; Push)
+                  Reconnect GitHub
                 </Button>
-                {(() => {
-                  const curBranch = status?.branch || branchesData.current || "";
-                  const defaultBr = project?.defaultBranch || status?.defaultBranch || "main";
-                  const isProtectedBranch =
-                    curBranch === defaultBr ||
-                    curBranch === "main" ||
-                    curBranch === "master";
-                  return (
-                    <Button
-                      size="sm"
-                      variant="danger"
-                      disabled={!perms.canRemoteWrite || isProtectedBranch || Boolean(busyAction)}
-                      title={
-                        isProtectedBranch
-                          ? `Force push is disabled on protected/default branch '${curBranch}'`
-                          : "Force push rewritten local history safely (--force-with-lease)"
-                      }
-                      onClick={() => setConfirmForcePush(true)}
-                    >
-                      Force Push (--force-with-lease)
-                    </Button>
-                  );
-                })()}
-              </>
-            )}
-            {notice.code === "GIT_AUTH_FAILED" && (
-              <Button
-                size="sm"
-                variant="primary"
-                loading={reauthorizing}
-                onClick={handleGrantRepoScope}
-              >
-                Reconnect GitHub
-              </Button>
-            )}
-            <button
-              type="button"
-              onClick={() => setNotice(null)}
-              className="opacity-75 hover:opacity-100 cursor-pointer px-1"
-              aria-label="Dismiss notification"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
+              )}
+            </>
+          }
+        />
       )}
 
       {/* Uninitialized Repository Empty State */}
       {!vcsSummary.isLoading && status && !status.hasGit ? (
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex items-center justify-center">
         <div className="flex flex-col items-center justify-center p-10 text-center border border-dashed border-[var(--color-border-strong)] rounded-lg bg-[var(--color-surface)] max-w-2xl mx-auto my-6">
           <div className="w-12 h-12 rounded-lg bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/25 flex items-center justify-center text-[var(--color-primary)] mb-4">
             <FolderGit2 size={24} />
@@ -1020,10 +1127,11 @@ export default function GitWorkspace({
             )}
           </div>
         </div>
+        </div>
       ) : (
         <>
           {/* Top Command Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-2.5 p-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
+          <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
             <div className="flex flex-wrap items-center gap-2">
               {/* Branch Dropdown */}
               <div className="relative" ref={branchDropdownRef}>
@@ -1036,7 +1144,7 @@ export default function GitWorkspace({
                   <span className="font-semibold">
                     {status?.branch || branchesData.current || "main"}
                   </span>
-                  {status?.tracking && (
+                  {(status?.tracking || status?.remoteRef) && (
                     <span className="text-[10px] tabular-nums text-[var(--color-text-muted)]">
                       ↓{status.behind || 0} ↑{status.ahead || 0}
                     </span>
@@ -1176,20 +1284,7 @@ export default function GitWorkspace({
                     ? perms.disabledReason("remote")
                     : "Pull remote changes"
                 }
-                onClick={async () => {
-                  const res = await runAction(
-                    "git pull",
-                    () => gitService.pull(projectId),
-                    { syncWorkspace: true, reason: "git_pull" },
-                  );
-                  if (res?.data?.conflicted) {
-                    showNotice("error", "Pull resulted in merge conflicts");
-                    await loadConflicts();
-                  } else {
-                    showNotice("success", "Pulled latest commits from origin");
-                  }
-                  void loadBranches();
-                }}
+                onClick={handlePullRemote}
               >
                 Pull
               </Button>
@@ -1223,27 +1318,7 @@ export default function GitWorkspace({
                     ? perms.disabledReason("remote")
                     : "Fetch, Pull, and Push in one click"
                 }
-                onClick={async () => {
-                  const res = await runAction(
-                    "git sync",
-                    () => gitService.sync(projectId),
-                    {
-                      syncWorkspace: true,
-                      reason: "git_sync",
-                    },
-                  );
-                  if (res?.data?.conflicted) {
-                    showNotice(
-                      "error",
-                      "Sync resulted in merge conflicts — resolve them in Diff Editor",
-                    );
-                    await loadConflicts();
-                    setSubTab("diff");
-                  } else {
-                    showNotice("success", "Synchronized with GitHub");
-                  }
-                  void loadBranches();
-                }}
+                onClick={handleSyncRemote}
               >
                 <span className="font-mono tabular-nums">
                   Sync ↓{status?.behind || 0} ↑{status?.ahead || 0}
@@ -1262,44 +1337,86 @@ export default function GitWorkspace({
                 size="sm"
                 variant="outline"
                 icon={RefreshCw}
+                loading={checkingRemote}
                 onClick={() => {
                   vcsSummary.refetch();
                   void loadBranches();
+                  if (status?.hasGit && status?.repoUrl && perms.canRemoteWrite) {
+                    void handleCheckRemote({ force: true, silent: true });
+                  }
                 }}
-                title="Refresh Git status"
+                title="Refresh Git status & check remote updates"
               />
             </div>
           </div>
 
+          {/* Behind Origin / Remote Sync Guidance Banner */}
+          {remoteBanner && (
+            <VcsInlineBanner
+              data-testid="git-behind-origin-banner"
+              tone="warning"
+              icon={ArrowDown}
+              title={remoteBanner.title}
+              meta={remoteCheckedAgo ? `· Checked ${remoteCheckedAgo}` : ""}
+              actions={
+                remoteBanner.primaryAction === "sync" ? (
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    icon={RefreshCw}
+                    loading={busyAction === "git sync"}
+                    disabled={!perms.canRemoteWrite || !status?.repoUrl || Boolean(busyAction)}
+                    onClick={handleSyncRemote}
+                  >
+                    <span className="font-mono tabular-nums">
+                      {remoteBanner.primaryLabel}
+                    </span>
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    icon={ArrowDown}
+                    loading={busyAction === "git pull"}
+                    disabled={!perms.canRemoteWrite || !status?.repoUrl || Boolean(busyAction)}
+                    onClick={handlePullRemote}
+                  >
+                    <span className="font-mono tabular-nums">
+                      {remoteBanner.primaryLabel}
+                    </span>
+                  </Button>
+                )
+              }
+            />
+          )}
+
           {/* Conflict State Banner */}
           {hasConflicts && (
-            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 rounded-lg border border-rose-500/30 bg-rose-500/10 text-xs">
-              <div className="flex items-center gap-2">
-                <AlertTriangle size={15} className="text-rose-400 shrink-0" />
-                <span className="font-semibold text-[var(--color-text)]">
-                  Repository state: {status?.operationState} —{" "}
-                  {status?.conflicts?.length || 0} conflicted file(s)
-                </span>
-              </div>
-              <Button
-                size="sm"
-                variant="danger"
-                onClick={() => {
-                  void loadConflicts();
-                  setSubTab("diff");
-                }}
-              >
-                Open Conflict Resolver
-              </Button>
-            </div>
+            <VcsInlineBanner
+              tone="danger"
+              icon={AlertTriangle}
+              title={`Repository state: ${status?.operationState} — ${status?.conflicts?.length || 0} conflicted file(s)`}
+              actions={
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={() => {
+                    void loadConflicts();
+                    setSubTab("diff");
+                  }}
+                >
+                  Open Conflict Resolver
+                </Button>
+              }
+            />
           )}
 
           {/* Main 2-Zone Workbench */}
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
+          <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-12 gap-3.5 overflow-y-auto xl:overflow-hidden">
             {/* LEFT PANE: Commit Box & Changes Tree */}
-            <div className="xl:col-span-4 flex flex-col gap-3">
+            <div className="xl:col-span-4 flex flex-col min-h-0 xl:overflow-y-auto custom-scrollbar gap-2.5 xl:pr-0.5">
               {/* Commit Card */}
-              <div className="p-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] space-y-2.5">
+              <div className="p-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] space-y-2 shrink-0">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
                     <GitCommit size={13} className="text-[var(--color-primary)]" />
@@ -1389,45 +1506,70 @@ export default function GitWorkspace({
                   </span>
                 </div>
 
-                {/* Split Action Button */}
-                <div className="relative flex items-stretch gap-1" ref={splitMenuRef}>
-                  <button
-                    type="button"
-                    disabled={
-                      !perms.canLocalWrite ||
-                      !commitMessage.trim() ||
-                      totalChanges === 0 ||
-                      Boolean(busyAction)
-                    }
-                    title={
-                      !perms.canLocalWrite
-                        ? perms.disabledReason("local")
-                        : "Commit changes (Ctrl+Enter)"
-                    }
-                    onClick={() => handleCommit()}
-                    className="flex-1 h-9 px-3 rounded-l-md bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-xs font-semibold flex items-center justify-center gap-1.5 disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer transition-colors duration-150"
+                {/* Cohesive Split Action Button */}
+                <div className="relative" ref={splitMenuRef}>
+                  <div
+                    className={`flex items-stretch rounded-md border overflow-hidden transition-colors duration-150 ${
+                      canCommitNow
+                        ? "border-[var(--color-primary)]"
+                        : "border-[var(--color-border-strong)]"
+                    }`}
                   >
-                    {busyAction.startsWith("git commit") ? (
-                      <Loader2 size={13} className="animate-spin" />
-                    ) : (
-                      <Check size={13} />
-                    )}
-                    <span>
-                      {stagedCount > 0
-                        ? `Commit (${stagedCount} Staged)`
-                        : "Stage All & Commit"}
-                    </span>
-                  </button>
+                    <button
+                      type="button"
+                      disabled={!canCommitNow}
+                      title={
+                        !perms.canLocalWrite
+                          ? perms.disabledReason("local")
+                          : totalChanges === 0
+                            ? "No changes to commit"
+                            : !commitMessage.trim()
+                              ? "Enter a commit message or click AI Draft"
+                              : "Commit changes (Ctrl+Enter)"
+                      }
+                      onClick={() => handleCommit()}
+                      className={`flex-1 h-8 px-3 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors duration-150 ${
+                        canCommitNow
+                          ? "bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-foreground)] cursor-pointer active:scale-[0.99]"
+                          : "bg-[var(--color-surface-secondary)] text-[var(--color-text-muted)] cursor-not-allowed"
+                      }`}
+                    >
+                      {busyAction.startsWith("git commit") ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <Check size={13} />
+                      )}
+                      <span>
+                        {stagedCount > 0
+                          ? `Commit (${stagedCount} Staged)`
+                          : "Stage All & Commit"}
+                      </span>
+                    </button>
 
-                  <button
-                    type="button"
-                    disabled={!perms.canLocalWrite || Boolean(busyAction)}
-                    onClick={() => setShowSplitMenu((s) => !s)}
-                    aria-label="More commit actions"
-                    className="w-9 h-9 rounded-r-md bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white flex items-center justify-center disabled:opacity-45 cursor-pointer transition-colors duration-150"
-                  >
-                    <ChevronDown size={14} />
-                  </button>
+                    <span
+                      aria-hidden="true"
+                      className={`w-px shrink-0 ${
+                        canCommitNow
+                          ? "bg-[var(--color-primary-foreground)]/25"
+                          : "bg-[var(--color-border)]"
+                      }`}
+                    />
+
+                    <button
+                      type="button"
+                      disabled={!canOpenSplitMenu}
+                      onClick={() => setShowSplitMenu((s) => !s)}
+                      aria-label="More commit actions"
+                      title="More commit actions (Commit & Push, Amend, Undo)"
+                      className={`w-8 h-8 flex items-center justify-center transition-colors duration-150 disabled:opacity-45 disabled:cursor-not-allowed ${
+                        canCommitNow
+                          ? "bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-foreground)] cursor-pointer"
+                          : "bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-muted)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer"
+                      }`}
+                    >
+                      <ChevronDown size={13} />
+                    </button>
+                  </div>
 
                   {showSplitMenu && (
                     <div className="absolute right-0 top-full mt-1 z-40 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-xl p-1 text-xs">
@@ -1472,7 +1614,7 @@ export default function GitWorkspace({
                           setShowSplitMenu(false);
                           void handleUndoCommit(false);
                         }}
-                        className="w-full text-left px-2.5 py-1.5 rounded hover:bg-rose-500/10 text-rose-400 cursor-pointer"
+                        className="w-full text-left px-2.5 py-1.5 rounded hover:bg-[var(--color-danger)]/10 text-[var(--color-danger)] cursor-pointer"
                       >
                         Undo Last Commit (Soft)
                       </button>
@@ -1480,25 +1622,22 @@ export default function GitWorkspace({
                   )}
                 </div>
 
-                {totalChanges > 0 && !commitMessage.trim() && perms.canLocalWrite && (
-                  <p className="text-[11px] text-[var(--color-text-muted)]">
-                    Enter a commit message above (or click AI Draft) to commit.
-                  </p>
-                )}
-
-                {status?.repoUrl && perms.canRemoteWrite && totalChanges > 0 && (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    icon={ArrowUp}
-                    loading={busyAction === "git commit & push"}
-                    disabled={!commitMessage.trim() || Boolean(busyAction)}
-                    onClick={() => handleCommit({ pushAfter: true })}
-                    className="w-full"
-                  >
-                    Commit &amp; Push to {status?.branch || "main"}
-                  </Button>
-                )}
+                {status?.repoUrl &&
+                  perms.canRemoteWrite &&
+                  totalChanges > 0 &&
+                  commitMessage.trim().length > 0 && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon={ArrowUp}
+                      loading={busyAction === "git commit & push"}
+                      disabled={Boolean(busyAction)}
+                      onClick={() => handleCommit({ pushAfter: true })}
+                      className="w-full"
+                    >
+                      Commit &amp; Push to {status?.branch || "main"}
+                    </Button>
+                  )}
 
                 {status?.repoUrl && perms.canRemoteWrite && totalChanges === 0 && (status?.ahead || 0) > 0 && (
                   <Button
@@ -1540,7 +1679,11 @@ export default function GitWorkspace({
                   runAction(
                     `gitignore ${pattern}`,
                     () => gitService.addGitignore(projectId, pattern),
-                    { successText: `Added '${pattern}' to .gitignore` },
+                    {
+                      syncWorkspace: true,
+                      reason: "git_gitignore",
+                      successText: `Added '${pattern}' to .gitignore`,
+                    },
                   )
                 }
                 onOpenInEditor={onOpenFile}
@@ -1551,9 +1694,9 @@ export default function GitWorkspace({
             </div>
 
             {/* RIGHT PANE: Sub-Tabs Workbench */}
-            <div className="xl:col-span-8 flex flex-col gap-3 min-w-0">
+            <div className="xl:col-span-8 flex flex-col min-h-0 xl:overflow-hidden gap-2.5 min-w-0">
               {/* Sub-tab Strip */}
-              <div className="flex items-center gap-1 p-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-x-auto custom-scrollbar">
+              <div className="shrink-0 flex items-center gap-1 p-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-x-auto custom-scrollbar">
                 {[
                   { id: "diff", label: "Diff Editor", icon: FolderGit2 },
                   { id: "history", label: "History & Graph", icon: History },
@@ -1588,9 +1731,10 @@ export default function GitWorkspace({
 
               {/* SUB-TAB 1: DIFF & CONFLICT RESOLVER */}
               {subTab === "diff" && (
-                <div className="flex flex-col gap-3">
+                <div className="flex-1 min-h-0 flex flex-col gap-2.5 overflow-y-auto xl:overflow-hidden">
                   {(conflictsDetail.length > 0 ||
                     (status?.operationState && status.operationState !== "IDLE")) && (
+                    <div className="shrink-0 max-h-[50%] overflow-y-auto custom-scrollbar">
                     <VcsConflictResolver
                       mode="git"
                       operationLabel={`Git ${status?.operationState || "Merge"} Conflicts`}
@@ -1666,9 +1810,10 @@ export default function GitWorkspace({
                         }
                       }}
                     />
+                    </div>
                   )}
 
-                  <div className="h-[520px]">
+                  <div className="flex-1 min-h-[240px]">
                     <VcsMonacoDiffEditor
                       diffData={diffData}
                       loading={loadingDiff}
@@ -1710,7 +1855,7 @@ export default function GitWorkspace({
 
               {/* SUB-TAB 2: HISTORY & COMMIT GRAPH */}
               {subTab === "history" && (
-                <div className="space-y-3">
+                <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-0.5 space-y-3">
                   <div className="flex flex-wrap items-center gap-2 p-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
                     <div className="flex-1 min-w-[180px] flex items-center gap-1.5 h-8 px-2.5 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)]">
                       <Search size={12} className="text-[var(--color-text-muted)]" />
@@ -1761,7 +1906,7 @@ export default function GitWorkspace({
                             {commit.refs.slice(0, 2).map((refName) => (
                               <span
                                 key={refName}
-                                className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-indigo-500/10 text-indigo-400 border border-indigo-500/20"
+                                className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/25"
                               >
                                 {refName}
                               </span>
@@ -1896,10 +2041,10 @@ export default function GitWorkspace({
                                 </span>
                               </div>
                               <span className="font-mono tabular-nums text-[11px] shrink-0">
-                                <span className="text-emerald-400">
+                                <span className="text-[var(--color-success)]">
                                   +{f.insertions}
                                 </span>{" "}
-                                <span className="text-rose-400">
+                                <span className="text-[var(--color-danger)]">
                                   -{f.deletions}
                                 </span>
                               </span>
@@ -1914,7 +2059,7 @@ export default function GitWorkspace({
 
               {/* SUB-TAB 3: BRANCHES */}
               {subTab === "branches" && (
-                <div className="space-y-4">
+                <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-0.5 space-y-3.5">
                   {/* Create Branch Card */}
                   <div className="p-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] flex flex-wrap items-center gap-2">
                     <input
@@ -2014,7 +2159,7 @@ export default function GitWorkspace({
                               size={13}
                               className={
                                 b.isCurrent
-                                  ? "text-emerald-400"
+                                  ? "text-[var(--color-success)]"
                                   : "text-[var(--color-text-muted)]"
                               }
                             />
@@ -2022,7 +2167,7 @@ export default function GitWorkspace({
                               {b.name}
                             </span>
                             {b.isCurrent && (
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--color-success)]/12 text-[var(--color-success)] border border-[var(--color-success)]/25">
                                 CURRENT
                               </span>
                             )}
@@ -2151,7 +2296,7 @@ export default function GitWorkspace({
 
               {/* SUB-TAB 4: STASHES */}
               {subTab === "stashes" && (
-                <div className="space-y-3">
+                <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-0.5 space-y-3">
                   <div className="p-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] flex flex-wrap items-center gap-2">
                     <input
                       type="text"
@@ -2300,7 +2445,7 @@ export default function GitWorkspace({
 
               {/* SUB-TAB 5: TAGS */}
               {subTab === "tags" && (
-                <div className="space-y-3">
+                <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-0.5 space-y-3">
                   <div className="p-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] flex flex-wrap items-center gap-2">
                     <input
                       type="text"
@@ -2413,30 +2558,35 @@ export default function GitWorkspace({
 
               {/* SUB-TAB 6: PULL REQUESTS & CI CHECKS */}
               {subTab === "pulls" && (
-                <GitPullRequestsPanel
-                  projectId={projectId}
-                  repoUrl={status?.repoUrl}
-                  currentBranch={status?.branch || branchesData.current}
-                  defaultBranch={status?.defaultBranch || branchesData.defaultBranch}
-                  branches={branchesData.local || []}
-                  canRemoteWrite={perms.canRemoteWrite}
-                  disabledReason={perms.disabledReason("remote")}
-                  onLog={appendLog}
-                  onNotice={showNotice}
-                />
+                <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-0.5">
+                  <GitPullRequestsPanel
+                    projectId={projectId}
+                    repoUrl={status?.repoUrl}
+                    currentBranch={status?.branch || branchesData.current}
+                    defaultBranch={status?.defaultBranch || branchesData.defaultBranch}
+                    branches={branchesData.local || []}
+                    canRemoteWrite={perms.canRemoteWrite}
+                    disabledReason={perms.disabledReason("remote")}
+                    onLog={appendLog}
+                    onNotice={showNotice}
+                  />
+                </div>
               )}
             </div>
           </div>
         </>
       )}
+      </div>
 
-      {/* Collapsible Git Output Console */}
+      {/* Docked Bottom Resizable Git Output Console */}
       {showConsole && (
         <GitOutputConsole
           logs={logs}
           onClearLogs={() => setLogs([])}
           onRunCommand={handleRunConsoleCommand}
+          onClose={() => setShowConsole(false)}
           running={runningConsole}
+          containerRef={workspaceRef}
         />
       )}
 

@@ -108,9 +108,15 @@ export default function VcsStatusBar({
   const Icon = isGit ? GitBranch : Layers;
   const dirtyCount = vcsSummary?.dirtyCount || 0;
   const conflictCount = vcsSummary?.conflictCount || 0;
+  const ahead = vcsSummary?.ahead || 0;
+  const behind = vcsSummary?.behind || 0;
+  const remoteRef =
+    vcsSummary?.rawStatus?.remoteRef ||
+    vcsSummary?.rawStatus?.tracking ||
+    `origin/${vcsSummary?.branchLabel || "main"}`;
 
   return (
-    <div className="relative" ref={containerRef}>
+    <div className="relative flex items-center gap-1.5" ref={containerRef}>
       <button
         type="button"
         onClick={handleToggle}
@@ -125,9 +131,9 @@ export default function VcsStatusBar({
           size={11}
           className={
             conflictCount > 0
-              ? "text-rose-400 shrink-0"
+              ? "text-[var(--color-danger)] shrink-0"
               : dirtyCount > 0
-                ? "text-amber-400 shrink-0"
+                ? "text-[var(--color-warning)] shrink-0"
                 : "text-[var(--ps-ink-muted)] shrink-0"
           }
         />
@@ -136,13 +142,13 @@ export default function VcsStatusBar({
             <span className="font-mono tabular-nums font-medium">
               {vcsSummary?.branchLabel || "main"}
             </span>
-            {vcsSummary?.versionBadge && (
+            {vcsSummary?.versionBadge && !isGit && (
               <span className="text-[10px] font-mono tabular-nums text-[var(--ps-cobalt)]">
                 {vcsSummary.versionBadge}
               </span>
             )}
             {dirtyCount > 0 && (
-              <span className="text-[10px] font-mono tabular-nums text-amber-400">
+              <span className="text-[10px] font-mono tabular-nums text-[var(--color-warning)]">
                 *{dirtyCount}
               </span>
             )}
@@ -150,6 +156,32 @@ export default function VcsStatusBar({
           </>
         )}
       </button>
+
+      {isGit && !isMobile && behind > 0 && (
+        <button
+          type="button"
+          data-testid="vcs-status-behind"
+          onClick={() => onOpenVersionControl?.()}
+          title={`Behind ${remoteRef} by ${behind} ${behind === 1 ? "commit" : "commits"} — click to open Git & GitHub and pull`}
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--color-warning)]/12 border border-[var(--color-warning)]/30 text-[var(--color-warning)] hover:bg-[var(--color-warning)]/20 font-mono tabular-nums text-[10px] font-semibold transition-colors duration-150 cursor-pointer"
+        >
+          <span>↓{behind}</span>
+          {ahead > 0 && (
+            <span className="text-[var(--ps-ink-muted)]">↑{ahead}</span>
+          )}
+        </button>
+      )}
+
+      {isGit && !isMobile && behind === 0 && ahead > 0 && (
+        <button
+          type="button"
+          onClick={() => onOpenVersionControl?.()}
+          title={`Ahead of ${remoteRef} by ${ahead} ${ahead === 1 ? "commit" : "commits"} — click to push from Git & GitHub`}
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[var(--ps-surface-2)] border border-[var(--ps-line)] text-[var(--ps-ink-secondary)] hover:text-[var(--ps-ink)] font-mono tabular-nums text-[10px] transition-colors duration-150 cursor-pointer"
+        >
+          <span>↑{ahead}</span>
+        </button>
+      )}
 
       {open && (
         <div className="absolute left-0 bottom-full mb-1.5 z-50 w-64 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-xl p-2 text-xs font-sans">
@@ -170,7 +202,7 @@ export default function VcsStatusBar({
           </div>
 
           {switchError && (
-            <div className="mb-1.5 px-2 py-1.5 rounded bg-rose-500/10 border border-rose-500/20 text-[11px] text-rose-400">
+            <div className="mb-1.5 px-2.5 py-1.5 rounded bg-[var(--color-surface-secondary)] border border-[var(--color-border)] border-l-2 border-l-[var(--color-danger)] text-[11px] text-[var(--color-danger)]">
               {switchError}
             </div>
           )}

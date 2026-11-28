@@ -16,3 +16,19 @@ export function rememberProjectFileRead(scope, file) {
     }
     return file;
 }
+export function invalidateProjectFileReadCache(projectId = null) {
+    if (!projectId) {
+        reads.clear();
+        return;
+    }
+    for (const key of reads.keys()) {
+        try {
+            const parsed = JSON.parse(key);
+            if (parsed?.[0] === projectId) {
+                reads.delete(key);
+            }
+        } catch {
+            // Ignore malformed keys
+        }
+    }
+}

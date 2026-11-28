@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertCircle,
   BookmarkPlus,
   Check,
-  CheckCircle2,
   ChevronDown,
   Download,
   FolderSearch,
@@ -31,6 +29,7 @@ import VcsChangesTree from "../shared/VcsChangesTree";
 import VcsMonacoDiffEditor from "../shared/VcsMonacoDiffEditor";
 import VcsCommitGraph from "../shared/VcsCommitGraph";
 import VcsConflictResolver from "../shared/VcsConflictResolver";
+import VcsInlineBanner from "../shared/VcsInlineBanner";
 import SnapshotComparePanel from "./SnapshotComparePanel";
 import SnapshotBrowsePanel from "./SnapshotBrowsePanel";
 import { snapshotVcsService } from "../../../../services/snapshotVcs.service";
@@ -606,45 +605,32 @@ export default function SnapshotVcsWorkspace({
   const headCp = status?.headCheckpoint;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="h-full min-h-0 flex flex-col overflow-hidden px-4 sm:px-5 py-3 gap-2.5">
       {/* Real-time Operation Notice (GC completed) */}
       {vcsSummary.activeOperation && (
-        <div className="flex items-center justify-between gap-3 px-4 py-2 rounded-lg border border-[var(--color-secondary)]/30 bg-[var(--color-secondary)]/10 text-xs font-mono text-[var(--color-secondary)]">
-          <span>{vcsSummary.activeOperation.message}</span>
-          <span className="uppercase text-[10px]">
-            {vcsSummary.activeOperation.phase}
-          </span>
-        </div>
+        <VcsInlineBanner
+          tone="info"
+          pulsing
+          mono
+          title={vcsSummary.activeOperation.message}
+          actions={
+            <span className="uppercase font-mono text-[10px] text-[var(--color-text-muted)]">
+              {vcsSummary.activeOperation.phase}
+            </span>
+          }
+        />
       )}
 
       {notice && (
-        <div
-          className={`flex items-center justify-between gap-2 px-4 py-2.5 rounded-lg border text-xs font-medium ${
-            notice.type === "error"
-              ? "bg-[var(--color-danger)]/10 text-[var(--color-danger)] border-[var(--color-danger)]/30"
-              : "bg-[var(--color-success)]/10 text-[var(--color-success)] border-[var(--color-success)]/30"
-          }`}
-        >
-          <div className="flex items-center gap-2">
-            {notice.type === "error" ? (
-              <AlertCircle size={14} />
-            ) : (
-              <CheckCircle2 size={14} />
-            )}
-            <span>{notice.text}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setNotice(null)}
-            className="opacity-75 hover:opacity-100 cursor-pointer"
-          >
-            ✕
-          </button>
-        </div>
+        <VcsInlineBanner
+          tone={notice.type === "error" ? "danger" : "success"}
+          title={notice.text}
+          onDismiss={() => setNotice(null)}
+        />
       )}
 
       {/* Top Command Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2.5 p-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
+      <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
         <div className="flex flex-wrap items-center gap-2">
           {/* Active Snapshot Branch Dropdown */}
           <div className="relative" ref={branchMenuRef}>
@@ -767,12 +753,12 @@ export default function SnapshotVcsWorkspace({
       </div>
 
       {/* Main 2-Zone Workbench */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
+      <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-12 gap-3.5 overflow-y-auto xl:overflow-hidden">
         {/* LEFT PANE: Capture Box & Working Tree Changes */}
-        <div className="xl:col-span-4 flex flex-col gap-3">
+        <div className="xl:col-span-4 flex flex-col min-h-0 xl:overflow-y-auto custom-scrollbar gap-2.5 xl:pr-0.5">
           <form
             onSubmit={handleCapture}
-            className="p-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] space-y-2.5"
+            className="p-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] space-y-2 shrink-0"
           >
             <div className="flex items-center justify-between gap-2">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
@@ -897,8 +883,8 @@ export default function SnapshotVcsWorkspace({
         </div>
 
         {/* RIGHT PANE: Sub-tabs Workbench */}
-        <div className="xl:col-span-8 flex flex-col gap-3 min-w-0">
-          <div className="flex items-center gap-1 p-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-x-auto custom-scrollbar">
+        <div className="xl:col-span-8 flex flex-col min-h-0 xl:overflow-hidden gap-2.5 min-w-0">
+          <div className="shrink-0 flex items-center gap-1 p-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-x-auto custom-scrollbar">
             {[
               { id: "diff", label: "Diff Editor", icon: GitCompare },
               { id: "timeline", label: "Timeline & Graph", icon: History },
@@ -932,7 +918,7 @@ export default function SnapshotVcsWorkspace({
 
           {/* SUB-TAB 1: DIFF EDITOR */}
           {subTab === "diff" && (
-            <div className="h-[540px]">
+            <div className="flex-1 min-h-[260px]">
               <VcsMonacoDiffEditor
                 diffData={diffData}
                 loading={loadingDiff}
@@ -946,7 +932,7 @@ export default function SnapshotVcsWorkspace({
 
           {/* SUB-TAB 2: TIMELINE & GRAPH */}
           {subTab === "timeline" && (
-            <div className="space-y-3">
+            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-0.5 space-y-3">
               {/* Filters */}
               <div className="p-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] flex flex-wrap items-center gap-2 text-xs">
                 <div className="flex-1 min-w-[160px] flex items-center gap-1.5 h-8 px-2.5 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)]">
@@ -1391,33 +1377,37 @@ export default function SnapshotVcsWorkspace({
 
           {/* SUB-TAB 3: COMPARE */}
           {subTab === "compare" && (
-            <SnapshotComparePanel
-              projectId={projectId}
-              checkpoints={checkpoints}
-              activeSnapshotId={status?.activeSnapshotId}
-              onOpenInEditor={onOpenFile}
-            />
+            <div className="flex-1 min-h-0 flex flex-col overflow-y-auto xl:overflow-hidden">
+              <SnapshotComparePanel
+                projectId={projectId}
+                checkpoints={checkpoints}
+                activeSnapshotId={status?.activeSnapshotId}
+                onOpenInEditor={onOpenFile}
+              />
+            </div>
           )}
 
           {/* SUB-TAB 4: BROWSE HISTORICAL FILES & SINGLE-FILE RESTORE */}
           {subTab === "browse" && (
-            <SnapshotBrowsePanel
-              projectId={projectId}
-              checkpoints={checkpoints}
-              initialSnapshotId={browseSnapshotId || selectedCheckpoint?.id}
-              canLocalWrite={perms.canLocalWrite}
-              canExport={perms.canExport}
-              disabledReason={perms.disabledReason("local")}
-              onFileRestored={async () => {
-                vcsSummary.invalidateAll();
-                await onSync?.({ reason: "snapshot_restore_file" });
-              }}
-            />
+            <div className="flex-1 min-h-0 flex flex-col overflow-y-auto xl:overflow-hidden">
+              <SnapshotBrowsePanel
+                projectId={projectId}
+                checkpoints={checkpoints}
+                initialSnapshotId={browseSnapshotId || selectedCheckpoint?.id}
+                canLocalWrite={perms.canLocalWrite}
+                canExport={perms.canExport}
+                disabledReason={perms.disabledReason("local")}
+                onFileRestored={async () => {
+                  vcsSummary.invalidateAll();
+                  await onSync?.({ reason: "snapshot_restore_file" });
+                }}
+              />
+            </div>
           )}
 
           {/* SUB-TAB 5: LOCAL BRANCHES & 3-WAY MERGE */}
           {subTab === "branches" && (
-            <div className="space-y-4">
+            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-0.5 space-y-3.5">
               {mergeConflictState && (
                 <VcsConflictResolver
                   mode="snapshot"
@@ -1528,7 +1518,7 @@ export default function SnapshotVcsWorkspace({
                           size={13}
                           className={
                             branch.isActive
-                              ? "text-emerald-400"
+                              ? "text-[var(--color-success)]"
                               : "text-[var(--color-text-muted)]"
                           }
                         />
@@ -1541,7 +1531,7 @@ export default function SnapshotVcsWorkspace({
                           </span>
                         )}
                         {branch.isActive && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--color-success)]/12 text-[var(--color-success)] border border-[var(--color-success)]/25">
                             ACTIVE
                           </span>
                         )}
@@ -1667,7 +1657,7 @@ export default function SnapshotVcsWorkspace({
 
           {/* SUB-TAB 6: RELEASE TAGS */}
           {subTab === "tags" && (
-            <div className="space-y-3">
+            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-0.5 space-y-3">
               <div className="p-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] flex flex-wrap items-center gap-2 text-xs">
                 <input
                   type="text"
@@ -1736,7 +1726,7 @@ export default function SnapshotVcsWorkspace({
                       className="flex items-center justify-between gap-2 px-4 py-2.5 text-xs"
                     >
                       <div className="min-w-0 flex items-center gap-2">
-                        <Tag size={13} className="text-indigo-400 shrink-0" />
+                        <Tag size={13} className="text-[var(--color-primary)] shrink-0" />
                         <span className="font-mono font-semibold text-[var(--color-text)]">
                           {t.name}
                         </span>

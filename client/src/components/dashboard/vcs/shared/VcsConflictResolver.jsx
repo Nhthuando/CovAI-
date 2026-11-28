@@ -84,11 +84,11 @@ export default function VcsConflictResolver({
     conflicts.every((c) => Boolean(snapshotResolutions[c.path]));
 
   return (
-    <div className="flex flex-col border border-[var(--color-danger)]/35 rounded-lg bg-[var(--color-surface)] overflow-hidden">
+    <div className="flex flex-col border border-[var(--color-border)] border-l-2 border-l-[var(--color-danger)] rounded-lg bg-[var(--color-surface)] overflow-hidden">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 bg-[var(--color-danger)]/10 border-b border-[var(--color-danger)]/25">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-3.5 py-2.5 bg-[var(--color-surface-secondary)]/55 border-b border-[var(--color-border)]">
         <div className="flex items-center gap-2">
-          <AlertTriangle size={15} className="text-[var(--color-danger)] shrink-0" />
+          <AlertTriangle size={14} className="text-[var(--color-danger)] shrink-0" />
           <div>
             <h3 className="text-xs font-semibold text-[var(--color-text)]">
               {operationLabel} ({conflicts.length} conflicted file
@@ -150,8 +150,8 @@ export default function VcsConflictResolver({
 
       {/* Body Grid (or ready-to-complete banner when all conflicts are resolved) */}
       {conflicts.length === 0 ? (
-        <div className="px-4 py-3 text-xs text-[var(--color-success)] bg-[var(--color-success)]/10 flex items-center gap-2">
-          <CheckCircle2 size={14} className="shrink-0" />
+        <div className="px-3.5 py-2.5 text-xs text-[var(--color-text-secondary)] bg-[var(--color-surface)] border-l-2 border-l-[var(--color-success)] flex items-center gap-2">
+          <CheckCircle2 size={14} className="text-[var(--color-success)] shrink-0" />
           <span>
             All conflicted files are resolved and staged. Click{" "}
             <strong className="font-semibold text-[var(--color-text)]">
@@ -303,7 +303,8 @@ export default function VcsConflictResolver({
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-[var(--color-border)] flex-1">
                   <div className="flex flex-col min-w-0">
-                    <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-secondary)] bg-[var(--color-secondary)]/10 border-b border-[var(--color-border)]">
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)] bg-[var(--color-surface-secondary)]/55 border-b border-[var(--color-border)]">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-secondary)] shrink-0" />
                       Ours (Current Branch)
                     </div>
                     <pre className="p-3 text-xs font-mono text-[var(--color-text-secondary)] overflow-auto max-h-64 m-0 whitespace-pre-wrap">
@@ -311,7 +312,8 @@ export default function VcsConflictResolver({
                     </pre>
                   </div>
                   <div className="flex flex-col min-w-0">
-                    <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-warning)] bg-[var(--color-warning)]/10 border-b border-[var(--color-border)]">
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)] bg-[var(--color-surface-secondary)]/55 border-b border-[var(--color-border)]">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-warning)] shrink-0" />
                       Theirs (Incoming Branch)
                     </div>
                     <pre className="p-3 text-xs font-mono text-[var(--color-text-secondary)] overflow-auto max-h-64 m-0 whitespace-pre-wrap">

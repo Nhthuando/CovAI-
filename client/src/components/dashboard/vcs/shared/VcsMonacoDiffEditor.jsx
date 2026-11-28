@@ -173,7 +173,7 @@ export default function VcsMonacoDiffEditor({
   const hunks = Array.isArray(diffData?.hunks) ? diffData.hunks : [];
 
   return (
-    <div className="flex flex-col h-full min-h-[380px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+    <div className="flex flex-col h-full min-h-[220px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-secondary)]/60 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
@@ -291,7 +291,7 @@ export default function VcsMonacoDiffEditor({
                   disabled={!canLocalWrite || hunkBusyIndex !== null}
                   title={canLocalWrite ? `Stage Hunk #${hunk.index + 1}` : disabledReason}
                   onClick={() => runHunk(onStageHunk, hunk.index)}
-                  className="p-0.5 rounded hover:bg-emerald-500/15 text-emerald-400 disabled:opacity-40 cursor-pointer"
+                  className="p-0.5 rounded hover:bg-[var(--color-success)]/15 text-[var(--color-success)] disabled:opacity-40 cursor-pointer"
                 >
                   <Plus size={11} />
                 </button>
@@ -303,7 +303,7 @@ export default function VcsMonacoDiffEditor({
                   disabled={!canLocalWrite || hunkBusyIndex !== null}
                   title={canLocalWrite ? `Revert Hunk #${hunk.index + 1}` : disabledReason}
                   onClick={() => runHunk(onRevertHunk, hunk.index)}
-                  className="p-0.5 rounded hover:bg-rose-500/15 text-rose-400 disabled:opacity-40 cursor-pointer"
+                  className="p-0.5 rounded hover:bg-[var(--color-danger)]/15 text-[var(--color-danger)] disabled:opacity-40 cursor-pointer"
                 >
                   <RotateCcw size={11} />
                 </button>
@@ -315,7 +315,7 @@ export default function VcsMonacoDiffEditor({
                   disabled={!canLocalWrite || hunkBusyIndex !== null}
                   title={canLocalWrite ? `Unstage Hunk #${hunk.index + 1}` : disabledReason}
                   onClick={() => runHunk(onUnstageHunk, hunk.index)}
-                  className="p-0.5 rounded hover:bg-amber-500/15 text-amber-400 disabled:opacity-40 cursor-pointer"
+                  className="p-0.5 rounded hover:bg-[var(--color-warning)]/15 text-[var(--color-warning)] disabled:opacity-40 cursor-pointer"
                 >
                   <Minus size={11} />
                 </button>
@@ -326,7 +326,7 @@ export default function VcsMonacoDiffEditor({
       )}
 
       {/* Body — keep DiffEditor mounted after first diff open to avoid aborting Monaco workers mid-boot */}
-      <div className="flex-1 min-h-[320px] relative bg-[var(--color-bg)]">
+      <div className="flex-1 min-h-[160px] relative bg-[var(--color-bg)]">
         {hasMountedDiff && (
           <div className={canRenderDiff ? "h-full w-full" : "hidden"}>
             <MountedDiffCanvas

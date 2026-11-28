@@ -32,8 +32,10 @@ import { useTheme } from "../../contexts/ThemeContext";
 import {
   getFileContentApi,
   getFileContentFromCache,
+  invalidateFileContentCache,
   updateFileContentApi,
 } from "../../services/project.service";
+import { reopenCleanProjectEditors } from "../../lib/editor/editorModelRegistry";
 import { getFileCoverage } from "../../services/coverage.service";
 import { resolveTestOrFunctionLine } from "../../services/navigation.service";
 import { EditorCodeSkeleton } from "../common/Skeleton";
@@ -469,6 +471,7 @@ export default function Editor({
   onRunAnalysis,
   refreshTrigger,
   jumpTarget,
+  onDirtyPathsChange,
 }) {
   const { resolvedTheme } = useTheme();
   const projectAccess = useProjectAccess(projectId);
@@ -478,66 +481,167 @@ export default function Editor({
   const [fileContents, setFileContents] = useState({});
   const fetchedRef = useRef(new Set());
   const saveHandlerRef = useRef(null);
+  const fileContentsRef = useRef(fileContents);
+  const activeTabIdRef = useRef(activeTabId);
+  const tabsRef = useRef(tabs);
+  fileContentsRef.current = fileContents;
+  activeTabIdRef.current = activeTabId;
+  tabsRef.current = tabs;
+
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
-  const [externalDiskChange, setExternalDiskChange] = useState(null);
+  const [externalDiskChanges, setExternalDiskChanges] = useState({});
+  const activeExternalDiskChange = activeTabId
+    ? externalDiskChanges[activeTabId] || null
+    : null;
   const draftStorageKey = useCallback(path => `covai_draft_${draftUserId}_${projectId}_${snapshotId}_${path}`, [draftUserId, projectId, snapshotId]);
   useEffect(() => {
-    if (!draftUserId || !projectId) return;
+    const dirtyPaths = [];
     for (const [path, file] of Object.entries(fileContents)) {
-      const key = `covai_draft_${draftUserId}_${projectId}_${snapshotId}_${path}`;
-      if (file.draft !== undefined && file.draft !== file.content) {
-        sessionStorage.setItem(key, JSON.stringify({ draft: file.draft, version: file.version, snapshotId: file.snapshotId }));
-      } else if (file.content !== undefined) sessionStorage.removeItem(key);
+      const isDirty = file?.draft !== undefined && file.draft !== file.content;
+      if (isDirty) dirtyPaths.push(path);
+      if (draftUserId && projectId) {
+        const key = `covai_draft_${draftUserId}_${projectId}_${snapshotId}_${path}`;
+        if (isDirty) {
+          sessionStorage.setItem(key, JSON.stringify({ draft: file.draft, version: file.version, snapshotId: file.snapshotId }));
+        } else if (file?.content !== undefined) {
+          sessionStorage.removeItem(key);
+        }
+      }
     }
-  }, [draftUserId, projectId, snapshotId, fileContents]);
+    onDirtyPathsChange?.(dirtyPaths);
+  }, [draftUserId, projectId, snapshotId, fileContents, onDirtyPathsChange]);
 
   // When an external sync occurs (e.g. Git pull / checkout / Snapshot restore), refresh open tabs safely
   useEffect(() => {
-    if (!refreshTrigger || !projectId) return;
+    if (!refreshTrigger || !projectId) return undefined;
+    let cancelled = false;
     fetchedRef.current.clear();
-    if (!activeTabId) return;
+    invalidateFileContentCache(projectId);
 
-    getFileContentApi(projectId, activeTabId, { snapshotId, forceFresh: true })
-      .then((res) => {
-        if (!res?.data) return;
-        setFileContents((prev) => {
-          const next = {};
-          for (const [tabPath, entry] of Object.entries(prev)) {
-            if (tabPath === activeTabId || (entry?.draft !== undefined && entry.draft !== entry.content)) {
-              next[tabPath] = entry;
-            }
-          }
-          const existing = next[activeTabId];
+    const prevContents = fileContentsRef.current;
+    const currentActive = activeTabIdRef.current;
+    const dirtyPaths = [];
+    for (const [tabPath, entry] of Object.entries(prevContents)) {
+      if (entry?.draft !== undefined && entry.draft !== entry.content) {
+        dirtyPaths.push(tabPath);
+      }
+    }
+
+    // Evict all clean cached entries immediately so switching to any other clean tab fetches fresh disk code
+    setFileContents((prev) => {
+      const next = {};
+      for (const [tabPath, entry] of Object.entries(prev)) {
+        const isDirty = entry?.draft !== undefined && entry.draft !== entry.content;
+        if (isDirty || tabPath === currentActive) {
+          next[tabPath] = entry;
+        }
+      }
+      return next;
+    });
+
+    const pathsToVerify = new Set(dirtyPaths);
+    if (currentActive) pathsToVerify.add(currentActive);
+    if (pathsToVerify.size === 0) return undefined;
+
+    Promise.all(
+      [...pathsToVerify].map(async (tabPath) => {
+        try {
+          const res = await getFileContentApi(projectId, tabPath, {
+            snapshotId,
+            forceFresh: true,
+          });
+          if (cancelled || !res?.data) return;
+
+          const latestEntry = fileContentsRef.current[tabPath];
           const isDirty =
-            existing?.draft !== undefined && existing.draft !== existing.content;
-          if (isDirty && existing?.content !== res.data.content) {
-            setExternalDiskChange({
-              path: activeTabId,
-              content: res.data.content,
-              version: res.data.version,
-              snapshotId: res.data.snapshotId,
-              workspaceRevision: res.data.workspaceRevision,
-            });
-            return next;
+            latestEntry?.draft !== undefined &&
+            latestEntry.draft !== latestEntry.content;
+
+          if (isDirty) {
+            if (latestEntry?.content !== res.data.content) {
+              setExternalDiskChanges((prev) => ({
+                ...prev,
+                [tabPath]: {
+                  path: tabPath,
+                  content: res.data.content,
+                  version: res.data.version,
+                  snapshotId: res.data.snapshotId,
+                  workspaceRevision: res.data.workspaceRevision,
+                  deleted: false,
+                },
+              }));
+            } else {
+              setExternalDiskChanges((prev) => {
+                if (!prev[tabPath]) return prev;
+                const next = { ...prev };
+                delete next[tabPath];
+                return next;
+              });
+            }
+            return;
           }
-          setExternalDiskChange(null);
-          next[activeTabId] = {
-            ...existing,
-            content: res.data.content,
-            version: res.data.version,
-            snapshotId: res.data.snapshotId,
-            workspaceRevision: res.data.workspaceRevision,
-            loading: false,
-            error: null,
-          };
-          return next;
-        });
-      })
-      .catch((err) => {
-        console.warn("[Editor] External disk refresh warning:", err?.message || err);
-      });
-  }, [refreshTrigger, activeTabId, projectId, snapshotId]);
+
+          setExternalDiskChanges((prev) => {
+            if (!prev[tabPath]) return prev;
+            const next = { ...prev };
+            delete next[tabPath];
+            return next;
+          });
+          setFileContents((prev) => {
+            const curr = prev[tabPath];
+            if (curr?.draft !== undefined && curr.draft !== curr.content) {
+              return prev;
+            }
+            return {
+              ...prev,
+              [tabPath]: {
+                ...curr,
+                content: res.data.content,
+                version: res.data.version,
+                snapshotId: res.data.snapshotId,
+                workspaceRevision: res.data.workspaceRevision,
+                loading: false,
+                error: null,
+              },
+            };
+          });
+        } catch (err) {
+          if (cancelled) return;
+          if (err?.status === 404 || /not found/i.test(err?.message || "")) {
+            const latestEntry = fileContentsRef.current[tabPath];
+            const isDirty =
+              latestEntry?.draft !== undefined &&
+              latestEntry.draft !== latestEntry.content;
+            if (isDirty) {
+              setExternalDiskChanges((prev) => ({
+                ...prev,
+                [tabPath]: {
+                  path: tabPath,
+                  deleted: true,
+                },
+              }));
+            } else {
+              setFileContents((prev) => ({
+                ...prev,
+                [tabPath]: {
+                  content: undefined,
+                  loading: false,
+                  error: "This file was removed from the workspace.",
+                },
+              }));
+            }
+          } else {
+            console.warn("[Editor] External disk refresh warning:", err?.message || err);
+          }
+        }
+      }),
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshTrigger, projectId, snapshotId]);
 
   // Coverage state
   const [fileCoverage, setFileCoverage] = useState(null);
@@ -869,7 +973,12 @@ export default function Editor({
           workspaceRevision: saved.data?.workspaceRevision,
         },
       }));
-      setExternalDiskChange(null);
+      setExternalDiskChanges((prev) => {
+        if (!prev[activeTabId]) return prev;
+        const next = { ...prev };
+        delete next[activeTabId];
+        return next;
+      });
       window.dispatchEvent(
         new CustomEvent("covai:workspace-saved", {
           detail: { projectId, path: activeTabId },
@@ -1371,39 +1480,60 @@ export default function Editor({
         className="flex-1 overflow-hidden relative"
         style={{ background: "var(--color-bg)" }}
       >
-        {externalDiskChange && externalDiskChange.path === activeTabId && (
-          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-xs bg-amber-500/10 border-b border-amber-500/25 text-[var(--color-text)]">
-            <div className="flex items-center gap-2">
-              <AlertCircle size={14} className="text-amber-400 shrink-0" />
-              <span>
-                This file changed on disk during a Version Control operation, and you have unsaved edits in the editor.
+        {activeExternalDiskChange && activeExternalDiskChange.path === activeTabId && (
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 text-xs bg-[var(--color-surface)] border-b border-[var(--color-border)] border-l-2 border-l-[var(--color-warning)] text-[var(--color-text)]">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <AlertCircle size={14} className="text-[var(--color-warning)] shrink-0" />
+              <span className="text-[var(--color-text)]">
+                {activeExternalDiskChange.deleted
+                  ? "This file was deleted on disk by a Version Control operation, and you have unsaved edits."
+                  : "This file changed on disk during a Version Control operation, and you have unsaved edits."}
               </span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 shrink-0">
+              {!activeExternalDiskChange.deleted && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    try {
+                      sessionStorage.removeItem(draftStorageKey(activeTabId));
+                    } catch {
+                      /* ignore */
+                    }
+                    setFileContents((prev) => ({
+                      ...prev,
+                      [activeTabId]: {
+                        ...prev[activeTabId],
+                        content: activeExternalDiskChange.content,
+                        draft: undefined,
+                        version: activeExternalDiskChange.version,
+                        snapshotId: activeExternalDiskChange.snapshotId,
+                        workspaceRevision: activeExternalDiskChange.workspaceRevision,
+                        error: null,
+                      },
+                    }));
+                    setExternalDiskChanges((prev) => {
+                      const next = { ...prev };
+                      delete next[activeTabId];
+                      return next;
+                    });
+                    reopenCleanProjectEditors(projectId, snapshotId, [activeTabId]);
+                  }}
+                  className="px-2.5 py-1 rounded-md bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[var(--color-primary-foreground)] font-medium cursor-pointer transition-colors duration-150"
+                >
+                  Reload from Disk
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => {
-                  setFileContents((prev) => ({
-                    ...prev,
-                    [activeTabId]: {
-                      ...prev[activeTabId],
-                      content: externalDiskChange.content,
-                      draft: undefined,
-                      version: externalDiskChange.version,
-                      snapshotId: externalDiskChange.snapshotId,
-                      workspaceRevision: externalDiskChange.workspaceRevision,
-                    },
-                  }));
-                  setExternalDiskChange(null);
-                }}
-                className="px-2.5 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-300 font-medium cursor-pointer"
-              >
-                Reload from Disk
-              </button>
-              <button
-                type="button"
-                onClick={() => setExternalDiskChange(null)}
-                className="px-2.5 py-1 rounded-md bg-[var(--color-surface-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] cursor-pointer"
+                onClick={() =>
+                  setExternalDiskChanges((prev) => {
+                    const next = { ...prev };
+                    delete next[activeTabId];
+                    return next;
+                  })
+                }
+                className="px-2.5 py-1 rounded-md bg-[var(--color-surface-secondary)] hover:bg-[var(--color-surface-muted)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] cursor-pointer transition-colors duration-150"
               >
                 Keep My Edits
               </button>

@@ -643,4 +643,25 @@ export const gitService = {
     });
     return handleResponse(res, "Failed to execute git command");
   },
+
+  checkRemoteUpdates: async (
+    projectId,
+    { force = false, branch = null, silent = true } = {},
+  ) => {
+    const res = await gitFetch(`${BASE_URL}/git/remote-check`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        projectId,
+        force: Boolean(force),
+        ...(branch ? { branch } : {}),
+        silent: Boolean(silent),
+      }),
+    });
+    return handleResponse(res, "Failed to check remote updates");
+  },
 };
+
+export function checkGitRemoteUpdatesApi(projectId, options = {}) {
+  return gitService.checkRemoteUpdates(projectId, options);
+}

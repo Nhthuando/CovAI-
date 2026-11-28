@@ -173,7 +173,7 @@ export const enforceProjectEndpointPolicy = (family, dependencies = {}) => async
             const projectId = req.projectAccess.project.id;
             const cleanReqPath = "/" + String(req.path || "").split("/").filter(Boolean).join("/");
             const skipDraftConflictCheck =
-                (family === 'git' && ['/command', '/stage', '/unstage'].includes(cleanReqPath)) ||
+                (family === 'git' && ['/command', '/stage', '/unstage', '/fetch', '/remote-check'].includes(cleanReqPath)) ||
                 (family === 'snapshot-vcs' && /^(?:\/[^/]+)?\/(?:stage|unstage)$/.test(cleanReqPath));
             if (
                 !skipDraftConflictCheck &&

@@ -144,9 +144,9 @@ export default function SnapshotComparePanel({
     `${cp.versionNumber ? `#v${cp.versionNumber}` : cp.id.slice(0, 7)} · ${cp.label}`;
 
   return (
-    <div className="space-y-3">
+    <div className="h-full min-h-0 flex flex-col gap-2.5">
       {/* Selectors */}
-      <div className="p-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] flex flex-wrap items-center gap-2.5 text-xs">
+      <div className="shrink-0 p-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] flex flex-wrap items-center gap-2.5 text-xs">
         <div className="flex items-center gap-2">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
             Base:
@@ -196,16 +196,16 @@ export default function SnapshotComparePanel({
 
         {compareData?.stats && (
           <div className="ml-auto flex items-center gap-2 font-mono text-[11px] tabular-nums">
-            <span className="text-emerald-400">+{compareData.stats.added}</span>
-            <span className="text-amber-400">~{compareData.stats.modified}</span>
-            <span className="text-sky-400">R{compareData.stats.renamed}</span>
-            <span className="text-rose-400">-{compareData.stats.deleted}</span>
+            <span className="text-[var(--color-success)]">+{compareData.stats.added}</span>
+            <span className="text-[var(--color-warning)]">~{compareData.stats.modified}</span>
+            <span className="text-[var(--color-secondary)]">R{compareData.stats.renamed}</span>
+            <span className="text-[var(--color-danger)]">-{compareData.stats.deleted}</span>
           </div>
         )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
-        <div className="lg:col-span-4 border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] p-2 max-h-[480px] overflow-y-auto custom-scrollbar space-y-1">
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-3">
+        <div className="lg:col-span-4 min-h-0 border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] p-2 max-h-[320px] lg:max-h-none overflow-y-auto custom-scrollbar space-y-1">
           {!(compareData?.changes?.length > 0) ? (
             <div className="p-6 text-center text-xs text-[var(--color-text-muted)]">
               No file differences between the selected snapshots.
@@ -239,7 +239,7 @@ export default function SnapshotComparePanel({
           )}
         </div>
 
-        <div className="lg:col-span-8 h-[480px]">
+        <div className="lg:col-span-8 min-h-[280px] h-full">
           <VcsMonacoDiffEditor
             diffData={diffData}
             loading={loadingDiff}

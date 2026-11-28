@@ -179,6 +179,13 @@ export const gitRemoteSyncSchema = z.object({
   async: z.boolean().optional(),
 });
 
+export const remoteCheckBodySchema = z.object({
+  projectId: nonEmptyId,
+  force: z.boolean().optional(),
+  branch: z.string().trim().max(GIT_LIMITS.MAX_BRANCH_NAME).optional(),
+  silent: z.boolean().optional(),
+});
+
 export const gitStashPushSchema = z.object({
   projectId: nonEmptyId,
   message: z.string().trim().max(300).optional(),
