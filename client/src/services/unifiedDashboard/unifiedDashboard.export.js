@@ -155,16 +155,33 @@ function formatLayerStateBadge(state) {
 
 function resolveStatusClass(status) {
   const s = String(status || "").toUpperCase();
-  if (s === "PASS" || s === "PASSED" || s === "COMPLETED" || s === "ALL_PASSING") {
+  if (s === "PASS" || s === "PASSED" || s === "COMPLETED" || s === "ALL_PASSING" || s === "SUCCESS") {
     return "badge-pass";
   }
-  if (s === "FAIL" || s === "FAILED" || s === "BLOCKED" || s === "HAS_FAILURES") {
+  if (s === "FAIL" || s === "FAILED" || s === "BLOCKED" || s === "HAS_FAILURES" || s === "ERROR") {
     return "badge-fail";
   }
-  if (s === "WARN" || s === "WARNING" || s === "PARTIAL") {
+  if (s === "WARN" || s === "WARNING" || s === "PARTIAL" || s === "INCOMPLETE" || s === "RUNNING" || s === "QUEUED" || s === "PROCESSING") {
     return "badge-warn";
   }
   return "badge-neutral";
+}
+
+function formatAiEvalScoreText(aiEval) {
+  if (!aiEval?.hasRun || aiEval.status === "NOT_RUN") return "Not Run";
+  if (aiEval.scoreHidden) return "Hidden (Partial)";
+  if (aiEval.score !== null && aiEval.score !== undefined) {
+    return `${Number(aiEval.score).toFixed(1)}/100`;
+  }
+  return "—";
+}
+
+function formatAiEvalVerdictLabel(aiEval) {
+  if (!aiEval?.hasRun || aiEval.status === "NOT_RUN") return "NOT RUN";
+  const st = String(aiEval.status || "").toUpperCase();
+  if (["QUEUED", "RUNNING", "PROCESSING"].includes(st)) return st;
+  if (["ERROR", "FAILED", "CANCELLED", "CANCELED"].includes(st)) return st === "CANCELED" ? "CANCELLED" : st;
+  return String(aiEval.verdict || "INCOMPLETE").toUpperCase();
 }
 
 function renderStatusBadgeHtml(status, label) {
@@ -297,7 +314,20 @@ export function generateHtmlReport(
     actionItems,
     historyRuns,
     failureDistribution,
+    featureDurations,
+    aiTrustworthiness,
   } = model;
+
+  const showFeatureDurations = Boolean(
+    sections.featureDurations ?? (sections.pyramidPillars || sections.trendsHistory)
+  );
+  const showAiTrustworthiness = Boolean(
+    sections.aiTrustworthiness ??
+      (sections.pyramidPillars ||
+        sections.traceMatrix ||
+        sections.actionCenter ||
+        sections.trendsHistory)
+  );
 
   const gateInfo = translateGateStatus(qualityGate.status, qualityGate.label);
   const pyrInfo = translatePyramidShape(pyramid.shape, pyramid.badgeTitle, pyramid.warning);
@@ -787,7 +817,170 @@ export function generateHtmlReport(
     `
     : "";
 
-  const followupSectionsHtml = [keyFindingsHtml, criticalGapsHtml, actionsHtml, historyHtml]
+  const featureDurationsHtml = showFeatureDurations
+    ? `
+      <section class="sec" id="sec-feature-durations">
+        <h2>${escapeHtml(REPORT_COPY.sectionTitles.featureDurations.en)}</h2>
+        <div class="table-wrap">
+          <table>
+            <colgroup>
+              <col style="width:28%" />
+              <col style="width:10%" />
+              <col style="width:15%" />
+              <col style="width:17%" />
+              <col style="width:15%" />
+              <col style="width:15%" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Feature</th>
+                <th>Runs</th>
+                <th>Latest</th>
+                <th>Cumulative Total</th>
+                <th>Average</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${(featureDurations || [])
+                .map((row) => {
+                  const hasRuns = Number(row?.runCount || 0) > 0;
+                  const statusLabel = hasRuns ? String(row.lastStatus || "SUCCESS").toUpperCase() : "NOT RUN";
+                  return `<tr>
+                    <td class="wrap-cell"><strong>${escapeHtml(row.label)}</strong></td>
+                    <td class="mono wrap-cell">${hasRuns ? fmtCount(row.runCount) : "0"}</td>
+                    <td class="mono wrap-cell">${escapeHtml(hasRuns ? fmtDuration(row.latestDurationMs) : "—")}</td>
+                    <td class="mono wrap-cell">${escapeHtml(hasRuns ? fmtDuration(row.totalDurationMs) : "—")}</td>
+                    <td class="mono wrap-cell">${escapeHtml(hasRuns ? fmtDuration(row.avgDurationMs) : "—")}</td>
+                    <td class="status-cell">${renderStatusBadgeHtml(hasRuns ? row.lastStatus : "NOT_RUN", statusLabel)}</td>
+                  </tr>`;
+                })
+                .join("")}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    `
+    : "";
+
+  const aiTrustworthinessHtml = showAiTrustworthiness
+    ? (() => {
+        const evalData = aiTrustworthiness || { hasRun: false, status: "NOT_RUN", verdict: "NOT_RUN" };
+        const hasRun = Boolean(evalData.hasRun && evalData.status !== "NOT_RUN");
+        const verdictLabel = formatAiEvalVerdictLabel(evalData);
+        const designAudit = evalData.designAudit || null;
+        if (!hasRun) {
+          return `
+            <section class="sec" id="sec-ai-trustworthiness">
+              <h2>${escapeHtml(REPORT_COPY.sectionTitles.aiTrustworthiness.en)}</h2>
+              <div class="zero-api-note">
+                <strong>Status:</strong> Not Run — No AI trustworthiness evaluation has been executed for this project yet.
+                ${
+                  designAudit?.status === "READY"
+                    ? `Design Audit: ${escapeHtml(designAudit.detected ? `Chatbot Detected (${designAudit.designScore ?? "—"}/100, ${designAudit.findingsCount} findings)` : "No Chatbot Detected")}.`
+                    : ""
+                }
+              </div>
+            </section>
+          `;
+        }
+
+        const spr = evalData.scenarioPassRate;
+        const stab = evalData.stability;
+        const lat = evalData.latency;
+        const criteria = Array.isArray(evalData.criteriaSummary) ? evalData.criteriaSummary : [];
+        return `
+          <section class="sec" id="sec-ai-trustworthiness">
+            <h2>${escapeHtml(REPORT_COPY.sectionTitles.aiTrustworthiness.en)}</h2>
+            <p class="finding-lead">
+              ${renderStatusBadgeHtml(verdictLabel, verdictLabel)}
+              <strong>Trust Score:</strong> <span class="mono">${escapeHtml(formatAiEvalScoreText(evalData))}</span>
+              ${evalData.passMark !== null ? ` · <strong>Pass Mark:</strong> <span class="mono">${escapeHtml(`${evalData.passMark}/100`)}</span>` : ""}
+              ${evalData.targetName ? ` · <strong>Target:</strong> ${escapeHtml(evalData.targetName)}` : ""}
+              ${evalData.profileName ? ` · <strong>Profile:</strong> ${escapeHtml(evalData.profileName)}` : ""}
+            </p>
+            <div class="table-wrap">
+              <table>
+                <colgroup>
+                  <col style="width:25%" />
+                  <col style="width:25%" />
+                  <col style="width:25%" />
+                  <col style="width:25%" />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>Trust Score</th>
+                    <th>Scenario Pass Rate</th>
+                    <th>Response Stability</th>
+                    <th>Latency (Avg / P95)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="mono wrap-cell">${escapeHtml(formatAiEvalScoreText(evalData))}</td>
+                    <td class="mono wrap-cell">${escapeHtml(
+                      spr
+                        ? `${spr.rate !== null ? fmtPct(spr.rate) : "—"} (${spr.passed}/${spr.evaluated})`
+                        : "—"
+                    )}</td>
+                    <td class="mono wrap-cell">${escapeHtml(
+                      stab?.stabilityRate !== null && stab?.stabilityRate !== undefined
+                        ? `${fmtPct(stab.stabilityRate)} (${stab.stableCases}/${stab.eligibleCases})`
+                        : "—"
+                    )}</td>
+                    <td class="mono wrap-cell">${escapeHtml(
+                      lat?.avgMs !== null && lat?.avgMs !== undefined
+                        ? `${fmtDuration(lat.avgMs)} / ${lat.p95Ms !== null ? fmtDuration(lat.p95Ms) : "—"}`
+                        : "—"
+                    )}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            ${
+              criteria.length > 0
+                ? `<div class="table-wrap">
+                    <table>
+                      <colgroup>
+                        <col style="width:52%" />
+                        <col style="width:24%" />
+                        <col style="width:24%" />
+                      </colgroup>
+                      <thead>
+                        <tr>
+                          <th>Evaluation Criterion</th>
+                          <th>Score</th>
+                          <th>Checks Scored</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${criteria
+                          .map(
+                            (c) => `<tr>
+                              <td class="wrap-cell"><strong>${escapeHtml(c.label || c.criterionKey)}</strong></td>
+                              <td class="mono wrap-cell">${escapeHtml(c.score !== null && c.score !== undefined ? fmtPct(c.score) : "—")}</td>
+                              <td class="mono wrap-cell">${escapeHtml(c.applicable > 0 ? `${c.scored}/${c.applicable}` : "Not checked")}</td>
+                            </tr>`
+                          )
+                          .join("")}
+                      </tbody>
+                    </table>
+                  </div>`
+                : ""
+            }
+          </section>
+        `;
+      })()
+    : "";
+
+  const followupSectionsHtml = [
+    keyFindingsHtml,
+    featureDurationsHtml,
+    aiTrustworthinessHtml,
+    criticalGapsHtml,
+    actionsHtml,
+    historyHtml,
+  ]
     .filter(Boolean)
     .join("");
   const hasFollowup = followupSectionsHtml.trim().length > 0;
@@ -1409,7 +1602,20 @@ export function generateMarkdownReport(
     historyRuns,
     varianceItems,
     failureDistribution,
+    featureDurations,
+    aiTrustworthiness,
   } = model;
+
+  const showFeatureDurations = Boolean(
+    sections.featureDurations ?? (sections.pyramidPillars || sections.trendsHistory)
+  );
+  const showAiTrustworthiness = Boolean(
+    sections.aiTrustworthiness ??
+      (sections.pyramidPillars ||
+        sections.traceMatrix ||
+        sections.actionCenter ||
+        sections.trendsHistory)
+  );
 
   const gateInfo = translateGateStatus(qualityGate.status, qualityGate.label);
   const pyrInfo = translatePyramidShape(pyramid.shape, pyramid.badgeTitle, pyramid.warning);
@@ -1619,6 +1825,69 @@ export function generateMarkdownReport(
     );
   }
 
+  if (showFeatureDurations) {
+    lines.push(
+      `---`,
+      ``,
+      `## ${REPORT_COPY.sectionTitles.featureDurations.en}`,
+      ``,
+      `| Feature | Runs | Latest | Cumulative Total | Average | Status |`,
+      `|---|---|---|---|---|---|`,
+      ...(featureDurations || []).map((row) => {
+        const hasRuns = Number(row?.runCount || 0) > 0;
+        const statusLabel = hasRuns ? String(row.lastStatus || "SUCCESS").toUpperCase() : "NOT RUN";
+        return `| **${escapeMarkdownCell(row.label)}** | ${hasRuns ? fmtCount(row.runCount) : "0"} | ${escapeMarkdownCell(hasRuns ? fmtDuration(row.latestDurationMs) : "—")} | ${escapeMarkdownCell(hasRuns ? fmtDuration(row.totalDurationMs) : "—")} | ${escapeMarkdownCell(hasRuns ? fmtDuration(row.avgDurationMs) : "—")} | ${escapeMarkdownCell(statusLabel)} |`;
+      }),
+      ``
+    );
+  }
+
+  if (showAiTrustworthiness) {
+    const evalData = aiTrustworthiness || { hasRun: false, status: "NOT_RUN", verdict: "NOT_RUN" };
+    const hasRun = Boolean(evalData.hasRun && evalData.status !== "NOT_RUN");
+    lines.push(
+      `---`,
+      ``,
+      `## ${REPORT_COPY.sectionTitles.aiTrustworthiness.en}`,
+      ``
+    );
+    if (!hasRun) {
+      lines.push(
+        `> **Status:** Not Run — No AI trustworthiness evaluation has been executed for this project yet.`,
+        ``
+      );
+      if (evalData.designAudit?.status === "READY") {
+        lines.push(
+          `- **Design Audit:** ${evalData.designAudit.detected ? `Chatbot Detected (${evalData.designAudit.designScore ?? "—"}/100, ${evalData.designAudit.findingsCount} findings)` : "No Chatbot Detected"}`,
+          ``
+        );
+      }
+    } else {
+      const spr = evalData.scenarioPassRate;
+      const stab = evalData.stability;
+      const lat = evalData.latency;
+      lines.push(
+        `- **Verdict:** **${formatAiEvalVerdictLabel(evalData)}** (${evalData.status})`,
+        `- **Trust Score:** ${formatAiEvalScoreText(evalData)}${evalData.passMark !== null ? ` (Pass Mark: ${evalData.passMark}/100)` : ""}`,
+        `- **Scenario Pass Rate:** ${spr ? `${spr.rate !== null ? fmtPct(spr.rate) : "—"} (${spr.passed}/${spr.evaluated} evaluated)` : "—"}`,
+        `- **Response Stability:** ${stab?.stabilityRate !== null && stab?.stabilityRate !== undefined ? `${fmtPct(stab.stabilityRate)} (${stab.stableCases}/${stab.eligibleCases})` : "—"}`,
+        `- **Response Latency:** ${lat?.avgMs !== null && lat?.avgMs !== undefined ? `Avg ${fmtDuration(lat.avgMs)}${lat.p95Ms !== null ? ` · P95 ${fmtDuration(lat.p95Ms)}` : ""}` : "—"}`,
+        ``
+      );
+      if (Array.isArray(evalData.criteriaSummary) && evalData.criteriaSummary.length > 0) {
+        lines.push(
+          `| Evaluation Criterion | Score | Checks Scored |`,
+          `|---|---|---|`,
+          ...evalData.criteriaSummary.map(
+            (c) =>
+              `| **${escapeMarkdownCell(c.label || c.criterionKey)}** | ${c.score !== null && c.score !== undefined ? fmtPct(c.score) : "—"} | ${c.applicable > 0 ? `${c.scored}/${c.applicable}` : "Not checked"} |`
+          ),
+          ``
+        );
+      }
+    }
+  }
+
   if (sections.trendsHistory) {
     lines.push(
       `---`,
@@ -1675,7 +1944,20 @@ export function buildFilteredJsonPayload(
     failureDistribution,
     actionPriorityCounts,
     actionPillarCounts,
+    featureDurations,
+    aiTrustworthiness,
   } = model;
+
+  const showFeatureDurations = Boolean(
+    sections.featureDurations ?? (sections.pyramidPillars || sections.trendsHistory)
+  );
+  const showAiTrustworthiness = Boolean(
+    sections.aiTrustworthiness ??
+      (sections.pyramidPillars ||
+        sections.traceMatrix ||
+        sections.actionCenter ||
+        sections.trendsHistory)
+  );
 
   const prioritizedMatrix = sortMatrixRowsByRisk(matrixRows).map((r) => {
     const diag = resolveDisplayRootCause(r);
@@ -1938,6 +2220,12 @@ export function buildFilteredJsonPayload(
   if (sections.trendsHistory) {
     payload.trend = vm?.trend;
     payload.history = vm?.history;
+  }
+  if (showFeatureDurations) {
+    payload.featureDurations = featureDurations;
+  }
+  if (showAiTrustworthiness) {
+    payload.aiTrustworthiness = aiTrustworthiness;
   }
 
   payload.methodologyAndCaveats = METHODOLOGY_ITEMS;

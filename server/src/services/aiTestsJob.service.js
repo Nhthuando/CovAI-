@@ -1358,8 +1358,20 @@ export const processAiTestsJob = async jobId => {
         if (!result?.skipped) await notificationService.createJobFinishedNotification(jobId);
         return result;
     } catch (error) {
+        const failedAt = new Date();
+        const current = await prisma.job
+            .findUnique({ where: { id: jobId }, select: { startedAt: true } })
+            .catch((readErr) => {
+                console.warn(`[processAiTestsJob] Failed to read job ${jobId} startedAt:`, readErr?.message || readErr);
+                return null;
+            });
+        const computeTimeMs = current?.startedAt
+            ? Math.max(0, Math.round(failedAt.getTime() - new Date(current.startedAt).getTime()))
+            : undefined;
         await prisma.job.updateMany({ where: { id: jobId, status: { in: ["QUEUED", "RUNNING"] } },
-            data: { status: "FAILED", progress: 100, finishedAt: new Date(), errorMessage: error.message } }).catch(() => {});
+            data: { status: "FAILED", progress: 100, finishedAt: failedAt, ...(computeTimeMs !== undefined ? { computeTimeMs } : {}), errorMessage: error.message } }).catch((updateErr) => {
+                console.error(`[processAiTestsJob] Failed to mark job ${jobId} FAILED:`, updateErr?.message || updateErr);
+            });
         throw error;
     }
 };

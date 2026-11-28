@@ -1,6 +1,10 @@
 import { fmtCount, fmtDuration } from "./format.js";
 import { UNIFIED_DASHBOARD_CONFIG } from "./unifiedDashboard.config.js";
 import { nfc } from "./unifiedDashboard.reportI18n.js";
+import {
+  normalizeFeatureDurations,
+  normalizeAiTrustworthiness,
+} from "./unifiedDashboard.adapter.js";
 
 function escapeXml(value) {
   return nfc(value)
@@ -284,6 +288,8 @@ export function buildReportMetricsModel(vm = {}) {
   const matrixRows = Array.isArray(vm?.matrix?.rows) ? vm.matrix.rows : [];
   const actionItems = Array.isArray(vm?.actions?.items) ? vm.actions.items : [];
   const historyRuns = Array.isArray(vm?.history?.runs) ? vm.history.runs : [];
+  const featureDurations = normalizeFeatureDurations(vm?.featureDurations);
+  const aiTrustworthiness = normalizeAiTrustworthiness(vm?.aiTrustworthiness);
 
   const varianceItems = [
     {
@@ -381,6 +387,8 @@ export function buildReportMetricsModel(vm = {}) {
     failureDistribution,
     actionPriorityCounts,
     actionPillarCounts,
+    featureDurations,
+    aiTrustworthiness,
   };
 }
 

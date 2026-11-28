@@ -7,6 +7,47 @@ function toFiniteOrNull(val) {
 }
 
 /**
+ * Resolve the canonical measured coverage percentage for a pillar without letting
+ * unmeasured 0% code-line placeholders shadow primary layer metrics (e.g. apiEndpoint, flow).
+ * Returns null when coverage was not measured so callers can fall back to passRate.
+ */
+function resolvePillarCoverage(key, p) {
+  if (!p) return null;
+  const pillarId = p.id || key;
+  const cm = p.coverageMetrics || {};
+
+  if (pillarId === "integration") {
+    const apiEndpointVal = toFiniteOrNull(cm.apiEndpoint);
+    const totalApis = toFiniteOrNull(cm.totalApis);
+    const hasMeasuredApi =
+      apiEndpointVal !== null && (totalApis === null || totalApis > 0);
+    if (hasMeasuredApi) {
+      return apiEndpointVal;
+    }
+    if (p.codeCoverageMeasured === false || p.coverageMeasured === false) {
+      return null;
+    }
+    const linesVal = toFiniteOrNull(cm.lines);
+    if (linesVal === null) return null;
+    return p.codeCoverageMeasured === true || linesVal > 0 ? linesVal : null;
+  }
+
+  if (pillarId === "system") {
+    if (p.coverageAvailable === false || p.coverageMeasured === false) {
+      return null;
+    }
+    const flowVal = toFiniteOrNull(cm.flow);
+    if (flowVal !== null) return flowVal;
+    return toFiniteOrNull(cm.lines);
+  }
+
+  if (p.coverageMeasured === false || p.coverageSource === "none") {
+    return null;
+  }
+  return toFiniteOrNull(cm.lines ?? cm.apiEndpoint ?? cm.flow);
+}
+
+/**
  * Compute pass rate percentage (0 - 100) from passed and failed counts.
  * Returns null if no executed tests.
  */
@@ -42,8 +83,8 @@ export function computeHealth(pillars = {}, customWeights = null, qualityGate = 
     }
 
     const hasTests = (p.totalTests || 0) > 0 || (p.passedTests || 0) > 0 || (p.failedTests || 0) > 0;
-    const coverage = p.coverageMetrics?.lines ?? p.coverageMetrics?.apiEndpoint ?? p.coverageMetrics?.flow ?? 0;
-    const hasMeaningfulCoverage = coverage !== null && Number(coverage) > 0;
+    const coverage = resolvePillarCoverage(key, p);
+    const hasMeaningfulCoverage = coverage !== null && coverage > 0;
 
     if (hasTests || hasMeaningfulCoverage) {
       hasAnyData = true;
@@ -53,8 +94,8 @@ export function computeHealth(pillars = {}, customWeights = null, qualityGate = 
 
     let pillarScore;
     if (hasTests || hasMeaningfulCoverage) {
-      const passRate = getPassRate(p.passedTests, p.failedTests) ?? (hasTests ? 0 : Number(coverage) || 0);
-      const cov = coverage !== null ? Number(coverage) : passRate;
+      const passRate = getPassRate(p.passedTests, p.failedTests) ?? (hasTests ? 0 : (coverage ?? 0));
+      const cov = coverage !== null ? coverage : passRate;
       pillarScore = 0.5 * passRate + 0.5 * cov;
     } else {
       // Unexecuted layer with 0 tests / 0 coverage contributes 0 score
@@ -88,8 +129,9 @@ export function computeHealth(pillars = {}, customWeights = null, qualityGate = 
   else if (roundedScore >= grades.B) grade = "B";
   else if (roundedScore >= grades.C) grade = "C";
 
-  // If Quality Gate failed or is warning, health grade cannot be A
-  if ((qualityGate?.status === "WARNING" || qualityGate?.status === "FAILED") && grade === "A") {
+  // If Quality Gate failed (blocked), health grade cannot be A.
+  // Missing-layer WARNINGs do not downgrade Grade A since unexecuted layers already score 0 under fixed 50/30/20 weights.
+  if (qualityGate?.status === "FAILED" && grade === "A") {
     grade = "B";
   }
 

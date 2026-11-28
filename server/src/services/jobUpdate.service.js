@@ -144,6 +144,18 @@ const updateJobStatusNow = async ({
         logs.push(`errorMessage -> ${errorMessage}`);
     }
 
+    if (updates.status === "SUCCESS" || updates.status === "FAILED") {
+        const effectiveStartedAt = updates.startedAt || currentJob.startedAt;
+        const effectiveFinishedAt = updates.finishedAt || currentJob.finishedAt;
+        if (effectiveStartedAt && effectiveFinishedAt) {
+            const startMs = new Date(effectiveStartedAt).getTime();
+            const finishMs = new Date(effectiveFinishedAt).getTime();
+            if (Number.isFinite(startMs) && Number.isFinite(finishMs)) {
+                updates.computeTimeMs = Math.max(0, Math.round(finishMs - startMs));
+            }
+        }
+    }
+
     if (Object.keys(updates).length === 0) {
         throw new ServiceError("No updates provided", 400);
     }

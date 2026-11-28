@@ -18,6 +18,7 @@ import {
     probeChatbotKnowledgeReadiness,
     cleanupOrphanedChatbotRuntime,
 } from './chatbotRuntime.service.js';
+import { clearUnifiedDashboardCacheForProject } from '../unifiedQualityDashboard.service.js';
 
 const controllers = new Map();
 const cleanups = new Map();
@@ -210,7 +211,7 @@ export async function finalizeRun(db, runId, status, errorCode = null, leaseToke
             }
         }
 
-        const job = await tx.job.findUnique({ where: { id: run.jobId }, select: { payloadJson: true } });
+        const job = await tx.job.findUnique({ where: { id: run.jobId }, select: { payloadJson: true, startedAt: true } });
         refsToDestroy = parseSecretRefs(job?.payloadJson);
 
         await tx.aiEvaluationAttempt.updateMany({
@@ -223,10 +224,15 @@ export async function finalizeRun(db, runId, status, errorCode = null, leaseToke
         });
 
         const summary = buildRunSummary(run, status, extraSummary);
+        const finishedAt = new Date();
+        const effectiveStart = job?.startedAt || run.startedAt || null;
+        const computeTimeMs = effectiveStart
+            ? Math.max(0, Math.round(finishedAt.getTime() - new Date(effectiveStart).getTime()))
+            : null;
 
         const updated = await tx.aiEvaluationRun.update({
             where: { id: runId },
-            data: { executionStatus: status, verdict: summary.verdict, summary, errorCode, leaseToken: null, leaseUntil: null, finishedAt: new Date() },
+            data: { executionStatus: status, verdict: summary.verdict, summary, errorCode, leaseToken: null, leaseUntil: null, finishedAt },
         });
         await tx.job.updateMany({
             where: { id: run.jobId },
@@ -235,12 +241,16 @@ export async function finalizeRun(db, runId, status, errorCode = null, leaseToke
                 progress: status === 'COMPLETED' ? 100 : undefined,
                 errorMessage: errorMessage || errorCode,
                 payloadJson: '{}',
-                finishedAt: new Date(),
+                finishedAt,
+                ...(computeTimeMs !== null ? { computeTimeMs } : {}),
             },
         });
         return updated;
     });
     wipeSecretRefs(refsToDestroy);
+    if (finalized?.projectId) {
+        clearUnifiedDashboardCacheForProject(finalized.projectId);
+    }
     return finalized;
 }
 
@@ -868,7 +878,8 @@ export async function processEvaluation(jobId, {
 
 export async function processEvaluationPrepare(jobId, { db = prisma, provider } = {}) {
     requireEnabled();
-    const claim = await db.job.updateMany({ where: { id: jobId, type: 'AI_EVALUATION_PREPARE', status: 'QUEUED' }, data: { status: 'RUNNING', startedAt: new Date() } });
+    const prepareStartedAt = new Date();
+    const claim = await db.job.updateMany({ where: { id: jobId, type: 'AI_EVALUATION_PREPARE', status: 'QUEUED' }, data: { status: 'RUNNING', startedAt: prepareStartedAt } });
     if (!claim.count) return;
     const job = await db.job.findUnique({
         where: { id: jobId },
@@ -944,7 +955,12 @@ export async function processEvaluationPrepare(jobId, { db = prisma, provider } 
                 };
             }
         }
-        await db.job.updateMany({ where: { id: jobId, status: 'RUNNING' }, data: { status: 'SUCCESS', progress: 100, finishedAt: new Date(), resultJson: JSON.stringify(result) } });
+        const finishedAt = new Date();
+        const computeTimeMs = Math.max(0, Math.round(finishedAt.getTime() - prepareStartedAt.getTime()));
+        await db.job.updateMany({ where: { id: jobId, status: 'RUNNING' }, data: { status: 'SUCCESS', progress: 100, finishedAt, computeTimeMs, resultJson: JSON.stringify(result) } });
+        if (job?.projectId) {
+            clearUnifiedDashboardCacheForProject(job.projectId);
+        }
         if (job.userId) {
             emitEvaluationEvent('evaluation:prepare:progress', {
                 projectId: job.projectId,
@@ -958,7 +974,12 @@ export async function processEvaluationPrepare(jobId, { db = prisma, provider } 
         }
     } catch (error) {
         if (payload.sourceId) await db.aiEvaluationKnowledgeSource.updateMany({ where: { id: payload.sourceId, projectId: job.projectId }, data: { status: 'ERROR', content: '', provenance: { errorCode: safeError(error).code, message: safeError(error).message } } });
-        await db.job.updateMany({ where: { id: jobId, status: 'RUNNING' }, data: { status: 'FAILED', errorMessage: safeError(error).message, finishedAt: new Date() } });
+        const failedAt = new Date();
+        const computeTimeMs = Math.max(0, Math.round(failedAt.getTime() - prepareStartedAt.getTime()));
+        await db.job.updateMany({ where: { id: jobId, status: 'RUNNING' }, data: { status: 'FAILED', errorMessage: safeError(error).message, finishedAt: failedAt, computeTimeMs } });
+        if (job?.projectId) {
+            clearUnifiedDashboardCacheForProject(job.projectId);
+        }
         if (job?.userId) {
             emitEvaluationEvent('evaluation:prepare:progress', {
                 projectId: job.projectId,

@@ -60,6 +60,27 @@ export function UnifiedDashboardSkeleton() {
         </div>
       </div>
 
+      {/* Zone 3.5: Execution Durations & AI Trustworthiness Skeletons */}
+      <div className="rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-5 w-56" />
+          <Skeleton className="h-5 w-32 rounded-md" />
+        </div>
+        <Skeleton className="h-44 w-full rounded-md" />
+      </div>
+
+      <div className="rounded-[var(--radius-lg)] border border-[var(--ud-border)] bg-[var(--ud-surface)] p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-5 w-52" />
+          <Skeleton className="h-7 w-36 rounded-md" />
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {[1, 2, 3, 4].map((i) => (
+            <Skeleton key={i} className="h-20 w-full rounded-md" />
+          ))}
+        </div>
+      </div>
+
       {/* Zone 4: Unified Analysis Tabs (Tab Bar + Action Alert Strip + Full-Width Matrix) */}
       <div className="space-y-4">
         {/* Tab switcher skeleton */}

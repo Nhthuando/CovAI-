@@ -37,4 +37,25 @@ export function buildWorkspaceUrl(location, pillar, focus = {}) {
   return `${pathname}?${params.toString()}`;
 }
 
+/**
+ * Build deep-link URL to the Chatbot AI Trustworthiness Evaluation workspace tab.
+ * @param {Location | { pathname: string, search: string }} location
+ * @param {string} [projectId]
+ * @returns {string}
+ */
+export function buildTrustworthinessUrl(location, projectId = "") {
+  const currentSearch = location?.search || "";
+  const params = new URLSearchParams(currentSearch);
+  if (projectId) {
+    params.set("projectId", projectId);
+  }
+  params.set("tab", "trustworthiness");
+  params.delete("coverageType");
+  params.delete("focusFile");
+  params.delete("focusEndpoint");
+  params.delete("focusScenario");
+  const pathname = location?.pathname || "/main-editor";
+  return `${pathname}?${params.toString()}`;
+}
+
 export default buildWorkspaceUrl;

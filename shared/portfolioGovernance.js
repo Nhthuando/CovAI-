@@ -316,6 +316,133 @@ export function computeProjectHealthAndCoverage({
 }
 
 /**
+ * Compute fixed-weight (50% Unit / 30% Integration / 20% System) project health score,
+ * coverage index, pass rate, grade, and gate status for the Project Unified Dashboard
+ * and its exported reports. Unexecuted layers contribute 0 (no re-normalization).
+ */
+export function computeFixedWeightProjectHealth({
+  unit = {},
+  integration = {},
+  system = {},
+} = {}) {
+  const layers = { unit, integration, system };
+  const layerPassRates = {};
+  const layerScores = { unit: 0, integration: 0, system: 0 };
+  const measuredCovValues = { unit: null, integration: null, system: null };
+  const measuredCoverageLayers = [];
+
+  let totalExecuted = 0;
+  let totalPassed = 0;
+  let totalFailed = 0;
+
+  for (const [key, layer] of Object.entries(layers)) {
+    const passed = Math.max(0, Number(layer?.passedTests) || 0);
+    const failed = Math.max(0, Number(layer?.failedTests) || 0);
+    const total = Math.max(0, Number(layer?.totalTests) || 0);
+    const hasTests = total > 0 || passed + failed > 0;
+
+    totalExecuted += total;
+    totalPassed += passed;
+    totalFailed += failed;
+
+    const passRate = computePassRatePct(passed, failed);
+    layerPassRates[key] = passRate;
+
+    const rawCov = layer?.coveragePct;
+    const hasMeasuredCov =
+      hasTests &&
+      rawCov !== null &&
+      rawCov !== undefined &&
+      rawCov !== "" &&
+      Number.isFinite(Number(rawCov));
+
+    if (hasMeasuredCov) {
+      measuredCovValues[key] = Number(rawCov);
+      measuredCoverageLayers.push(key);
+    }
+
+    if (hasTests) {
+      layerScores[key] = hasMeasuredCov
+        ? 0.5 * (passRate ?? 0) + 0.5 * Number(rawCov)
+        : (passRate ?? 0);
+    } else {
+      layerScores[key] = 0;
+    }
+  }
+
+  const passRatePct = computePassRatePct(totalPassed, totalFailed);
+
+  if (totalExecuted <= 0 && totalPassed + totalFailed <= 0) {
+    return {
+      unifiedCoveragePct: null,
+      measuredCoverageLayers,
+      healthScore: null,
+      passRatePct: null,
+      grade: "—",
+      gateStatus: "UNTESTED",
+      gateLabel: "UNTESTED",
+      layerPassRates,
+    };
+  }
+
+  const fixedCoverage = roundMetric(
+    (measuredCovValues.unit ?? 0) * PORTFOLIO_LAYER_WEIGHTS.unit +
+      (measuredCovValues.integration ?? 0) * PORTFOLIO_LAYER_WEIGHTS.integration +
+      (measuredCovValues.system ?? 0) * PORTFOLIO_LAYER_WEIGHTS.system,
+    1,
+  );
+
+  const weightedScore =
+    layerScores.unit * PORTFOLIO_LAYER_WEIGHTS.unit +
+    layerScores.integration * PORTFOLIO_LAYER_WEIGHTS.integration +
+    layerScores.system * PORTFOLIO_LAYER_WEIGHTS.system;
+
+  const penalty =
+    totalFailed > 0
+      ? Math.min(
+          PORTFOLIO_QUALITY_GATE.maxFailurePenalty,
+          totalFailed * PORTFOLIO_QUALITY_GATE.failurePenaltyPerTest,
+        )
+      : 0;
+
+  const rawHealth = Math.round(weightedScore) - penalty;
+  const healthScore = Math.max(0, Math.min(100, rawHealth));
+
+  let grade = "D";
+  if (healthScore >= PORTFOLIO_GRADE_THRESHOLDS.A) grade = "A";
+  else if (healthScore >= PORTFOLIO_GRADE_THRESHOLDS.B) grade = "B";
+  else if (healthScore >= PORTFOLIO_GRADE_THRESHOLDS.C) grade = "C";
+
+  let gateStatus = "AT_RISK";
+  let gateLabel = "AT RISK";
+  if (
+    totalFailed === 0 &&
+    (passRatePct ?? 0) >= PORTFOLIO_QUALITY_GATE.passedMinPassRatePct &&
+    healthScore >= PORTFOLIO_QUALITY_GATE.passedMinHealthScore
+  ) {
+    gateStatus = "PASSED";
+    gateLabel = "READY TO RELEASE";
+  } else if (
+    totalFailed > 0 ||
+    (passRatePct ?? 0) < PORTFOLIO_QUALITY_GATE.minPassRatePct
+  ) {
+    gateStatus = "BLOCKED";
+    gateLabel = "BLOCKED";
+  }
+
+  return {
+    unifiedCoveragePct: fixedCoverage,
+    measuredCoverageLayers,
+    healthScore,
+    passRatePct,
+    grade,
+    gateStatus,
+    gateLabel,
+    layerPassRates,
+  };
+}
+
+/**
  * Segment projects into Risk Quadrant buckets while keeping UNTESTED projects separate
  * from Critical Risk.
  */

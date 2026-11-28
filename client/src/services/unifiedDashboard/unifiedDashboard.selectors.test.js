@@ -11,6 +11,7 @@ import {
   buildActionItems,
 } from "./unifiedDashboard.selectors.js";
 import { adaptUnifiedDashboard } from "./unifiedDashboard.adapter.js";
+import { fmtDuration } from "./format.js";
 
 test("getPassRate returns accurate percentages and handles 0 or null", () => {
   assert.equal(getPassRate(10, 0), 100);
@@ -42,6 +43,15 @@ test("computeHealth computes weighted score, failure penalty, and grade across a
 });
 
 test("computeHealth counts unexecuted layers as 0 in fixed 50/30/20 denominator to prevent inflation", () => {
+  // Single-layer Unit-only 100% pass rate & 100% coverage -> 50/100 Grade C
+  const unitOnly = {
+    unit: { totalTests: 20, passedTests: 20, failedTests: 0, coverageMetrics: { lines: 100 } },
+    integration: { totalTests: 0, passedTests: 0, failedTests: 0, coverageMetrics: { apiEndpoint: 0 } },
+    system: { totalTests: 0, passedTests: 0, failedTests: 0, coverageMetrics: { flow: null } },
+  };
+  assert.deepEqual(computeHealth(unitOnly), { score: 50, grade: "C", delta: null });
+
+  // Two-layer: Unit 100%/100% + Integration 100%/100% -> 80/100 Grade A
   const pillars = {
     unit: { passedTests: 100, failedTests: 0, coverageMetrics: { lines: 100 } },
     integration: { passedTests: 100, failedTests: 0, coverageMetrics: { apiEndpoint: 100 } },
@@ -49,6 +59,22 @@ test("computeHealth counts unexecuted layers as 0 in fixed 50/30/20 denominator 
   const health = computeHealth(pillars);
   assert.equal(health.score, 80);
   assert.equal(health.grade, "A");
+
+  // Executed System E2E without coverage measurement (flow: null) falls back to passRate, not 0
+  const sysNoCov = {
+    unit: { totalTests: 10, passedTests: 10, failedTests: 0, coverageMetrics: { lines: 100 } },
+    integration: { totalTests: 0, passedTests: 0, failedTests: 0, coverageMetrics: { apiEndpoint: 0 } },
+    system: { totalTests: 5, passedTests: 5, failedTests: 0, coverageMetrics: { flow: null } },
+  };
+  assert.deepEqual(computeHealth(sysNoCov), { score: 70, grade: "B", delta: null });
+});
+
+test("fmtDuration formats sub-second, seconds, minutes, and >=1h cumulative totals cleanly", () => {
+  assert.equal(fmtDuration(null), "—");
+  assert.equal(fmtDuration(450), "450ms");
+  assert.equal(fmtDuration(2400), "2.4s");
+  assert.equal(fmtDuration(195000), "3m 15s");
+  assert.equal(fmtDuration(4320000), "1h 12m");
 });
 
 test("computeHealth returns null when no pillars have data", () => {
@@ -367,5 +393,174 @@ test("adaptUnifiedDashboard ensures 0 split-brain contradictions and 100% mathem
   });
   assert.equal(contextVm.context.branch, "develop");
   assert.equal(contextVm.context.snapshotLabel, "#3 (abc1234)");
+
+  // Fallback path for Unit-only 100%/100% must yield 50/100 Grade C and default 7 canonical features + NOT_RUN AI evaluation
+  const unitOnlyFallbackVm = adaptUnifiedDashboard({
+    context: { snapshotId: "snap-unit-only-1" },
+    unitRaw: {
+      summary: {
+        testExecution: { numTotalTests: 20, numPassedTests: 20, numFailedTests: 0, numPendingTests: 0, durationMs: 500 },
+        coverage: { lines: 100, branches: 100, functions: 100, statements: 100 },
+      },
+      files: [],
+    },
+  });
+  assert.equal(unitOnlyFallbackVm.health.score, 50);
+  assert.equal(unitOnlyFallbackVm.health.grade, "C");
+  assert.equal(unitOnlyFallbackVm.featureDurations.length, 7);
+  assert.ok(unitOnlyFallbackVm.featureDurations.every((f) => f.runCount === 0 && f.lastStatus === "NOT_RUN"));
+  assert.equal(unitOnlyFallbackVm.aiTrustworthiness.hasRun, false);
+  assert.equal(unitOnlyFallbackVm.aiTrustworthiness.status, "NOT_RUN");
+  assert.equal(unitOnlyFallbackVm.aiTrustworthiness.verdict, "NOT_RUN");
+});
+
+test("R1 parity regressions: integration coverage precedence, measured 0% vs unmeasured null, and 2-layer 80/100 Grade A alignment", () => {
+  // 1. 2-layer Unit 100%/100% + Integration 100% pass (lines=0 absent, apiEndpoint=100) -> 80/100 Grade A on BOTH computeHealth and adaptUnifiedDashboard fallback
+  const twoLayerFallbackVm = adaptUnifiedDashboard({
+    context: { snapshotId: "snap-2layer-1" },
+    unitRaw: {
+      summary: {
+        testExecution: { numTotalTests: 20, numPassedTests: 20, numFailedTests: 0, durationMs: 400 },
+        coverage: { lines: 100, branches: 100, functions: 100, statements: 100 },
+      },
+      files: [],
+    },
+    integrationRaw: {
+      summary: {
+        totalTests: 10,
+        passedTests: 10,
+        failedTests: 0,
+        totalApis: 10,
+        endpointCoverageMetrics: { coveredEndpoints: 10, endpointCoveragePct: 100 },
+      },
+      endpoints: Array.from({ length: 10 }, (_, i) => ({
+        id: `ep-${i}`,
+        method: "GET",
+        path: `/api/r-${i}`,
+        status: "Covered",
+      })),
+    },
+  });
+  assert.equal(twoLayerFallbackVm.pillars.integration.codeCoverageMeasured, false);
+  assert.equal(twoLayerFallbackVm.pillars.integration.coverageMetrics.apiEndpoint, 100);
+  assert.equal(twoLayerFallbackVm.qualityGate.status, "WARNING");
+  assert.equal(twoLayerFallbackVm.health.score, 80);
+  assert.equal(twoLayerFallbackVm.health.grade, "A");
+  assert.deepEqual(
+    computeHealth(twoLayerFallbackVm.pillars, null, twoLayerFallbackVm.qualityGate),
+    { score: 80, grade: "A", delta: null },
+  );
+
+  // Also verify unifiedBackendRaw (without precomputed health) where integration has lines=0 and apiEndpoint=100
+  const twoLayerBackendNoHealthVm = adaptUnifiedDashboard({
+    context: { snapshotId: "snap-2layer-backend" },
+    unifiedBackendRaw: {
+      pillars: {
+        unit: {
+          framework: "Jest",
+          totalTests: 20,
+          passedTests: 20,
+          failedTests: 0,
+          coverageMetrics: { lines: 100, branches: 100, functions: 100, statements: 100 },
+        },
+        integration: {
+          framework: "Supertest",
+          totalTests: 10,
+          passedTests: 10,
+          failedTests: 0,
+          coverageMetrics: { lines: 0, apiEndpoint: 100, coveredApis: 10, totalApis: 10 },
+        },
+        system: { totalTests: 0, passedTests: 0, failedTests: 0 },
+      },
+    },
+  });
+  assert.equal(twoLayerBackendNoHealthVm.pillars.integration.coverageMetrics.lines, 0);
+  assert.equal(twoLayerBackendNoHealthVm.pillars.integration.coverageMetrics.apiEndpoint, 100);
+  assert.equal(twoLayerBackendNoHealthVm.health.score, 80);
+  assert.equal(twoLayerBackendNoHealthVm.health.grade, "A");
+
+  // 2. Integration-only (lines=0 absent, apiEndpoint=100) -> 30/100 Grade D (not 15/100)
+  const intOnlyVm = adaptUnifiedDashboard({
+    context: { snapshotId: "snap-int-only" },
+    integrationRaw: {
+      summary: {
+        totalTests: 10,
+        passedTests: 10,
+        failedTests: 0,
+        totalApis: 10,
+        endpointCoverageMetrics: { coveredEndpoints: 10, endpointCoveragePct: 100 },
+      },
+      endpoints: [],
+    },
+  });
+  assert.equal(intOnlyVm.health.score, 30);
+  assert.equal(intOnlyVm.health.grade, "D");
+
+  // 3. Integration-only with genuinely measured 0% API coverage (0/10 covered, totalApis=10) -> 15/100 Grade D
+  const intZeroMeasuredVm = adaptUnifiedDashboard({
+    context: { snapshotId: "snap-int-zero" },
+    integrationRaw: {
+      summary: {
+        totalTests: 5,
+        passedTests: 5,
+        failedTests: 0,
+        totalApis: 10,
+        endpointCoverageMetrics: { coveredEndpoints: 0, endpointCoveragePct: 0 },
+      },
+      endpoints: [],
+    },
+  });
+  assert.equal(intZeroMeasuredVm.pillars.integration.coverageMetrics.apiEndpoint, 0);
+  assert.equal(intZeroMeasuredVm.health.score, 15);
+  assert.equal(intZeroMeasuredVm.health.grade, "D");
+
+  // 4. Unit-only 100% pass with unmeasured coverage (null / coverageSource="none") -> falls back to passRate -> 50/100 Grade C
+  const unitUnmeasuredFallbackVm = adaptUnifiedDashboard({
+    context: { snapshotId: "snap-unit-nocov" },
+    unitRaw: {
+      summary: {
+        testExecution: { numTotalTests: 20, numPassedTests: 20, numFailedTests: 0, durationMs: 250 },
+      },
+      files: [],
+    },
+  });
+  assert.equal(unitUnmeasuredFallbackVm.pillars.unit.coverageSource, "none");
+  assert.equal(unitUnmeasuredFallbackVm.pillars.unit.coverageMetrics.lines, null);
+  assert.equal(unitUnmeasuredFallbackVm.health.score, 50);
+  assert.equal(unitUnmeasuredFallbackVm.health.grade, "C");
+
+  // Backend raw payload with coverageSource="none" and missing health also falls back cleanly to 50/100 Grade C
+  const unitUnmeasuredBackendNoHealthVm = adaptUnifiedDashboard({
+    context: { snapshotId: "snap-unit-nocov-backend" },
+    unifiedBackendRaw: {
+      pillars: {
+        unit: {
+          framework: "Jest",
+          totalTests: 20,
+          passedTests: 20,
+          failedTests: 0,
+          coverageSource: "none",
+          coverageMetrics: { lines: 0, branches: 0, functions: 0, statements: 0 },
+        },
+        integration: { totalTests: 0, passedTests: 0, failedTests: 0 },
+        system: { totalTests: 0, passedTests: 0, failedTests: 0 },
+      },
+    },
+  });
+  assert.equal(unitUnmeasuredBackendNoHealthVm.health.score, 50);
+  assert.equal(unitUnmeasuredBackendNoHealthVm.health.grade, "C");
+});
+
+test("fmtDuration rolls over sub-second and sub-minute rounding boundaries cleanly without 60.0s or 60m 0s", () => {
+  assert.equal(fmtDuration(0), "0ms");
+  assert.equal(fmtDuration(999), "999ms");
+  assert.equal(fmtDuration(1000), "1.0s");
+  assert.equal(fmtDuration(59949), "59.9s");
+  assert.equal(fmtDuration(59950), "1m 0s");
+  assert.equal(fmtDuration(59999), "1m 0s");
+  assert.equal(fmtDuration(3599499), "59m 59s");
+  assert.equal(fmtDuration(3599999), "1h 0m");
+  assert.equal(fmtDuration(3600000), "1h 0m");
+  assert.equal(fmtDuration(3661000), "1h 1m");
 });
 

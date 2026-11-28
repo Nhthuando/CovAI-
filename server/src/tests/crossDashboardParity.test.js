@@ -9,6 +9,10 @@ import {
 } from "../services/unifiedQualityDashboard.service.js";
 import { getPortfolioFingerprint } from "../services/portfolioDashboard.service.js";
 import { isMatch } from "../services/integrationWorkspace.service.js";
+import {
+    computeFixedWeightProjectHealth,
+    computeProjectHealthAndCoverage,
+} from "../../../shared/portfolioGovernance.js";
 
 describe("Cross-Dashboard Logic Synchronization Parity Tests", () => {
     describe("Lỗi 2B: Read-Time Self-Healing & Serialization for lifecycleStatus", () => {
@@ -269,6 +273,49 @@ describe("Cross-Dashboard Logic Synchronization Parity Tests", () => {
                     sys: { total: 2, passed: 2, failed: 0, cov: 60 },
                 })
             ).toEqual({ score: 80, grade: "A" });
+        });
+
+        test("R1: computeFixedWeightProjectHealth scores Unit-only 100%/100% at 50/100 Grade C while Portfolio computeProjectHealthAndCoverage keeps re-normalization", () => {
+            const unitOnlyInput = {
+                unit: { totalTests: 20, passedTests: 20, failedTests: 0, coveragePct: 100 },
+                integration: { totalTests: 0, passedTests: 0, failedTests: 0, coveragePct: null },
+                system: { totalTests: 0, passedTests: 0, failedTests: 0, coveragePct: null },
+            };
+
+            const fixed = computeFixedWeightProjectHealth(unitOnlyInput);
+            expect(fixed.healthScore).toBe(50);
+            expect(fixed.grade).toBe("C");
+            expect(fixed.unifiedCoveragePct).toBe(50);
+
+            // Portfolio must remain unchanged (re-normalizing over executed layers -> 100, Grade A)
+            const portfolio = computeProjectHealthAndCoverage(unitOnlyInput);
+            expect(portfolio.healthScore).toBe(100);
+            expect(portfolio.grade).toBe("A");
+            expect(portfolio.unifiedCoveragePct).toBe(100);
+
+            // Two layers: Unit 100%/100% (50) + Integration 100%/100% (30) = 80 Grade A
+            const twoLayer = computeFixedWeightProjectHealth({
+                unit: { totalTests: 10, passedTests: 10, failedTests: 0, coveragePct: 100 },
+                integration: { totalTests: 6, passedTests: 6, failedTests: 0, coveragePct: 100 },
+                system: { totalTests: 0, passedTests: 0, failedTests: 0, coveragePct: null },
+            });
+            expect(twoLayer.healthScore).toBe(80);
+            expect(twoLayer.grade).toBe("A");
+
+            // Three layers with failure penalty: Unit 90% pass / 80% cov (85*0.5=42.5), Int 100%/100% (30), Sys 80%/60% (70*0.2=14) => 86.5 -> 87 - 15 = 72 Grade B
+            const threeLayer = computeFixedWeightProjectHealth({
+                unit: { totalTests: 100, passedTests: 90, failedTests: 10, coveragePct: 80 },
+                integration: { totalTests: 10, passedTests: 10, failedTests: 0, coveragePct: 100 },
+                system: { totalTests: 10, passedTests: 8, failedTests: 2, coveragePct: 60 },
+            });
+            expect(threeLayer.healthScore).toBe(72);
+            expect(threeLayer.grade).toBe("B");
+
+            // Zero tests across all 3 layers -> null score, "—" grade, UNTESTED gate
+            const empty = computeFixedWeightProjectHealth();
+            expect(empty.healthScore).toBeNull();
+            expect(empty.grade).toBe("—");
+            expect(empty.gateStatus).toBe("UNTESTED");
         });
     });
 

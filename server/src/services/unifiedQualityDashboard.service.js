@@ -19,9 +19,13 @@ import {
   resolveSnapshotRootDir,
 } from "./unitCoverageSummary.service.js";
 import {
-  computeProjectHealthAndCoverage,
+  computeFixedWeightProjectHealth,
   safeParseMetaJson,
 } from "../../../shared/portfolioGovernance.js";
+import {
+  aggregateFeatureExecutionDurations,
+  buildAiEvaluationSummary,
+} from "./unifiedDashboardMetrics.service.js";
 
 function toFixedNum(val, fallback = 0) {
   if (val === null || val === undefined || val === "") return fallback;
@@ -48,6 +52,9 @@ export function computeDashboardFingerprintFromData({
   snapshotMeta,
   latestAiTest,
   coverageSum,
+  latestProjectJob = null,
+  latestAiEvalRun = null,
+  latestDesignAudit = null,
 }) {
   if (!snapshotMeta) return null;
 
@@ -73,12 +80,29 @@ export function computeDashboardFingerprintFromData({
 
   const p = snapshotMeta.project;
   const toMs = (d) => (d instanceof Date ? d.getTime() : d ? new Date(d).getTime() : 0);
-  return `${latestRun?.id || "none"}_${latestRun?.status || ""}_${toMs(latestRun?.createdAt)}_${toMs(snapshotMeta.createdAt)}_${toMs(p?.updatedAt)}_${p?.lifecycleStatus || ""}_${toMs(p?.lifecycleUpdatedAt)}_${p?.activeSnapshotId || ""}_${latestAiTest?.id || ""}_${latestAiTest?.status || ""}_${toMs(latestAiTest?.createdAt)}_${coverageSum?.stmtsPct ?? coverageSum?.linesPct ?? -1}_${Math.round(filesMtime)}`;
+  const jobSig = latestProjectJob
+    ? `${latestProjectJob.id || ""}_${latestProjectJob.status || ""}_${toMs(latestProjectJob.finishedAt || latestProjectJob.createdAt)}_${latestProjectJob.computeTimeMs ?? ""}`
+    : "nojob";
+  const evalSig = latestAiEvalRun
+    ? `${latestAiEvalRun.id || ""}_${latestAiEvalRun.executionStatus || ""}_${latestAiEvalRun.verdict || ""}_${toMs(latestAiEvalRun.finishedAt || latestAiEvalRun.createdAt)}`
+    : "noeval";
+  const auditSig = latestDesignAudit
+    ? `${latestDesignAudit.id || ""}_${latestDesignAudit.detected ? 1 : 0}_${latestDesignAudit.designScore ?? ""}_${toMs(latestDesignAudit.updatedAt)}`
+    : "noaudit";
+  return `${latestRun?.id || "none"}_${latestRun?.status || ""}_${toMs(latestRun?.createdAt)}_${toMs(snapshotMeta.createdAt)}_${toMs(p?.updatedAt)}_${p?.lifecycleStatus || ""}_${toMs(p?.lifecycleUpdatedAt)}_${p?.activeSnapshotId || ""}_${latestAiTest?.id || ""}_${latestAiTest?.status || ""}_${toMs(latestAiTest?.createdAt)}_${coverageSum?.stmtsPct ?? coverageSum?.linesPct ?? -1}_${Math.round(filesMtime)}_${jobSig}_${evalSig}_${auditSig}`;
 }
 
 export async function getDashboardFingerprint(snapshotId) {
   try {
-    const [latestRun, snapshotMeta, latestAiTest, coverageSum] = await Promise.all([
+    const [
+      latestRun,
+      snapshotMeta,
+      latestAiTest,
+      coverageSum,
+      latestProjectJob,
+      latestAiEvalRun,
+      latestDesignAudit,
+    ] = await Promise.all([
       prisma.testRun.findFirst({
         where: { snapshotId },
         orderBy: { createdAt: "desc" },
@@ -118,6 +142,23 @@ export async function getDashboardFingerprint(snapshotId) {
           createdAt: true,
         },
       }),
+      prisma.job.findFirst({
+        where: {
+          project: { snapshots: { some: { id: snapshotId } } },
+          status: { in: ["SUCCESS", "FAILED"] },
+        },
+        orderBy: [{ finishedAt: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }],
+        select: { id: true, status: true, finishedAt: true, computeTimeMs: true, createdAt: true },
+      }),
+      prisma.aiEvaluationRun.findFirst({
+        where: { project: { snapshots: { some: { id: snapshotId } } } },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, executionStatus: true, verdict: true, finishedAt: true, createdAt: true },
+      }),
+      prisma.aiEvaluationDesignAudit.findFirst({
+        where: { snapshotId },
+        select: { id: true, detected: true, designScore: true, updatedAt: true },
+      }),
     ]);
     if (!snapshotMeta) return null;
     return computeDashboardFingerprintFromData({
@@ -125,6 +166,9 @@ export async function getDashboardFingerprint(snapshotId) {
       snapshotMeta,
       latestAiTest,
       coverageSum,
+      latestProjectJob,
+      latestAiEvalRun,
+      latestDesignAudit,
     });
   } catch (err) {
     console.warn("[getDashboardFingerprint] Error calculating fingerprint:", err?.message);
@@ -146,6 +190,20 @@ export function clearUnifiedDashboardCache(snapshotId = null) {
   } else {
     dashboardPayloadCache.clear();
     frameworkCache.clear();
+  }
+}
+
+/**
+ * Invalidate in-memory unified dashboard cache entries belonging to a projectId
+ * (used when project-scoped jobs like AI_EVALUATION complete with snapshotId: null).
+ */
+export function clearUnifiedDashboardCacheForProject(projectId) {
+  if (!projectId) return;
+  for (const [key, entry] of dashboardPayloadCache.entries()) {
+    if (entry?.data?.context?.projectId === projectId) {
+      dashboardPayloadCache.delete(key);
+      frameworkCache.delete(key);
+    }
   }
 }
 
@@ -920,11 +978,18 @@ export function aggregateIntegrationLayer({ integrationWs }) {
   const epCovPct =
     !intHasRuns || totalApis <= 0
       ? 0
-      : wsSummary.endpointCoverageMetrics?.endpointCoveragePct !== undefined
+      : wsSummary.endpointCoverageMetrics?.endpointCoveragePct != null
       ? toFixedNum(wsSummary.endpointCoverageMetrics.endpointCoveragePct)
       : toFixedNum((coveredApis / totalApis) * 100);
 
   const intCodeCov = wsSummary.codeCoverage || {};
+  const rawIntLineCov = intCodeCov.line?.pct ?? intCodeCov.line ?? intCodeCov.lines;
+  const intCodeCoverageMeasured =
+    intHasRuns &&
+    rawIntLineCov !== null &&
+    rawIntLineCov !== undefined &&
+    rawIntLineCov !== "" &&
+    Number.isFinite(Number(rawIntLineCov));
   const intCoverageMetrics = {
     lines: intHasRuns ? toFixedNum(intCodeCov.line?.pct ?? intCodeCov.line ?? 0) : 0,
     branches: intHasRuns ? toFixedNum(intCodeCov.branch?.pct ?? intCodeCov.branch ?? 0) : 0,
@@ -1015,6 +1080,7 @@ export function aggregateIntegrationLayer({ integrationWs }) {
     durationMs: intDurationMs,
     avgDurationMs: intAvgLatencyMs,
     avgEndpointLatencyMs: intAvgLatencyMs,
+    codeCoverageMeasured: intCodeCoverageMeasured,
     coverageMetrics: intCoverageMetrics,
     lowCoverageItems: intLowCoverageItems,
     failedScenarios: intFailedScenarios,
@@ -1250,6 +1316,9 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
     aiTestsList,
     historicalTestRuns,
     snapshotSpecificRuns,
+    projectTerminalJobs,
+    aiEvaluationRuns,
+    aiDesignAudit,
   ] = await Promise.all([
     prisma.projectSnapshot.findUnique({
       where: { id: snapshotId },
@@ -1351,6 +1420,65 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
         scenarios: {
           omit: { executionDetails: true },
         },
+      },
+    }),
+    prisma.job.findMany({
+      where: {
+        project: { snapshots: { some: { id: snapshotId } } },
+        status: { in: ["SUCCESS", "FAILED"] },
+      },
+      orderBy: [{ finishedAt: "desc" }, { createdAt: "desc" }],
+      select: {
+        id: true,
+        type: true,
+        status: true,
+        payloadJson: true,
+        startedAt: true,
+        finishedAt: true,
+        computeTimeMs: true,
+        createdAt: true,
+      },
+    }),
+    prisma.aiEvaluationRun.findMany({
+      where: { project: { snapshots: { some: { id: snapshotId } } } },
+      orderBy: { createdAt: "desc" },
+      take: 25,
+      select: {
+        id: true,
+        projectId: true,
+        snapshotId: true,
+        jobId: true,
+        executionStatus: true,
+        verdict: true,
+        summary: true,
+        errorCode: true,
+        createdAt: true,
+        startedAt: true,
+        finishedAt: true,
+        targetVersion: {
+          select: {
+            version: true,
+            target: { select: { name: true } },
+          },
+        },
+        profileVersion: {
+          select: {
+            version: true,
+            definition: true,
+            profile: { select: { name: true } },
+          },
+        },
+      },
+    }),
+    prisma.aiEvaluationDesignAudit.findFirst({
+      where: { snapshotId },
+      select: {
+        id: true,
+        detected: true,
+        designScore: true,
+        summaryJson: true,
+        findingsJson: true,
+        updatedAt: true,
       },
     }),
   ]);
@@ -1554,11 +1682,25 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
     }
   }
 
+  const unitCoverageMeasured =
+    canonicalUnit.coverageSource !== "none" &&
+    canonicalUnit.coverage?.lines !== null &&
+    canonicalUnit.coverage?.lines !== undefined &&
+    Number.isFinite(Number(canonicalUnit.coverage.lines));
   const hasUnitCoverage = unitTotal > 0 || canonicalUnit.coverageSource !== "none";
-  const unitLinesPct = hasUnitCoverage ? toFixedNum(canonicalUnit.coverage.lines) : 0;
-  const unitBranchesPct = hasUnitCoverage ? toFixedNum(canonicalUnit.coverage.branches) : 0;
-  const unitFuncsPct = hasUnitCoverage ? toFixedNum(canonicalUnit.coverage.functions) : 0;
-  const unitStmtsPct = hasUnitCoverage ? toFixedNum(canonicalUnit.coverage.statements) : 0;
+  const unitLinesPct = hasUnitCoverage && unitCoverageMeasured ? toFixedNum(canonicalUnit.coverage.lines) : 0;
+  const unitBranchesPct =
+    hasUnitCoverage && canonicalUnit.coverageSource !== "none"
+      ? toFixedNum(canonicalUnit.coverage.branches)
+      : 0;
+  const unitFuncsPct =
+    hasUnitCoverage && canonicalUnit.coverageSource !== "none"
+      ? toFixedNum(canonicalUnit.coverage.functions)
+      : 0;
+  const unitStmtsPct =
+    hasUnitCoverage && canonicalUnit.coverageSource !== "none"
+      ? toFixedNum(canonicalUnit.coverage.statements)
+      : 0;
 
   const lowBranchFiles = unitFiles.filter((f) => Number(f.branchesPct ?? 100) < 80);
   const filesToDisplay = lowBranchFiles.length > 0 ? lowBranchFiles : unitFiles;
@@ -1634,6 +1776,7 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
     avgTestDurationMs: avgUnitTestDurationMs,
     avgDurationMs: avgUnitTestDurationMs,
     coverageSource: canonicalUnit.coverageSource,
+    coverageMeasured: unitCoverageMeasured,
     coverageMetrics: {
       lines: unitLinesPct,
       branches: unitBranchesPct,
@@ -1926,12 +2069,12 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
     healthDelta = toFixedNum(currHealth - prevHealth);
   }
 
-  const canonicalHealth = computeProjectHealthAndCoverage({
+  const canonicalHealth = computeFixedWeightProjectHealth({
     unit: {
       totalTests: unitTotal,
       passedTests: unitPassed,
       failedTests: unitFailed,
-      coveragePct: unitTotal > 0 ? unitLinesPct : null,
+      coveragePct: unitTotal > 0 && unitCoverageMeasured ? unitLinesPct : null,
     },
     integration: {
       totalTests: intTotalExecuted,
@@ -1947,9 +2090,14 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
     },
   });
 
-  const healthScore = canonicalHealth.healthScore ?? 0;
+  const healthScore = canonicalHealth.healthScore;
   const healthGrade = canonicalHealth.grade;
   const effectiveLifecycleStatus = snapshot.project?.lifecycleStatus || "NOT_STARTED";
+  const featureDurations = aggregateFeatureExecutionDurations(projectTerminalJobs);
+  const aiEvaluation = buildAiEvaluationSummary({
+    runs: aiEvaluationRuns,
+    designAudit: aiDesignAudit,
+  });
 
   const activeSuiteRun = activeJob
     ? {
@@ -2007,6 +2155,8 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
     history: {
       runs: historyRuns,
     },
+    featureDurations,
+    aiEvaluation,
   };
 
   const historyTime = Date.now() - startHistory;
@@ -2023,6 +2173,9 @@ async function executeBuildUnifiedQualityDashboard({ snapshotId, userId, bypassC
       snapshotMeta: snapshot,
       latestAiTest: latestSnapshotAiTest,
       coverageSum: unitSummaryRecord,
+      latestProjectJob: projectTerminalJobs?.[0] || null,
+      latestAiEvalRun: aiEvaluationRuns?.[0] || null,
+      latestDesignAudit: aiDesignAudit || null,
     });
   }
 

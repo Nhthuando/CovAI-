@@ -26,10 +26,10 @@ export function UnitPillarCard({
 
   // 4 Proportional coverage bars replacing 2x2 boxes
   const coverageBars = [
-    { key: "lines", label: "Lines", value: loading ? 0 : cov.lines, valueText: loading ? "--%" : undefined, tone: "unit" },
-    { key: "branches", label: "Branches", value: loading ? 0 : cov.branches, valueText: loading ? "--%" : undefined, tone: "unit" },
-    { key: "functions", label: "Functions", value: loading ? 0 : cov.functions, valueText: loading ? "--%" : undefined, tone: "unit" },
-    { key: "statements", label: "Statements", value: loading ? 0 : cov.statements, valueText: loading ? "--%" : undefined, tone: "unit" },
+    { key: "lines", label: "Lines", value: loading ? 0 : cov.lines, valueText: loading ? "--%" : cov.lines == null ? "—" : undefined, tone: "unit" },
+    { key: "branches", label: "Branches", value: loading ? 0 : cov.branches, valueText: loading ? "--%" : cov.branches == null ? "—" : undefined, tone: "unit" },
+    { key: "functions", label: "Functions", value: loading ? 0 : cov.functions, valueText: loading ? "--%" : cov.functions == null ? "—" : undefined, tone: "unit" },
+    { key: "statements", label: "Statements", value: loading ? 0 : cov.statements, valueText: loading ? "--%" : cov.statements == null ? "—" : undefined, tone: "unit" },
   ];
 
   return (

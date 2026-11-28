@@ -85,6 +85,44 @@
  */
 
 /**
+ * @typedef FeatureDurationVM
+ * @property {string} key
+ * @property {string} label
+ * @property {string[]} jobTypes
+ * @property {number} runCount
+ * @property {number | null} latestDurationMs
+ * @property {number | null} totalDurationMs
+ * @property {number | null} avgDurationMs
+ * @property {string | null} lastRunAt
+ * @property {'SUCCESS' | 'FAILED' | 'NOT_RUN'} lastStatus
+ */
+
+/**
+ * @typedef AiTrustworthinessVM
+ * @property {boolean} hasRun
+ * @property {string} status
+ * @property {'NOT_RUN' | 'PASSED' | 'FAILED' | 'INCOMPLETE'} verdict
+ * @property {number | null} score
+ * @property {number | null} rawScore
+ * @property {boolean} scoreHidden
+ * @property {number | null} passMark
+ * @property {boolean} criticalSafetyFailure
+ * @property {boolean} partial
+ * @property {{ scored: number, applicable: number } | null} completeness
+ * @property {{ passed: number, evaluated: number, total: number, rate: number | null, wilson95: { rate: number, lower: number, upper: number } | null } | null} scenarioPassRate
+ * @property {{ eligibleCases: number, stableCases: number, unstableCases: number, stabilityRate: number | null } | null} stability
+ * @property {{ avgMs: number | null, p95Ms: number | null, slaMs: number | null, withinSlaRate: number | null, status: string | null } | null} latency
+ * @property {Array<{ criterionKey: string, label: string, score: number | null, scored: number, applicable: number }>} criteriaSummary
+ * @property {Array<{ taskType: string, score: number | null, scored: number, applicable: number, partial: boolean }>} tasks
+ * @property {number} totalRuns
+ * @property {string | null} latestRunId
+ * @property {string | null} lastRunAt
+ * @property {string | null} targetName
+ * @property {string | null} profileName
+ * @property {{ status: string, detected: boolean, designScore: number | null, findingsCount: number } | null} designAudit
+ */
+
+/**
  * @typedef UnifiedDashboardVM
  * @property {{ projectId: string, projectName: string, snapshotId: string, snapshots: Array<{ id: string, label: string, branch?: string, createdAt: string }>, updatedAt: number }} context
  * @property {{ status: QualityGateStatus, label: string, reasons: string[] }} qualityGate
@@ -98,4 +136,6 @@
  * @property {{ items: ActionItemVM[], source: DataSource }} actions
  * @property {{ series: TrendPointVM[], beforeAfter: { before: Record<Pillar, number>, after: Record<Pillar, number> }, source: DataSource }} trend
  * @property {{ runs: RunVM[], source: DataSource }} history
+ * @property {FeatureDurationVM[]} featureDurations
+ * @property {AiTrustworthinessVM} aiTrustworthiness
  */

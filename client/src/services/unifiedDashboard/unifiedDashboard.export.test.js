@@ -1250,3 +1250,157 @@ test("R2 Parity: fifa-wc2026-stadium-ai live Unit metrics (97.6% lines, 99.4% br
   assert.equal(json.layerDefinitions.unit.metrics.coverage.branches, 99.4);
   assert.equal(json.layerDefinitions.unit.metrics.coverage.functions, 98.1);
 });
+
+test("R1/R2/R3 Quick Exports: Unit-only 50/100 Grade C parity, Per-Feature Durations (latest/total/avg + Not Run), and AI Trustworthiness (populated vs Not Run) in English", () => {
+  // 1. Unit-only 100%/100% snapshot (fallback health + populated featureDurations + populated aiEvaluation)
+  const populatedVm = adaptUnifiedDashboard({
+    context: {
+      projectId: "proj-r123",
+      projectName: "CovAI Benchmark App",
+      branch: "main",
+      snapshotId: "snap-r123",
+      snapshotLabel: "#1 (r123abc)",
+    },
+    unifiedBackendRaw: {
+      pillars: {
+        unit: {
+          framework: "Jest",
+          totalTests: 30,
+          passedTests: 30,
+          failedTests: 0,
+          skippedTests: 0,
+          durationMs: 1200,
+          coverageMetrics: { lines: 100, branches: 100, functions: 100, statements: 100 },
+        },
+        integration: {
+          framework: "Supertest",
+          totalTests: 0,
+          passedTests: 0,
+          failedTests: 0,
+          skippedTests: 0,
+          coverageMetrics: { totalApis: 0, coveredApis: 0, uncoveredApis: 0, apiEndpoint: 0 },
+        },
+        system: {
+          framework: "Playwright",
+          totalTests: 0,
+          passedTests: 0,
+          failedTests: 0,
+          skippedTests: 0,
+        },
+      },
+      featureDurations: [
+        {
+          key: "project_analysis",
+          label: "Project Analysis",
+          jobTypes: ["ANALYSIS"],
+          runCount: 2,
+          latestDurationMs: 1500,
+          totalDurationMs: 3600,
+          avgDurationMs: 1800,
+          lastRunAt: "2026-11-27T10:00:00.000Z",
+          lastStatus: "SUCCESS",
+        },
+        {
+          key: "unit_test_coverage",
+          label: "Unit Test Coverage",
+          jobTypes: ["RUN_TESTS"],
+          runCount: 3,
+          latestDurationMs: 2400,
+          totalDurationMs: 4320000, // 1h 12m cumulative
+          avgDurationMs: 1440000, // 24m 0s average
+          lastRunAt: "2026-11-27T10:05:00.000Z",
+          lastStatus: "SUCCESS",
+        },
+      ],
+      aiEvaluation: {
+        hasRun: true,
+        status: "COMPLETED",
+        verdict: "PASSED",
+        score: 88.5,
+        rawScore: 88.5,
+        scoreHidden: false,
+        passMark: 75,
+        criticalSafetyFailure: false,
+        partial: false,
+        completeness: { scored: 12, applicable: 12 },
+        scenarioPassRate: {
+          passed: 11,
+          evaluated: 12,
+          total: 12,
+          rate: 91.7,
+          wilson95: { rate: 0.917, lower: 0.646, upper: 0.985 },
+        },
+        stability: { eligibleCases: 4, stableCases: 4, unstableCases: 0, stabilityRate: 100 },
+        latency: { avgMs: 850, p95Ms: 1320, slaMs: 5000, withinSlaRate: 100, status: "WITHIN_SLA" },
+        criteriaSummary: [
+          { criterionKey: "faithfulness", label: "Sticks to your documents", score: 94.0, scored: 12, applicable: 12 },
+          { criterionKey: "completeness", label: "Answers fully", score: 86.0, scored: 12, applicable: 12 },
+          { criterionKey: "contextRetention", label: "Remembers the conversation", score: 90.0, scored: 4, applicable: 4 },
+          { criterionKey: "appropriateRefusal", label: "Refuses when it should", score: 100.0, scored: 3, applicable: 3 },
+          { criterionKey: "keyFacts", label: "Key facts (checked by rules)", score: 82.5, scored: 8, applicable: 8 },
+        ],
+        totalRuns: 2,
+        targetName: "Support Bot",
+        profileName: "Core Trust",
+      },
+    },
+  });
+
+  const html = generateHtmlReport(populatedVm, DEFAULT_EXPORT_SECTIONS);
+  const pdf = generatePdfHtmlReport(populatedVm, DEFAULT_EXPORT_SECTIONS);
+  const md = generateMarkdownReport(populatedVm, DEFAULT_EXPORT_SECTIONS);
+  const json = buildFilteredJsonPayload(populatedVm, DEFAULT_EXPORT_SECTIONS);
+
+  // R1 parity across all 4 export formats: 50/100 Grade C
+  assert.equal(json.health.score, 50);
+  assert.equal(json.health.grade, "C");
+  for (const out of [html, pdf, md]) {
+    assert.ok(out.includes("50/100"), "Must report 50/100 Health Score for Unit-only 100%/100%");
+    assert.ok(out.includes("Grade C") || out.includes("50/100 (C)"), "Must report Grade C");
+  }
+
+  // R2 durations + NOT RUN for unexecuted features across all 4 formats
+  for (const out of [html, pdf, md]) {
+    assert.ok(out.includes("Per-Feature Execution Durations"));
+    assert.ok(out.includes("Project Analysis"));
+    assert.ok(out.includes("1.5s"));
+    assert.ok(out.includes("3.6s"));
+    assert.ok(out.includes("1h 12m"));
+    assert.ok(out.includes("24m 0s"));
+    assert.ok(out.includes("NOT RUN"));
+  }
+  assert.equal(json.featureDurations.length, 7);
+  assert.equal(json.featureDurations.find((f) => f.key === "unit_test_coverage").totalDurationMs, 4320000);
+  assert.equal(json.featureDurations.find((f) => f.key === "install_deps").lastStatus, "NOT_RUN");
+
+  // R3 populated AI Trustworthiness across all 4 formats
+  for (const out of [html, pdf, md]) {
+    assert.ok(out.includes("AI Trustworthiness Evaluation"));
+    assert.ok(out.includes("88.5/100"));
+    assert.ok(out.includes("Sticks to your documents"));
+    assert.ok(out.includes("94.0%"));
+  }
+  assert.equal(json.aiTrustworthiness.hasRun, true);
+  assert.equal(json.aiTrustworthiness.score, 88.5);
+  assert.equal(json.aiTrustworthiness.verdict, "PASSED");
+
+  // Page-1 & Page-2 SVG layout invariant must still hold (2 + 2 = 4 SVGs)
+  assert.equal(countSvgs(html), 4);
+  assert.equal(countSvgs(pdf), 4);
+
+  // 2. Unrun AI Evaluation renders explicit "Not Run" state in English across HTML, PDF, Markdown, JSON
+  const unrunEvalVm = makeUnrunVm();
+  const unrunHtml = generateHtmlReport(unrunEvalVm, DEFAULT_EXPORT_SECTIONS);
+  const unrunPdf = generatePdfHtmlReport(unrunEvalVm, DEFAULT_EXPORT_SECTIONS);
+  const unrunMd = generateMarkdownReport(unrunEvalVm, DEFAULT_EXPORT_SECTIONS);
+  const unrunJson = buildFilteredJsonPayload(unrunEvalVm, DEFAULT_EXPORT_SECTIONS);
+
+  for (const out of [unrunHtml, unrunPdf, unrunMd]) {
+    assert.ok(out.includes("AI Trustworthiness Evaluation"));
+    assert.ok(out.includes("Not Run"));
+    assert.ok(out.includes("No AI trustworthiness evaluation has been executed"));
+  }
+  assert.equal(unrunJson.aiTrustworthiness.hasRun, false);
+  assert.equal(unrunJson.aiTrustworthiness.status, "NOT_RUN");
+  assert.equal(unrunJson.aiTrustworthiness.verdict, "NOT_RUN");
+});

@@ -7,6 +7,7 @@ import {
   buildActionItems,
   getPassRate,
 } from "./unifiedDashboard.selectors.js";
+import { CRITERION_LABELS } from "../../components/dashboard/trustworthiness/criterionLabels.js";
 
 export function resolvePillarState(pillar) {
   if (!pillar) return "NOT_RUN";
@@ -119,7 +120,13 @@ function isExcludedUnitFilePath(filePath, configExclusions = []) {
           "$";
         try {
           if (new RegExp(regexPattern, "i").test(lower)) return true;
-        } catch (_) {}
+        } catch (err) {
+          console.warn(
+            "[unifiedDashboard.adapter] Ignoring invalid glob exclusion pattern:",
+            cleanExc,
+            err?.message || err
+          );
+        }
       } else if (
         lower === cleanExc ||
         lower.startsWith(`${cleanExc}/`) ||
@@ -164,13 +171,24 @@ export function adaptUnit(raw, unifiedUnit = null) {
       unifiedUnit.state || resolvePillarState({ passedTests, failedTests, totalTests });
 
     const cov = unifiedUnit.coverageMetrics || {};
+    const rawLines = cov.lines;
+    const hasRawLines =
+      rawLines !== null &&
+      rawLines !== undefined &&
+      rawLines !== "" &&
+      Number.isFinite(Number(rawLines));
+    const coverageMeasured =
+      typeof unifiedUnit.coverageMeasured === "boolean"
+        ? unifiedUnit.coverageMeasured
+        : totalTests > 0 && unifiedUnit.coverageSource !== "none" && hasRawLines;
+
     const coverageMetrics =
-      totalTests > 0
+      totalTests > 0 && coverageMeasured
         ? {
             lines: toFixedPct(cov.lines),
-            branches: toFixedPct(cov.branches),
-            functions: toFixedPct(cov.functions),
-            statements: toFixedPct(cov.statements),
+            branches: toOptionalPct(cov.branches) ?? 0,
+            functions: toOptionalPct(cov.functions) ?? 0,
+            statements: toOptionalPct(cov.statements) ?? 0,
             linesCovered: cov.linesCovered ?? null,
             linesTotal: cov.linesTotal ?? null,
             branchesCovered: cov.branchesCovered ?? null,
@@ -181,10 +199,10 @@ export function adaptUnit(raw, unifiedUnit = null) {
             statementsTotal: cov.statementsTotal ?? null,
           }
         : {
-            lines: 0,
-            branches: 0,
-            functions: 0,
-            statements: 0,
+            lines: totalTests > 0 ? null : 0,
+            branches: totalTests > 0 ? toOptionalPct(cov.branches) : 0,
+            functions: totalTests > 0 ? toOptionalPct(cov.functions) : 0,
+            statements: totalTests > 0 ? toOptionalPct(cov.statements) : 0,
             linesCovered: null,
             linesTotal: null,
             branchesCovered: null,
@@ -226,6 +244,7 @@ export function adaptUnit(raw, unifiedUnit = null) {
       avgDurationMs,
       avgTestDurationMs,
       coverageSource: unifiedUnit.coverageSource || null,
+      coverageMeasured: Boolean(coverageMeasured),
       coverageMetrics,
       lowCoverageItems,
       coverageFiles,
@@ -379,14 +398,22 @@ export function adaptUnit(raw, unifiedUnit = null) {
 
   const cov = usePeak ? peakCovCandidate || {} : liveCovCandidate || {};
   const rawTotals = usePeak ? peakReport?.rawTotals || summary?.rawTotals || null : summary?.rawTotals || null;
+  const rawLiveLines = cov.lines ?? cov.line;
+  const hasLiveLines =
+    liveCovCandidate != null &&
+    rawLiveLines !== null &&
+    rawLiveLines !== undefined &&
+    rawLiveLines !== "" &&
+    Number.isFinite(Number(rawLiveLines));
+  const coverageMeasured = totalTests > 0 && (usePeak || hasLiveLines);
   const coverageSource = usePeak
     ? "peak-report"
-    : totalTests > 0 || liveCovCandidate
+    : coverageMeasured || liveCovCandidate
     ? "filtered-summary"
     : "none";
 
   const coverageMetrics =
-    totalTests > 0
+    totalTests > 0 && coverageMeasured
       ? {
           lines: toFixedPct(cov.lines ?? cov.line),
           branches: toFixedPct(cov.branches ?? cov.branch),
@@ -402,10 +429,10 @@ export function adaptUnit(raw, unifiedUnit = null) {
           statementsTotal: rawTotals?.statements?.total ?? null,
         }
       : {
-          lines: 0,
-          branches: 0,
-          functions: 0,
-          statements: 0,
+          lines: totalTests > 0 ? null : 0,
+          branches: totalTests > 0 ? toOptionalPct(cov.branches ?? cov.branch) : 0,
+          functions: totalTests > 0 ? toOptionalPct(cov.functions ?? cov.function) : 0,
+          statements: totalTests > 0 ? toOptionalPct(cov.statements ?? cov.statement) : 0,
           linesCovered: null,
           linesTotal: null,
           branchesCovered: null,
@@ -452,6 +479,7 @@ export function adaptUnit(raw, unifiedUnit = null) {
     avgDurationMs,
     avgTestDurationMs: avgDurationMs,
     coverageSource,
+    coverageMeasured,
     coverageMetrics,
     lowCoverageItems,
     coverageFiles,
@@ -499,12 +527,32 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
             )
           )
         : 0;
+    const hasApiCovMetric =
+      hasIntExecuted &&
+      totalApis > 0 &&
+      cov.apiEndpoint !== null &&
+      cov.apiEndpoint !== undefined &&
+      cov.apiEndpoint !== "" &&
+      Number.isFinite(Number(cov.apiEndpoint));
+    const apiEndpointPct = hasApiCovMetric
+      ? toFixedPct(cov.apiEndpoint)
+      : hasIntExecuted && totalApis > 0 && cov.coveredApis !== undefined
+      ? toFixedPct((coveredApis / totalApis) * 100)
+      : null;
+    const codeCoverageMeasured =
+      typeof unifiedIntegration.codeCoverageMeasured === "boolean"
+        ? unifiedIntegration.codeCoverageMeasured
+        : hasIntExecuted &&
+          cov.lines !== null &&
+          cov.lines !== undefined &&
+          cov.lines !== "" &&
+          Number(cov.lines) > 0;
     const coverageMetrics = {
       lines: hasIntExecuted ? toFixedPct(cov.lines) : 0,
       branches: hasIntExecuted ? toFixedPct(cov.branches) : 0,
       functions: hasIntExecuted ? toFixedPct(cov.functions) : 0,
       statements: hasIntExecuted ? toFixedPct(cov.statements) : 0,
-      apiEndpoint: hasIntExecuted && totalApis > 0 ? toFixedPct(cov.apiEndpoint) : 0,
+      apiEndpoint: apiEndpointPct,
       coveredApis,
       partialApis,
       failedApis,
@@ -537,6 +585,7 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
       durationMs,
       avgDurationMs,
       avgEndpointLatencyMs,
+      codeCoverageMeasured,
       coverageMetrics,
       lowCoverageItems: Array.isArray(unifiedIntegration.lowCoverageItems)
         ? unifiedIntegration.lowCoverageItems
@@ -635,10 +684,19 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
   const epMetrics = wsSummary.endpointCoverageMetrics || {};
   const apiEndpointPct =
     executedTests <= 0 || totalApis <= 0
-      ? 0
-      : epMetrics.endpointCoveragePct !== undefined
+      ? null
+      : epMetrics.endpointCoveragePct !== undefined && epMetrics.endpointCoveragePct !== null
       ? toFixedPct(epMetrics.endpointCoveragePct)
       : toFixedPct((coveredApis / totalApis) * 100);
+
+  const ownCodeCov = wsSummary.codeCoverage || {};
+  const rawOwnCodeLines = ownCodeCov.line?.pct ?? ownCodeCov.line ?? ownCodeCov.lines;
+  const codeCoverageMeasured =
+    executedTests > 0 &&
+    rawOwnCodeLines !== null &&
+    rawOwnCodeLines !== undefined &&
+    rawOwnCodeLines !== "" &&
+    Number.isFinite(Number(rawOwnCodeLines));
 
   const codeCov = wsSummary.codeCoverage || coverageSummary?.coverage || {};
   const coverageMetrics = {
@@ -715,6 +773,7 @@ export function adaptIntegration(workspaceData, coverageSummary = null, unifiedI
     durationMs,
     avgDurationMs,
     avgEndpointLatencyMs: avgDurationMs,
+    codeCoverageMeasured,
     coverageMetrics,
     lowCoverageItems,
     failedScenarios: [],
@@ -1327,7 +1386,7 @@ export function adaptUnifiedDashboard({
         startedAt: Date.now(),
         commitSha: String(activeSnapshotId).slice(0, 7),
         failureLayer: unitPillar.failedTests > 0 ? "Unit Assertion Failure" : "None — All Passed",
-        stackTrace: `${unitPillar.framework} Execution:\n  Passed: ${unitPillar.passedTests}/${unitPillar.totalTests}\n  Line Coverage: ${unitPillar.coverageMetrics.lines}%`,
+        stackTrace: `${unitPillar.framework} Execution:\n  Passed: ${unitPillar.passedTests}/${unitPillar.totalTests}\n  Line Coverage: ${unitPillar.coverageMetrics.lines != null ? `${unitPillar.coverageMetrics.lines}%` : "Not measured"}`,
         testCases: [],
       });
     }
@@ -1412,6 +1471,9 @@ export function adaptUnifiedDashboard({
     (integrationPillar.coverageMetrics?.uncoveredApis || 0) +
       (unitPillar.lowCoverageItems?.filter((f) => (f.branchesPct ?? 0) < 75).length || 0);
 
+  const featureDurations = normalizeFeatureDurations(unifiedBackendRaw?.featureDurations);
+  const aiTrustworthiness = normalizeAiTrustworthiness(unifiedBackendRaw?.aiEvaluation);
+
   return {
     context: {
       projectId: context.projectId || unifiedBackendRaw?.context?.projectId || "",
@@ -1460,5 +1522,202 @@ export function adaptUnifiedDashboard({
     history: {
       runs: liveRuns,
     },
+    featureDurations,
+    aiTrustworthiness,
+  };
+}
+
+const CANONICAL_FEATURE_DURATIONS = [
+  { key: "project_analysis", label: "Project Analysis", jobTypes: ["ANALYSIS"] },
+  {
+    key: "unit_test_coverage",
+    label: "Unit Test Coverage",
+    jobTypes: ["RUN_TESTS", "RUN_VITEST_TESTS", "COVERAGE", "VITEST_COVERAGE", "PARSE_COVERAGE"],
+  },
+  { key: "integration_ai_tests", label: "Integration AI Tests", jobTypes: ["AI_TESTS"] },
+  {
+    key: "integration_coverage",
+    label: "Integration Coverage",
+    jobTypes: ["SUPERTEST_COVERAGE", "PLAYWRIGHT_API_COVERAGE"],
+  },
+  {
+    key: "system_tests",
+    label: "System Tests",
+    jobTypes: [
+      "SYSTEM_TEST_ASSESSMENT",
+      "PLAYWRIGHT_SYSTEM_TEST",
+      "PLAYWRIGHT_SYSTEM_COVERAGE",
+      "CYPRESS_SYSTEM_TEST",
+      "CYPRESS_SYSTEM_COVERAGE",
+      "SYSTEM_TEST_IMPROVEMENT",
+      "SYSTEM_TEST_ANALYSIS",
+      "SYSTEM_TEST_MUTATION",
+    ],
+  },
+  { key: "install_deps", label: "Install Dependencies", jobTypes: ["INSTALL_DEPS"] },
+  { key: "ai_evaluation", label: "AI Evaluation", jobTypes: ["AI_EVALUATION"] },
+];
+
+function toOptionalDurationMs(val) {
+  if (val === null || val === undefined || val === "") return null;
+  const num = Number(val);
+  return Number.isFinite(num) && num >= 0 ? Math.round(num) : null;
+}
+
+export function normalizeFeatureDurations(rawList) {
+  const byKey = new Map();
+  if (Array.isArray(rawList)) {
+    for (const item of rawList) {
+      if (item?.key) byKey.set(item.key, item);
+    }
+  }
+
+  return CANONICAL_FEATURE_DURATIONS.map((def) => {
+    const raw = byKey.get(def.key);
+    const runCount = Math.max(0, Number(raw?.runCount ?? 0) || 0);
+    const hasRuns = runCount > 0;
+    const latestDurationMs = hasRuns ? toOptionalDurationMs(raw?.latestDurationMs) : null;
+    const totalDurationMs = hasRuns ? toOptionalDurationMs(raw?.totalDurationMs) : null;
+    const avgDurationMs = hasRuns
+      ? toOptionalDurationMs(raw?.avgDurationMs) ??
+        (totalDurationMs !== null ? Math.round(totalDurationMs / runCount) : null)
+      : null;
+
+    return {
+      key: def.key,
+      label: raw?.label || def.label,
+      jobTypes: Array.isArray(raw?.jobTypes) && raw.jobTypes.length > 0 ? raw.jobTypes : [...def.jobTypes],
+      runCount,
+      latestDurationMs,
+      totalDurationMs,
+      avgDurationMs,
+      lastRunAt: hasRuns && raw?.lastRunAt ? String(raw.lastRunAt) : null,
+      lastStatus: hasRuns ? String(raw?.lastStatus || "SUCCESS").toUpperCase() : "NOT_RUN",
+    };
+  });
+}
+
+export function normalizeAiTrustworthiness(rawEval) {
+  const mappedAudit = rawEval?.designAudit
+    ? {
+        status: String(rawEval.designAudit.status || "READY"),
+        detected: Boolean(rawEval.designAudit.detected),
+        designScore:
+          rawEval.designAudit.designScore !== null &&
+          rawEval.designAudit.designScore !== undefined &&
+          Number.isFinite(Number(rawEval.designAudit.designScore))
+            ? Number(Number(rawEval.designAudit.designScore).toFixed(1))
+            : null,
+        findingsCount: Math.max(0, Number(rawEval.designAudit.findingsCount ?? 0) || 0),
+      }
+    : null;
+
+  if (!rawEval || rawEval.hasRun === false || rawEval.status === "NOT_RUN") {
+    return {
+      hasRun: false,
+      status: "NOT_RUN",
+      verdict: "NOT_RUN",
+      score: null,
+      rawScore: null,
+      scoreHidden: false,
+      passMark: null,
+      criticalSafetyFailure: false,
+      partial: false,
+      completeness: null,
+      scenarioPassRate: null,
+      stability: null,
+      latency: null,
+      criteriaSummary: [],
+      tasks: [],
+      totalRuns: 0,
+      latestRunId: null,
+      lastRunAt: null,
+      targetName: null,
+      profileName: null,
+      designAudit: mappedAudit,
+    };
+  }
+
+  const criteriaSummary = Array.isArray(rawEval.criteriaSummary)
+    ? rawEval.criteriaSummary.map((c) => ({
+        criterionKey: String(c?.criterionKey || ""),
+        label: c?.label || CRITERION_LABELS[c?.criterionKey] || String(c?.criterionKey || "Criterion"),
+        score: toOptionalPct(c?.score),
+        scored: Math.max(0, Number(c?.scored ?? 0) || 0),
+        applicable: Math.max(0, Number(c?.applicable ?? 0) || 0),
+      }))
+    : [];
+
+  const tasks = Array.isArray(rawEval.tasks)
+    ? rawEval.tasks.map((t) => ({
+        taskType: String(t?.taskType || ""),
+        score: toOptionalPct(t?.score),
+        scored: Math.max(0, Number(t?.scored ?? 0) || 0),
+        applicable: Math.max(0, Number(t?.applicable ?? 0) || 0),
+        partial: Boolean(t?.partial),
+      }))
+    : [];
+
+  return {
+    hasRun: true,
+    status: String(rawEval.status || "COMPLETED").toUpperCase(),
+    verdict: String(rawEval.verdict || "INCOMPLETE").toUpperCase(),
+    score: toOptionalPct(rawEval.score),
+    rawScore: toOptionalPct(rawEval.rawScore),
+    scoreHidden: Boolean(rawEval.scoreHidden),
+    passMark:
+      rawEval.passMark !== null &&
+      rawEval.passMark !== undefined &&
+      Number.isFinite(Number(rawEval.passMark))
+        ? Number(rawEval.passMark)
+        : null,
+    criticalSafetyFailure: Boolean(rawEval.criticalSafetyFailure),
+    partial: Boolean(rawEval.partial),
+    completeness: rawEval.completeness
+      ? {
+          scored: Math.max(0, Number(rawEval.completeness.scored ?? 0) || 0),
+          applicable: Math.max(0, Number(rawEval.completeness.applicable ?? 0) || 0),
+        }
+      : null,
+    scenarioPassRate: rawEval.scenarioPassRate
+      ? {
+          passed: Math.max(0, Number(rawEval.scenarioPassRate.passed ?? 0) || 0),
+          evaluated: Math.max(0, Number(rawEval.scenarioPassRate.evaluated ?? 0) || 0),
+          total: Math.max(0, Number(rawEval.scenarioPassRate.total ?? 0) || 0),
+          rate: toOptionalPct(rawEval.scenarioPassRate.rate),
+          wilson95: rawEval.scenarioPassRate.wilson95
+            ? {
+                rate: Number(rawEval.scenarioPassRate.wilson95.rate ?? 0),
+                lower: Number(rawEval.scenarioPassRate.wilson95.lower ?? 0),
+                upper: Number(rawEval.scenarioPassRate.wilson95.upper ?? 0),
+              }
+            : null,
+        }
+      : null,
+    stability: rawEval.stability
+      ? {
+          eligibleCases: Math.max(0, Number(rawEval.stability.eligibleCases ?? 0) || 0),
+          stableCases: Math.max(0, Number(rawEval.stability.stableCases ?? 0) || 0),
+          unstableCases: Math.max(0, Number(rawEval.stability.unstableCases ?? 0) || 0),
+          stabilityRate: toOptionalPct(rawEval.stability.stabilityRate),
+        }
+      : null,
+    latency: rawEval.latency
+      ? {
+          avgMs: toOptionalDurationMs(rawEval.latency.avgMs),
+          p95Ms: toOptionalDurationMs(rawEval.latency.p95Ms),
+          slaMs: toOptionalDurationMs(rawEval.latency.slaMs),
+          withinSlaRate: toOptionalPct(rawEval.latency.withinSlaRate),
+          status: rawEval.latency.status ? String(rawEval.latency.status) : null,
+        }
+      : null,
+    criteriaSummary,
+    tasks,
+    totalRuns: Math.max(0, Number(rawEval.totalRuns ?? 1) || 1),
+    latestRunId: rawEval.latestRunId || null,
+    lastRunAt: rawEval.lastRunAt || null,
+    targetName: rawEval.targetName || null,
+    profileName: rawEval.profileName || null,
+    designAudit: mappedAudit,
   };
 }

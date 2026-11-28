@@ -29,9 +29,9 @@ const SECTION_CONFIGS = [
   },
   {
     key: "pyramidPillars",
-    title: "Testing Pyramid & Three-Pillar Breakdown",
+    title: "Testing Pyramid, Three-Pillar & AI Trustworthiness Breakdown",
     description:
-      "Architecture distribution and Unit / Integration / System metrics",
+      "Architecture distribution, Unit / Integration / System metrics, and AI evaluation summary",
   },
   {
     key: "traceMatrix",
@@ -45,8 +45,8 @@ const SECTION_CONFIGS = [
   },
   {
     key: "trendsHistory",
-    title: "Coverage Trends & Execution History",
-    description: "Recent multi-suite test execution runs and commit metadata",
+    title: "Coverage Trends, Per-Feature Durations & Execution History",
+    description: "Recent execution runs, cumulative feature timings, and commit metadata",
   },
 ];
 

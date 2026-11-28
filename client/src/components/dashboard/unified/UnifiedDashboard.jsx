@@ -3,13 +3,15 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useUnifiedDashboard } from "../../../hooks/useUnifiedDashboard.js";
 import { useRunAllSuites } from "../../../hooks/useRunAllSuites.js";
 import { useDashboardSocket } from "../../../hooks/useDashboardSocket.js";
-import { buildWorkspaceUrl } from "../../../services/unifiedDashboard/workspaceNavigation.js";
+import { buildWorkspaceUrl, buildTrustworthinessUrl } from "../../../services/unifiedDashboard/workspaceNavigation.js";
 
 import { ZoneErrorBoundary } from "./primitives/ZoneErrorBoundary.jsx";
 import { GlobalCommandHeader } from "./zones/GlobalCommandHeader.jsx";
 import { ExecutiveKpiRow } from "./zones/ExecutiveKpiRow.jsx";
 import { QualityChartsRow } from "./zones/QualityChartsRow.jsx";
 import { PyramidAndPillarsZone } from "./zones/PyramidAndPillarsZone.jsx";
+import { FeatureExecutionDurationsPanel } from "./execution/FeatureExecutionDurationsPanel.jsx";
+import { AiTrustworthinessSummaryPanel } from "./trustworthiness/AiTrustworthinessSummaryPanel.jsx";
 import { AnalysisTabsZone } from "./zones/AnalysisTabsZone.jsx";
 import { SlideOverInspectorDrawer } from "./inspector/SlideOverInspectorDrawer.jsx";
 import { AlertTriangle, RefreshCw } from "lucide-react";
@@ -174,6 +176,11 @@ export function UnifiedDashboard({
     [onNavigateWorkspace, location, navigate]
   );
 
+  const handleOpenTrustworthiness = useCallback(() => {
+    const targetUrl = buildTrustworthinessUrl(location, effectiveProjectId);
+    navigate(targetUrl);
+  }, [location, effectiveProjectId, navigate]);
+
   // Jump from Executive KPI Action Items card to Action Alert Strip (switching away from history tab if needed)
   const handleJumpToActions = useCallback(() => {
     const params = new URLSearchParams(location.search);
@@ -292,6 +299,21 @@ export function UnifiedDashboard({
             onNavigateWorkspace={handleNavigate}
             activeCrossFilter={activeCrossFilter}
             onSelectCrossFilter={handleSelectCrossFilter}
+          />
+        </ZoneErrorBoundary>
+
+        {/* ZONE 3.5: Per-Feature Execution Durations (R2) & AI Trustworthiness Evaluation (R3) */}
+        <ZoneErrorBoundary zoneTitle="Per-Feature Execution Durations" onRetry={refetch}>
+          <FeatureExecutionDurationsPanel
+            featureDurations={vm?.featureDurations}
+            loading={isDashboardLoading}
+          />
+        </ZoneErrorBoundary>
+
+        <ZoneErrorBoundary zoneTitle="AI Trustworthiness Evaluation" onRetry={refetch}>
+          <AiTrustworthinessSummaryPanel
+            aiTrustworthiness={vm?.aiTrustworthiness}
+            onOpenWorkspace={handleOpenTrustworthiness}
           />
         </ZoneErrorBoundary>
 

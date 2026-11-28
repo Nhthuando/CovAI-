@@ -22,22 +22,33 @@ export function fmtCount(val) {
 }
 
 /**
- * Format duration in milliseconds to human-readable format (e.g. 450ms, 2.4s, 3m 15s).
+ * Format duration in milliseconds to human-readable format (e.g. 450ms, 2.4s, 3m 15s, 1h 12m).
  */
 export function fmtDuration(ms) {
   if (ms === null || ms === undefined || Number.isNaN(Number(ms)) || ms < 0) {
     return "—";
   }
-  if (ms < 1000) {
-    return `${Math.round(ms)}ms`;
+  const roundedMs = Math.round(ms);
+  if (roundedMs < 1000) {
+    return `${roundedMs}ms`;
   }
   const totalSeconds = ms / 1000;
-  if (totalSeconds < 60) {
+  if (Number(totalSeconds.toFixed(1)) < 60) {
     return `${totalSeconds.toFixed(1)}s`;
   }
-  const minutes = Math.floor(totalSeconds / 60);
+  const totalMinutes = Math.floor(totalSeconds / 60);
   const remainingSeconds = Math.round(totalSeconds % 60);
-  return `${minutes}m ${remainingSeconds}s`;
+  const effectiveMinutes =
+    totalSeconds < 60
+      ? 1
+      : totalMinutes + (remainingSeconds === 60 ? 1 : 0);
+  if (effectiveMinutes < 60) {
+    const displaySeconds = totalSeconds < 60 || remainingSeconds === 60 ? 0 : remainingSeconds;
+    return `${effectiveMinutes}m ${displaySeconds}s`;
+  }
+  const hours = Math.floor(effectiveMinutes / 60);
+  const remMinutes = effectiveMinutes % 60;
+  return `${hours}h ${remMinutes}m`;
 }
 
 /**

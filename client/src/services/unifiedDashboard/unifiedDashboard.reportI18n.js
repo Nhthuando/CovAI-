@@ -384,6 +384,12 @@ export const REPORT_COPY = {
     history: {
       en: "Recent Execution Runs",
     },
+    featureDurations: {
+      en: "Per-Feature Execution Durations",
+    },
+    aiTrustworthiness: {
+      en: "AI Trustworthiness Evaluation",
+    },
     caveats: {
       en: "Caveats & Open Questions",
     },

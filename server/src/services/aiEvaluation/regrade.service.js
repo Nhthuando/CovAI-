@@ -13,6 +13,7 @@ import prisma from '../../config/prisma.js';
 import { ServiceError } from '../../utils/serviceError.js';
 import { fail, requireEnabled, serial, redact } from './common.js';
 import { evaluateCase, aggregationInputs } from './evaluator.service.js';
+import { clearUnifiedDashboardCacheForProject } from '../unifiedQualityDashboard.service.js';
 import { readEvaluatorFallbackConfig } from './judge.service.js';
 import { aggregateTrustProfile } from './scoring.service.js';
 import { readEvidencePayload } from './artifactStore.service.js';
@@ -147,7 +148,8 @@ export async function processRegrade(jobId, { db = prisma, provider } = {}) {
     const job = await db.job.findUnique({ where: { id: jobId }, select: { id: true, userId: true, status: true, payloadJson: true } });
     const payload = parseRegradePayload(job?.payloadJson);
     if (!job || !payload || job.status !== 'QUEUED') return;
-    const claimed = await db.job.updateMany({ where: { id: jobId, status: 'QUEUED' }, data: { status: 'RUNNING', startedAt: new Date() } });
+    const regradeStartedAt = new Date();
+    const claimed = await db.job.updateMany({ where: { id: jobId, status: 'QUEUED' }, data: { status: 'RUNNING', startedAt: regradeStartedAt } });
     if (!claimed.count) return;
 
     const controller = new AbortController();
@@ -237,15 +239,21 @@ export async function processRegrade(jobId, { db = prisma, provider } = {}) {
             );
             await tx.aiEvaluationRun.update({ where: { id: run.id }, data: { verdict: summary.verdict, summary } });
         });
+        const finishedAt = new Date();
+        const computeTimeMs = Math.max(0, Math.round(finishedAt.getTime() - regradeStartedAt.getTime()));
         await db.job.updateMany({
             where: { id: jobId },
             data: {
                 status: controller.signal.aborted ? 'CANCELED' : 'SUCCESS',
                 progress: 100,
                 resultJson: JSON.stringify({ runId: run.id, cases: completed, regradedChecks: regraded }),
-                finishedAt: new Date(),
+                finishedAt,
+                computeTimeMs,
             },
         });
+        if (run?.projectId) {
+            clearUnifiedDashboardCacheForProject(run.projectId);
+        }
         if (job.userId) {
             emitEvaluationEvent('evaluation:progress', {
                 projectId: run.projectId,
@@ -261,10 +269,15 @@ export async function processRegrade(jobId, { db = prisma, provider } = {}) {
     } catch (error) {
         const message = redact(String(error?.message || error)).slice(0, 300);
         console.error('[Evaluation] Regrade failed:', { jobId, runId: payload.regradeRunId, code: error?.code, message });
+        const failedAt = new Date();
+        const computeTimeMs = Math.max(0, Math.round(failedAt.getTime() - regradeStartedAt.getTime()));
         await db.job.updateMany({
             where: { id: jobId },
-            data: { status: 'FAILED', errorMessage: error?.code || 'REGRADE_FAILED', finishedAt: new Date() },
+            data: { status: 'FAILED', errorMessage: error?.code || 'REGRADE_FAILED', finishedAt: failedAt, computeTimeMs },
         });
+        if (run?.projectId) {
+            clearUnifiedDashboardCacheForProject(run.projectId);
+        }
         if (job.userId && run) {
             const { emitEvaluationEvent } = await import('./runner.service.js');
             emitEvaluationEvent('evaluation:progress', {
